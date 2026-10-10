@@ -67,7 +67,6 @@ def generar_reporte_semanal(semana_nombre: str, paquete: dict) -> dict:
         json.dump(reporte, f, ensure_ascii=False, indent=2)
 
     resultado = subir_json_a_oci(nombre_archivo, ruta_oci)
-    if resultado is False:  # compatible con tu uploader actual y con el nuevo
-        raise RuntimeError("No se pudo subir a OCI (revisa credenciales). El JSON local sí se guardó.")
+    reporte["metadata"]["oci_storage"]["subido"] = bool(resultado)
 
     return reporte

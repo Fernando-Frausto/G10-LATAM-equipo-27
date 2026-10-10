@@ -27,3 +27,8 @@ __pycache__/
 # Base de datos del proyecto y sus respaldos
 *.db
 *.db.respaldo_*
+
+# Llaves privadas OCI y reportes generados en local
+*.pem
+reportes/
+

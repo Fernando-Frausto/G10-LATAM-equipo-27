@@ -8,3 +8,5 @@ streamlit
 discord.py
 psycopg2-binary
 oci
+fastapi
+uvicorn

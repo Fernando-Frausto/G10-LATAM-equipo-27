@@ -14,12 +14,20 @@ def obtener_conexion():
     if database_url:
         return psycopg2.connect(database_url, sslmode="require")
 
+    host = os.getenv("DB_HOST")
+    password = os.getenv("DB_PASSWORD")
+    if not host or not password:
+        raise ValueError(
+            "Faltan las credenciales de PostgreSQL/Supabase en el archivo .env "
+            "(se requiere DATABASE_URL o la combinación de DB_HOST y DB_PASSWORD)."
+        )
+
     # Si no existe DATABASE_URL, usa las variables separadas (ninguna con contraseñas quemadas)
     return psycopg2.connect(
-        host=os.getenv("DB_HOST"),
+        host=host,
         database=os.getenv("DB_NAME", "postgres"),
         user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
+        password=password,
         port=os.getenv("DB_PORT", "6543"),
         sslmode="require",
     )
