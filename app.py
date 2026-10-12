@@ -135,8 +135,13 @@ if st.button("🚀 Ejecutar Análisis", type="primary", disabled=(total_mensajes
                 
                 with open("resultados_kpis.json", "w", encoding="utf-8") as archivo:
                     json.dump(paquete_maestro, archivo, indent=2, ensure_ascii=False)
-                    
-                st.success("✨ Análisis completado y archivo `resultados_kpis.json` generado con éxito.")
+
+                from base_datos import guardar_lote_ia_supabase
+                guardados_supabase = guardar_lote_ia_supabase(paquete_maestro)
+                if guardados_supabase > 0:
+                    st.success(f"✨ Análisis completado: `resultados_kpis.json` generado y {guardados_supabase} registros sincronizados en Supabase (`lotes_ia_kpis`).")
+                else:
+                    st.success("✨ Análisis completado y archivo `resultados_kpis.json` generado con éxito.")
                 
         except Exception as e:
             st.error(f"Error durante la ejecución de la IA: {e}")

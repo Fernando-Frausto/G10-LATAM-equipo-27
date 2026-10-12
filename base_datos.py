@@ -163,3 +163,104 @@ def listar_interacciones(
             return [dict(fila) for fila in filas]
     finally:
         conexion.close()
+
+
+def obtener_conexion_copywriting():
+    """Retorna una conexión segura al PostgreSQL (Supabase) de Copywriting usando SUPABASE_DB_URL."""
+    url_copy = os.getenv("SUPABASE_DB_URL")
+    if not url_copy:
+        raise ValueError(
+            "Falta la variable SUPABASE_DB_URL en el archivo .env para conectar con el Supabase de Copywriting."
+        )
+    return psycopg2.connect(url_copy, sslmode="require")
+
+
+def crear_tabla_lotes_ia() -> None:
+    """Crea la tabla lotes_ia_kpis en el Supabase de Copywriting si no existe."""
+    conexion = obtener_conexion_copywriting()
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS lotes_ia_kpis (
+                    id SERIAL PRIMARY KEY,
+                    id_mensaje INTEGER UNIQUE NOT NULL,
+                    autor TEXT NOT NULL,
+                    canal_origen VARCHAR(100),
+                    comunidad VARCHAR(100),
+                    semana VARCHAR(100),
+                    fecha_envio VARCHAR(100),
+                    fecha_extraccion VARCHAR(100),
+                    texto_original TEXT NOT NULL,
+                    relevancia INTEGER NOT NULL,
+                    sentimiento VARCHAR(50),
+                    temas_clave TEXT,
+                    segmento TEXT,
+                    razonamiento TEXT,
+                    decision_ia VARCHAR(50) NOT NULL,
+                    estado_revision VARCHAR(50) NOT NULL DEFAULT 'pendiente',
+                    analizado_en VARCHAR(100) NOT NULL
+                );
+                """
+            )
+        conexion.commit()
+    finally:
+        conexion.close()
+
+
+def guardar_lote_ia_supabase(paquete_maestro: dict) -> int:
+    """Guarda los mensajes analizados por la IA (aprobados y descartados) en la tabla lotes_ia_kpis del Supabase de Enoc."""
+    if not os.getenv("SUPABASE_DB_URL"):
+        return 0
+
+    crear_tabla_lotes_ia()
+    conexion = obtener_conexion_copywriting()
+    ahora_utc = a_utc_iso(datetime.now(timezone.utc))
+    total_guardados = 0
+
+    try:
+        with conexion.cursor() as cursor:
+            for decision, llave in [("aprobado", "aprobados"), ("descartado", "descartados")]:
+                for item in paquete_maestro.get(llave, []):
+                    kpis = item.get("kpis", {})
+                    cursor.execute(
+                        """
+                        INSERT INTO lotes_ia_kpis (
+                            id_mensaje, autor, canal_origen, comunidad, semana,
+                            fecha_envio, fecha_extraccion, texto_original,
+                            relevancia, sentimiento, temas_clave, segmento,
+                            razonamiento, decision_ia, analizado_en
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id_mensaje) DO UPDATE SET
+                            relevancia = EXCLUDED.relevancia,
+                            sentimiento = EXCLUDED.sentimiento,
+                            temas_clave = EXCLUDED.temas_clave,
+                            segmento = EXCLUDED.segmento,
+                            razonamiento = EXCLUDED.razonamiento,
+                            decision_ia = EXCLUDED.decision_ia,
+                            analizado_en = EXCLUDED.analizado_en;
+                        """,
+                        (
+                            item.get("id_mensaje"),
+                            item.get("autor", "Desconocido"),
+                            item.get("canal_origen"),
+                            item.get("comunidad"),
+                            item.get("semana"),
+                            item.get("fecha_envio"),
+                            item.get("fecha_extraccion"),
+                            item.get("texto_original", ""),
+                            int(kpis.get("relevancia", 0)),
+                            kpis.get("sentimiento"),
+                            kpis.get("temas_clave"),
+                            kpis.get("segmento"),
+                            kpis.get("razonamiento"),
+                            decision,
+                            ahora_utc,
+                        ),
+                    )
+                    total_guardados += 1
+        conexion.commit()
+        return total_guardados
+    finally:
+        conexion.close()
