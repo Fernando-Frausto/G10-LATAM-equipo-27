@@ -191,6 +191,7 @@ def crear_tabla_lotes_ia() -> None:
                     semana VARCHAR(100),
                     fecha_envio VARCHAR(100),
                     fecha_extraccion VARCHAR(100),
+                    modelo_ia VARCHAR(100),
                     texto_original TEXT NOT NULL,
                     relevancia INTEGER NOT NULL,
                     sentimiento VARCHAR(50),
@@ -201,6 +202,7 @@ def crear_tabla_lotes_ia() -> None:
                     estado_revision VARCHAR(50) NOT NULL DEFAULT 'pendiente',
                     analizado_en VARCHAR(100) NOT NULL
                 );
+                ALTER TABLE lotes_ia_kpis ADD COLUMN IF NOT EXISTS modelo_ia VARCHAR(100);
                 """
             )
         conexion.commit()
@@ -227,12 +229,17 @@ def guardar_lote_ia_supabase(paquete_maestro: dict) -> int:
                         """
                         INSERT INTO lotes_ia_kpis (
                             id_mensaje, autor, canal_origen, comunidad, semana,
-                            fecha_envio, fecha_extraccion, texto_original,
+                            fecha_envio, fecha_extraccion, modelo_ia, texto_original,
                             relevancia, sentimiento, temas_clave, segmento,
                             razonamiento, decision_ia, analizado_en
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (id_mensaje) DO UPDATE SET
+                            comunidad = COALESCE(EXCLUDED.comunidad, lotes_ia_kpis.comunidad),
+                            semana = COALESCE(EXCLUDED.semana, lotes_ia_kpis.semana),
+                            fecha_envio = COALESCE(EXCLUDED.fecha_envio, lotes_ia_kpis.fecha_envio),
+                            fecha_extraccion = COALESCE(EXCLUDED.fecha_extraccion, lotes_ia_kpis.fecha_extraccion),
+                            modelo_ia = COALESCE(EXCLUDED.modelo_ia, lotes_ia_kpis.modelo_ia),
                             relevancia = EXCLUDED.relevancia,
                             sentimiento = EXCLUDED.sentimiento,
                             temas_clave = EXCLUDED.temas_clave,
@@ -249,6 +256,7 @@ def guardar_lote_ia_supabase(paquete_maestro: dict) -> int:
                             item.get("semana"),
                             item.get("fecha_envio"),
                             item.get("fecha_extraccion"),
+                            item.get("modelo_ia"),
                             item.get("texto_original", ""),
                             int(kpis.get("relevancia", 0)),
                             kpis.get("sentimiento"),

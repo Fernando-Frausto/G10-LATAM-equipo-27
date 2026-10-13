@@ -116,6 +116,7 @@ if st.button("🚀 Ejecutar Análisis", type="primary", disabled=(total_mensajes
                         "fecha_envio": msg.get("enviado_en"),
                         "fecha_extraccion": msg.get("creado_en"),
                         "semana": msg.get("periodo_referencia"),
+                        "modelo_ia": cerebro_elegido,
                         "texto_original": msg["texto"],
                         "kpis": kpis
                     }
