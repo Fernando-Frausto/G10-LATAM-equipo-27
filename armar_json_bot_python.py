@@ -28,6 +28,10 @@ def construir_paquete(mensajes: list) -> dict | None:
 
     interacciones = []
     for m in mensajes:
+        # Ignorar mensajes automáticos de bots o webhooks (ej. Spidey Boy o anuncios)
+        if getattr(m.author, "bot", False) or getattr(m, "webhook_id", None):
+            continue
+
         texto = m.content.strip()
         if not texto:
             continue
