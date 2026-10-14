@@ -1,13 +1,9 @@
 import { Menu } from 'lucide-react'
 import { useState } from 'react'
-import type { ReactNode } from 'react'
+import { Outlet } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 
-interface MainLayoutProps {
-    children: ReactNode
-}
-
-function MainLayout({ children }: MainLayoutProps) {
+function MainLayout() {
     const [sidebarOpen, setSidebarOpen] = useState(false)
 
     return (
@@ -51,7 +47,7 @@ function MainLayout({ children }: MainLayoutProps) {
 
             <main className="min-h-screen min-w-0 p-4 sm:p-6 lg:ml-64 lg:p-8">
                 <div className="mx-auto w-full min-w-0">
-                    {children}
+                    <Outlet />
                 </div>
             </main>
         </div>

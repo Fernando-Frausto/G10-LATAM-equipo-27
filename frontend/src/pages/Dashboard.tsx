@@ -3,13 +3,13 @@ import {
   CheckCircle,
   FileText,
   MessageSquare,
+  RefreshCw,
   Sparkles,
   Tag,
   Users,
 } from 'lucide-react'
 
 import KpiCard from '../components/KpiCard'
-import FeaturedStories from '../components/FeaturedStories'
 import SentimentChart from '../charts/SentimentChart'
 import TopicsChart from '../charts/TopicsChart'
 import SentimentEvolution from '../charts/SentimentEvolution'
@@ -35,38 +35,59 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    const loadDashboard = async () => {
-      try {
-        const response = await fetch(
-          'http://127.0.0.1:8001/api/community/dashboard'
-        )
+  const [refreshing, setRefreshing] = useState(false)
+  const [analyticsVersion, setAnalyticsVersion] = useState(0)
 
-        if (!response.ok) {
-          throw new Error('No fue posible cargar el dashboard')
-        }
+  const loadDashboard = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true)
 
-        const data: DashboardData = await response.json()
-        setDashboardData(data)
-      } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Error desconocido al cargar el dashboard'
-        )
-      } finally {
-        setLoading(false)
+    try {
+      setError(null)
+
+      const motorUrl = (
+        import.meta.env.VITE_MOTOR_API_URL ||
+        'http://127.0.0.1:8001'
+      ).replace(/\/$/, '')
+
+      const [dashboardResponse, analyticsResponse] = await Promise.all([
+        fetch(`${motorUrl}/api/community/dashboard`, {
+          cache: 'no-store',
+        }),
+        fetch(`${motorUrl}/api/community/analytics`, {
+          cache: 'no-store',
+        }),
+      ])
+
+      if (!dashboardResponse.ok || !analyticsResponse.ok) {
+        throw new Error('No fue posible actualizar los datos del Motor IA')
       }
-    }
 
-    loadDashboard()
+      const data: DashboardData = await dashboardResponse.json()
+      await analyticsResponse.json()
+
+      setDashboardData(data)
+      setAnalyticsVersion((version) => version + 1)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Error desconocido al cargar el dashboard'
+      )
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadDashboard()
   }, [])
 
   if (loading) {
     return <div className="p-6 text-slate-500">Cargando dashboard...</div>
   }
 
-  if (error || !dashboardData) {
+  if (!dashboardData) {
     return (
       <div className="p-6 text-red-600">
         {error ?? 'No hay datos disponibles'}
@@ -80,15 +101,35 @@ function Dashboard() {
     <div>
 
       {/* Encabezado */}
-      <div>
-        <h2 className="text-2xl font-bold text-slate-900">
-          Dashboard
-        </h2>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">
+            Dashboard
+          </h2>
+          <p className="mt-1 text-slate-500">
+            Resumen de tu comunidad
+          </p>
+        </div>
 
-        <p className="mt-1 text-slate-500">
-          Resumen de tu comunidad
-        </p>
+        <button
+          type="button"
+          onClick={() => void loadDashboard(true)}
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        >
+          <RefreshCw
+            size={16}
+            className={refreshing ? 'animate-spin' : ''}
+          />
+          {refreshing ? 'Actualizando...' : 'Actualizar datos'}
+        </button>
       </div>
+
+      {error && (
+        <p role="alert" className="mt-3 text-sm text-red-600">
+          {error}. Se muestran los ultimos datos disponibles.
+        </p>
+      )}
 
 
       {/* KPIs */}
@@ -156,21 +197,29 @@ function Dashboard() {
       </div>
       
              
-      <FeaturedStories />
+      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6">
+        <h3 className="text-lg font-bold text-slate-900">
+          Historias destacadas
+        </h3>
+        <p className="mt-2 text-sm text-slate-500">
+          Esta sección se conectará con los mensajes destacados
+          del Motor IA durante la integración de Ingesta Discord.
+        </p>
+      </section>
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
 
-        <SentimentChart />
+        <SentimentChart key={analyticsVersion} />
 
-        <TopicsChart />
+        <TopicsChart key={analyticsVersion} />
 
       </div>
 
       <div className="mt-8">
-        <SentimentEvolution />
+        <SentimentEvolution key={analyticsVersion} />
       </div>
       <div className="mt-8">
-        <AudienceHeatmap />
+        <AudienceHeatmap key={analyticsVersion} />
       </div>
 
     </div>

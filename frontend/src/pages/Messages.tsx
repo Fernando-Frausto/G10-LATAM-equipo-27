@@ -1,3 +1,4 @@
+import { updateMessageWorkflow } from '../api/messageWorkflow'
 import {
     Check,
     ChevronRight,
@@ -9,7 +10,6 @@ import {
     MessageCircle,
     RefreshCw,
     Search,
-    Send,
     Server,
     ShieldAlert,
     Smile,
@@ -20,9 +20,11 @@ import {
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { updateMessageCuration } from '../api/messageCuration'
 
 type ApiMessage = {
     message: {
+        interaction_id: number
         platform: string
         guild_id: string
         guild_name: string
@@ -37,6 +39,8 @@ type ApiMessage = {
     analysis: {
         sentiment: 'positive' | 'neutral' | 'negative'
         sentiment_score: number
+        relevance: number
+        curation_status: CurationStatus
         topic: string
         keywords: string[]
         highlight: boolean
@@ -52,6 +56,7 @@ type CurationStatus = 'pending' | 'curated' | 'discarded'
 
 type MessageItem = {
     id: string
+    interactionId: number
     initials: string
     author: string
     guild: string
@@ -75,6 +80,12 @@ const API_BASE_URL =
 function Messages() {
     const navigate = useNavigate()
 
+    const [analyzingMessageId, setAnalyzingMessageId] =
+        useState<number | null>(null)
+    const [workflowError, setWorkflowError] =
+        useState<string | null>(null)
+
+
     const [apiData, setApiData] = useState<MessagesApiResponse>({
         total: 0,
         messages: [],
@@ -84,11 +95,13 @@ function Messages() {
     const [channelFilter, setChannelFilter] = useState('all')
     const [sentimentFilter, setSentimentFilter] = useState('all')
     const [timeFilter, setTimeFilter] = useState('all')
-    const [curationFilter, setCurationFilter] = useState('all')
+    const [curationFilter, setCurationFilter] = useState('pending')
     const [curationStatus, setCurationStatus] = useState<
         Record<string, CurationStatus>
     >({})
     const [isRefreshing, setIsRefreshing] = useState(false)
+    const [savingCurationId, setSavingCurationId] = useState<string | null>(null)
+    const [curationError, setCurationError] = useState<string | null>(null)
     const [apiConnected, setApiConnected] = useState(false)
 
     const loadMessages = async () => {
@@ -106,6 +119,14 @@ function Messages() {
             const data: MessagesApiResponse = await response.json()
 
             setApiData(data)
+            setCurationStatus(
+                Object.fromEntries(
+                    data.messages.map(({ message, analysis }) => [
+                        message.message_id,
+                        analysis.curation_status || 'pending',
+                    ]),
+                ),
+            )
             setApiConnected(true)
         } catch (error) {
             console.error('Error cargando mensajes:', error)
@@ -146,12 +167,9 @@ function Messages() {
                     negative: 'Negativo',
                 }[analysis.sentiment]
 
-                const score = Math.round(
-                    Math.max(0, Math.min(1, analysis.sentiment_score)) * 100
-                )
-
                 return {
                     id: message.message_id,
+                    interactionId: message.interaction_id,
                     initials,
                     author,
                     guild: message.guild_name || 'Discord',
@@ -161,13 +179,13 @@ function Messages() {
                     message: message.content,
                     sentiment: analysis.sentiment,
                     sentimentLabel,
-                    sentimentScore: score,
+                    sentimentScore: Math.round(Math.max(0, Math.min(1, analysis.sentiment_score)) * 100),
                     topic: analysis.topic,
                     keywords: analysis.keywords || [],
                     classification: analysis.highlight
                         ? 'Destacado'
                         : 'Mensaje',
-                    relevance: score,
+                    relevance: Math.max(0, Math.min(100, analysis.relevance)),
                     highlight: analysis.highlight,
                 }
             }),
@@ -196,10 +214,6 @@ function Messages() {
 
     const highlightedMessages = messageItems.filter(
         (message) => message.highlight
-    ).length
-
-    const curatedMessages = Object.values(curationStatus).filter(
-        (status) => status === 'curated'
     ).length
 
     const ragIncidents = messageItems.filter(
@@ -259,18 +273,45 @@ function Messages() {
         )
     })
 
-    const markCuration = (
-        messageId: string,
-        status: CurationStatus
+    const markCuration = async (
+        message: MessageItem,
+        status: CurationStatus,
     ) => {
-        setCurationStatus((current) => ({
-            ...current,
-            [messageId]: status,
-        }))
+        if (savingCurationId !== null) return
+
+        setSavingCurationId(message.id)
+        setCurationError(null)
+
+        try {
+            await updateMessageCuration(message.interactionId, status)
+            setCurationStatus((current) => ({
+                ...current,
+                [message.id]: status,
+            }))
+        } catch (error) {
+            setCurationError(
+                error instanceof Error
+                    ? error.message
+                    : 'No se pudo guardar la curadur?a',
+            )
+        } finally {
+            setSavingCurationId(null)
+        }
     }
 
-    const handleAnalyze = (message: MessageItem) => {
-    navigate('/analytics', {
+    const handleAnalyze = async (message: MessageItem) => {
+        if (analyzingMessageId !== null) return
+
+        setAnalyzingMessageId(message.interactionId)
+        setWorkflowError(null)
+
+        try {
+            await updateMessageWorkflow(
+                message.interactionId,
+                'en_analisis',
+            )
+
+            navigate(`/analytics?interaction=${message.interactionId}`, {
         state: {
             source: 'ingesta',
             interaction: {
@@ -286,18 +327,36 @@ function Messages() {
             },
         },
     })
-}
+        } catch (error) {
+            setWorkflowError(
+                error instanceof Error
+                    ? error.message
+                    : 'No fue posible enviar el mensaje a Analisis',
+            )
+        } finally {
+            setAnalyzingMessageId(null)
+        }
+    }
 
     const clearFilters = () => {
         setSearchTerm('')
         setChannelFilter('all')
         setSentimentFilter('all')
         setTimeFilter('all')
-        setCurationFilter('all')
+        setCurationFilter('pending')
     }
 
     return (
         <div className="space-y-6">
+            {workflowError && (
+                <div
+                    role="alert"
+                    className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+                >
+                    {workflowError}
+                </div>
+            )}
+
             {/* Encabezado */}
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
@@ -418,7 +477,7 @@ function Messages() {
                                 </span>
 
                                 <span className="text-slate-400">
-                                    Gateway WebSocket
+                                    Datos almacenados en Motor IA
                                 </span>
                             </div>
                         </div>
@@ -430,11 +489,10 @@ function Messages() {
                                 Listos para curaduría
                             </p>
                             <p className="mt-1 text-lg font-bold text-orange-500">
-                                {Math.max(
-                                    messageItems.length -
-                                        curatedMessages,
-                                    0
-                                )}
+                                {messageItems.filter(
+                                    (message) =>
+                                        (curationStatus[message.id] || 'pending') === 'pending'
+                                ).length}
                             </p>
                         </div>
 
@@ -666,6 +724,12 @@ function Messages() {
                 </div>
             </div>
 
+            {curationError && (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                    No se guardó la curaduría: {curationError}
+                </div>
+            )}
+
             {/* Mensajes */}
             <div className="space-y-4">
                 {filteredMessages.length === 0 && (
@@ -843,7 +907,7 @@ function Messages() {
                                                 title="Pasar a curaduría"
                                                 onClick={() =>
                                                     markCuration(
-                                                        message.id,
+                                                        message,
                                                         'curated'
                                                     )
                                                 }
@@ -860,9 +924,10 @@ function Messages() {
                                             <button
                                                 type="button"
                                                 title="Descartar"
+                                                disabled={savingCurationId !== null}
                                                 onClick={() =>
                                                     markCuration(
-                                                        message.id,
+                                                        message,
                                                         'discarded'
                                                     )
                                                 }
@@ -892,21 +957,13 @@ function Messages() {
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-2">
-                                        <button
-                                            type="button"
-                                            disabled
-                                            title="La función de respuesta se conectará cuando esté definido el backend definitivo"
-                                            className="inline-flex cursor-not-allowed items-center justify-center gap-1 rounded-xl bg-slate-100 px-3 py-2.5 text-xs font-semibold text-slate-500 opacity-70"
-                                        >
-                                            <Send size={13} />
-                                            Responder
-                                        </button>
 
                                         <button
                                             type="button"
                                             onClick={() =>
                                                 handleAnalyze(message)
                                             }
+                                                disabled={analyzingMessageId !== null}
                                             className="inline-flex items-center justify-center gap-1 rounded-xl bg-orange-500 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-orange-600"
                                         >
                                             Analizar

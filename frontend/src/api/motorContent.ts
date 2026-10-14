@@ -1,4 +1,12 @@
+export type MotorAttachment = {
+    filename: string
+    url: string
+    content_type?: string | null
+    size?: number | null
+}
+
 export type MotorContent = {
+    attachments?: MotorAttachment[]
     id: number
     interaccion_id: number | null
     formato: string

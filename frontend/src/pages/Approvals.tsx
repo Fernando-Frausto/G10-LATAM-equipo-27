@@ -1,8 +1,14 @@
 import { CheckCircle2, ShieldCheck, RefreshCcw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState , useRef } from 'react'
 import { getMotorContents } from '../api/motorContent'
+import { confirmManualPublication } from '../api/motorManualPublishing'
 import { reviewContent, type ContentReviewStatus } from '../api/contentReview'
 import MotorApprovalCard from '../components/MotorApprovalCard'
+import {
+    getDiscordPublishingChannels,
+    publishApprovedContent,
+    type DiscordPublishingChannel,
+} from '../api/motorDiscordPublishing'
 import MotorApprovalSummary from '../components/MotorApprovalSummary'
 import MotorApprovalFilters, { type MotorReviewFilter } from '../components/MotorApprovalFilters'
 import { groupMotorApprovals, type MotorApprovalGroups } from '../api/motorApprovalGroups'
@@ -15,8 +21,15 @@ function Approvals() {
     const [motorLoading, setMotorLoading] = useState(false)
     const [motorError, setMotorError] = useState<string | null>(null)
 
+    const [discordChannels, setDiscordChannels] = useState<DiscordPublishingChannel[]>([])
+    const [discordChannelsError, setDiscordChannelsError] = useState<string | null>(null)
+
     const [reloadKey, setReloadKey] = useState(0)
     const [reviewingId, setReviewingId] = useState<number | null>(null)
+    const [publishingId, setPublishingId] = useState<number | null>(null)
+    const publicationInFlightRef = useRef(false)
+    const [publicationLockedIds, setPublicationLockedIds] = useState<number[]>([])
+    const [publicationMessage, setPublicationMessage] = useState<string | null>(null)
     const [reviewMessage, setReviewMessage] = useState<string | null>(null)
 
     useEffect(() => {
@@ -54,6 +67,169 @@ function Approvals() {
         }
     }, [reloadKey])
 
+    useEffect(() => {
+        let active = true
+
+        async function loadDiscordChannels() {
+            try {
+                const channels = await getDiscordPublishingChannels()
+
+                if (active) {
+                    setDiscordChannels(channels)
+                    setDiscordChannelsError(null)
+                }
+            } catch (error) {
+                if (active) {
+                    setDiscordChannels([])
+                    setDiscordChannelsError(
+                        error instanceof Error
+                            ? error.message
+                            : 'No fue posible consultar los canales Discord'
+                    )
+                }
+            }
+        }
+
+        void loadDiscordChannels()
+
+        return () => {
+            active = false
+        }
+    }, [])
+
+    async function handleDiscordPublish(
+        contentId: number,
+        channelId: string,
+    ) {
+        if (
+            publicationInFlightRef.current ||
+            publishingId !== null ||
+            reviewingId !== null
+        ) return
+        if (publicationLockedIds.includes(contentId)) return
+
+        const content = motorGroups
+            ? [
+                ...motorGroups.pending,
+                ...motorGroups.approved,
+                ...motorGroups.adjustments,
+                ...motorGroups.rejected,
+                ...motorGroups.other,
+            ].find((item) => item.id === contentId)
+            : undefined
+
+        if (
+            !content ||
+            content.status !== 'aprobado' ||
+            content.platform !== 'discord' ||
+            content.publication_status !== 'no_publicado'
+        ) {
+            setPublicationMessage(
+                'El contenido no cumple los requisitos de publicacion.'
+            )
+            return
+        }
+
+        if (!discordChannels.some((channel) => channel.id === channelId)) {
+            setPublicationMessage('El canal seleccionado no esta autorizado.')
+            return
+        }
+
+        publicationInFlightRef.current = true
+        setPublishingId(contentId)
+        setPublicationLockedIds((current) =>
+            current.includes(contentId) ? current : [...current, contentId]
+        )
+        setPublicationMessage(null)
+
+        try {
+            const result = await publishApprovedContent(contentId, channelId)
+
+            setPublicationMessage(
+                `Contenido #${contentId} publicado en Discord. ` +
+                `Mensaje: ${result.mensaje_id}`
+            )
+        } catch (error) {
+            setPublicationMessage(
+                `Contenido #${contentId}: resultado no confirmado. ` +
+                `Verifica el estado antes de reintentar. Detalle: ` +
+                (error instanceof Error ? error.message : 'Error desconocido')
+            )
+        } finally {
+            publicationInFlightRef.current = false
+            setPublishingId(null)
+            setReloadKey((current) => current + 1)
+        }
+    }
+
+    async function handleManualPublication(
+        contentId: number,
+        publicationUrl: string,
+    ) {
+        if (
+            publicationInFlightRef.current ||
+            publishingId !== null ||
+            reviewingId !== null ||
+            publicationLockedIds.includes(contentId)
+        ) return
+
+        const content = motorGroups
+            ? [
+                ...motorGroups.pending,
+                ...motorGroups.approved,
+                ...motorGroups.adjustments,
+                ...motorGroups.rejected,
+                ...motorGroups.other,
+            ].find((item) => item.id === contentId)
+            : undefined
+
+        if (
+            !content ||
+            content.status !== 'aprobado' ||
+            (content.platform !== 'linkedin' && content.platform !== 'x') ||
+            content.publication_status !== 'no_publicado'
+        ) {
+            setPublicationMessage(
+                'El contenido no cumple los requisitos de publicacion manual.'
+            )
+            return
+        }
+
+        publicationInFlightRef.current = true
+        setPublishingId(contentId)
+        setPublicationLockedIds((current) =>
+            current.includes(contentId) ? current : [...current, contentId]
+        )
+        setPublicationMessage(null)
+
+        try {
+            const result = await confirmManualPublication(
+                contentId,
+                publicationUrl,
+            )
+
+            if (result.plataforma !== content.platform) {
+                throw new Error(
+                    'La plataforma confirmada no coincide con el contenido.'
+                )
+            }
+
+            setPublicationMessage(
+                `Contenido #${contentId}: publicacion manual registrada en ` +
+                `${result.plataforma.toUpperCase()}. Responsable: ${result.responsable}`
+            )
+        } catch (error) {
+            setPublicationMessage(
+                `Contenido #${contentId}: confirmacion no verificada. ` +
+                `Consulta el estado antes de reintentar. Detalle: ` +
+                (error instanceof Error ? error.message : 'Error desconocido')
+            )
+        } finally {
+            publicationInFlightRef.current = false
+            setPublishingId(null)
+            setReloadKey((current) => current + 1)
+        }
+    }
     async function handleReview(
         contentId: number,
         estado: ContentReviewStatus,
@@ -146,6 +322,15 @@ function Approvals() {
                 </div>
             </div>
 
+            {publicationMessage && (
+                <div
+                    role="status"
+                    className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-800"
+                >
+                    {publicationMessage}
+                </div>
+            )}
+
             {reviewMessage && (
                 <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
                     {reviewMessage}
@@ -166,7 +351,7 @@ function Approvals() {
 
                 {motorError && (
                     <p className="mt-2 text-sm text-red-600">
-                        Error de conexi?n: {motorError}
+                        Error de conexión: {motorError}
                     </p>
                 )}
 
@@ -241,6 +426,16 @@ function Approvals() {
                 />
             )}
 
+            {discordChannelsError && (
+                <div
+                    role="alert"
+                    className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+                >
+                    No se pudieron cargar los canales de Discord:
+                    {' '}{discordChannelsError}
+                </div>
+            )}
+
             {/* CONTENIDOS REALES DEL MOTOR IA */}
             <section className="space-y-4">
                 <div>
@@ -248,7 +443,7 @@ function Approvals() {
                         Contenidos reales del Motor IA
                     </h3>
                     <p className="mt-1 text-sm text-slate-500">
-                        Registros del Motor IA con revisi?n humana habilitada.
+                        Registros del Motor IA con revisión humana habilitada.
                     </p>
                 </div>
 
@@ -276,6 +471,18 @@ function Approvals() {
                             <MotorApprovalCard
                                 key={item.id}
                                 item={item}
+                                discordChannels={discordChannels}
+                                                                onDiscordPublish={handleDiscordPublish}
+                                onManualPublish={handleManualPublication}
+                                manualPublishing={publishingId === item.id}
+                                manualPublicationDisabled={
+                                    motorLoading ||
+                                    reviewingId !== null ||
+                                    publishingId !== null ||
+                                    publicationLockedIds.includes(item.id)
+                                }
+                                publishing={publishingId === item.id}
+                                publicationDisabled={true}
                                 onReview={handleReview}
                                 reviewing={reviewingId === item.id}
                                 reviewDisabled={reviewingId !== null || motorLoading}

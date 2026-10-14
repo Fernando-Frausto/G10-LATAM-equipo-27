@@ -1,3 +1,4 @@
+import { updateMessageWorkflow } from '../api/messageWorkflow'
 import {
     AlertTriangle,
     BarChart3,
@@ -13,6 +14,7 @@ import {
     Zap,
 } from 'lucide-react'
 
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { mockCommunityData } from '../data/mockCommunityData'
 
@@ -28,10 +30,27 @@ type IncomingInteraction = {
     relevance: number
 }
 
-type LocationState = {
-    source?: string
-    interaction?: IncomingInteraction
+type MotorMessageResponse = {
+    messages: Array<{
+        message: {
+            interaction_id: number
+            message_id: string
+            author_name: string
+            channel_name: string
+            content: string
+        }
+        analysis: {
+            sentiment: 'positive' | 'neutral' | 'negative'
+            topic: string
+            keywords: string[]
+            relevance: number
+            workflow_stage: string
+        }
+    }>
 }
+
+const MOTOR_API_URL =
+    import.meta.env.VITE_MOTOR_API_URL || 'http://127.0.0.1:8001'
 
 const emojiScores = [
     {
@@ -124,20 +143,134 @@ function Analytics() {
     const navigate = useNavigate()
     const location = useLocation()
 
-    const state = location.state as LocationState | null
-    const incomingInteraction = state?.interaction
+    const [analysisQueue, setAnalysisQueue] = useState<
+        Array<{ interactionId: number; interaction: IncomingInteraction }>
+    >([])
+    const [queueError, setQueueError] = useState<string | null>(null)
+    const [queueLoading, setQueueLoading] = useState(true)
+    const [sendingToContent, setSendingToContent] = useState(false)
+    const [workflowError, setWorkflowError] = useState<string | null>(null)
+
+    const interactionParam = new URLSearchParams(location.search)
+        .get('interaction')
+
+    const interactionId = interactionParam
+        ? Number(interactionParam)
+        : null
+
+    useEffect(() => {
+        const controller = new AbortController()
+
+        const loadQueue = async () => {
+            setQueueLoading(true)
+            setQueueError(null)
+
+            try {
+                const response = await fetch(
+                    `${MOTOR_API_URL}/api/community/messages?limit=500`,
+                    { signal: controller.signal },
+                )
+
+                if (!response.ok) {
+                    throw new Error('No se pudo consultar la bandeja de Analisis')
+                }
+
+                const data: MotorMessageResponse = await response.json()
+
+                const queue = data.messages
+                    .filter(
+                        (item) =>
+                            item.analysis.workflow_stage === 'en_analisis',
+                    )
+                    .map((item) => {
+                        const sentiment = item.analysis.sentiment
+                        const sentimentLabel = {
+                            positive: 'Positivo',
+                            neutral: 'Neutral',
+                            negative: 'Negativo',
+                        }[sentiment]
+
+                        return {
+                            interactionId: item.message.interaction_id,
+                            interaction: {
+                                id: item.message.message_id,
+                                author: item.message.author_name || 'Usuario',
+                                channel: item.message.channel_name,
+                                content: item.message.content,
+                                sentiment,
+                                sentimentLabel,
+                                topic: item.analysis.topic,
+                                keywords: item.analysis.keywords || [],
+                                relevance: item.analysis.relevance,
+                            },
+                        }
+                    })
+
+                if (!controller.signal.aborted) {
+                    setAnalysisQueue(queue)
+                }
+            } catch (error) {
+                if (!controller.signal.aborted) {
+                    setQueueError(
+                        error instanceof Error
+                            ? error.message
+                            : 'No fue posible recuperar la bandeja',
+                    )
+                }
+            } finally {
+                if (!controller.signal.aborted) {
+                    setQueueLoading(false)
+                }
+            }
+        }
+
+        void loadQueue()
+
+        return () => controller.abort()
+    }, [location.key])
+
+    const selectedQueueItem =
+        analysisQueue.find(
+            (item) => item.interactionId === interactionId,
+        ) ?? analysisQueue[0]
+
+    const incomingInteraction =
+        selectedQueueItem?.interaction ?? null
 
     const analyticsData = mockCommunityData.analytics
 
     const brandAlignment = 100
 
-    const handleSendToContent = (interaction: IncomingInteraction) => {
-        navigate('/content', {
-            state: {
-                source: 'analytics',
-                interaction,
-            },
-        })
+    const handleSendToContent = async (
+        interaction: IncomingInteraction,
+    ) => {
+        if (sendingToContent || !selectedQueueItem) return
+
+        setSendingToContent(true)
+        setWorkflowError(null)
+
+        try {
+            await updateMessageWorkflow(
+                selectedQueueItem.interactionId,
+                'en_redaccion',
+            )
+
+            navigate('/content', {
+                state: {
+                    source: 'analytics',
+                    interaction,
+                    interactionId: selectedQueueItem.interactionId,
+                },
+            })
+        } catch (error) {
+            setWorkflowError(
+                error instanceof Error
+                    ? error.message
+                    : 'No fue posible enviar el mensaje a Redaccion',
+            )
+        } finally {
+            setSendingToContent(false)
+        }
     }
 
     return (
@@ -441,6 +574,83 @@ function Analytics() {
                 </section>
             </div>
 
+            {/* BANDEJA PERSISTENTE DE ANALISIS */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 className="text-base font-bold text-slate-900">
+                            Bandeja de mensajes en Analisis
+                        </h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                            Mensajes guardados en el flujo de trabajo.
+                        </p>
+                    </div>
+                    <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-600">
+                        {analysisQueue.length} en analisis
+                    </span>
+                </div>
+
+                {queueLoading && (
+                    <p className="text-sm text-slate-500">
+                        Cargando mensajes...
+                    </p>
+                )}
+
+                {queueError && (
+                    <p role="alert" className="text-sm text-rose-600">
+                        {queueError}
+                    </p>
+                )}
+
+                {!queueLoading && !queueError && analysisQueue.length === 0 && (
+                    <p className="text-sm text-slate-500">
+                        No hay mensajes pendientes de analisis.
+                    </p>
+                )}
+
+                {analysisQueue.length > 0 && (
+                    <div className="grid gap-2 md:grid-cols-2">
+                        {analysisQueue.map((item) => (
+                            <button
+                                key={item.interactionId}
+                                type="button"
+                                onClick={() =>
+                                    navigate(
+                                        `/analytics?interaction=${item.interactionId}`,
+                                    )
+                                }
+                                className={`rounded-xl border p-4 text-left transition ${
+                                    selectedQueueItem?.interactionId === item.interactionId
+                                        ? 'border-orange-400 bg-orange-50'
+                                        : 'border-slate-200 hover:border-orange-200'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-bold text-slate-800">
+                                        {item.interaction.author}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500">
+                                        #{item.interaction.channel}
+                                    </span>
+                                </div>
+                                <p className="mt-2 line-clamp-2 text-xs text-slate-600">
+                                    {item.interaction.content}
+                                </p>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </section>
+
+            {workflowError && (
+                <div
+                    role="alert"
+                    className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+                >
+                    {workflowError}
+                </div>
+            )}
+
             {/* MENSAJES LISTOS PARA COPYWRITING */}
             <section>
                 <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -557,8 +767,10 @@ function Analytics() {
                                 <button
                                     type="button"
                                     onClick={() =>
-                                        handleSendToContent(incomingInteraction)
+                                        void handleSendToContent(incomingInteraction)
                                     }
+                                    disabled={sendingToContent}
+                                    aria-busy={sendingToContent}
                                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-orange-600"
                                 >
                                     Enviar a Redacción de Contenidos

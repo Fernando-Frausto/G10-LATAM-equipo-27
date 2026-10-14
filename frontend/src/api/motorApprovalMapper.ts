@@ -16,6 +16,7 @@ export type MotorApprovalCard = {
     source_message_id: string | null
     review_notes: string | null
     version: number
+    attachments: NonNullable<MotorContent['attachments']>
     relevance?: number
     sentiment?: number
 }
@@ -58,5 +59,6 @@ export function mapMotorContentToApproval(
         source_message_id: item.source_message_id,
         review_notes: item.observaciones_revision,
         version: item.version,
+        attachments: item.attachments ?? [],
     }
 }
