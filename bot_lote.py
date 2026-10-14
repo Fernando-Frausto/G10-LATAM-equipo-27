@@ -6,7 +6,7 @@ import os
 
 import discord
 
-from armar_json_bot_python import CANALES, construir_paquete
+from armar_json_bot_python import construir_paquete, detectar_canales
 from base_datos import crear_tabla
 from procesamiento import procesar_actividad
 
@@ -25,6 +25,8 @@ except ImportError:
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
     # acepta los dos nombres: DISCORD_BOT_TOKEN (el de este proyecto) y DISCORD_TOKEN (el que usa app.py)
     TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
+    # servidor del que se leen los canales (opcional: solo hace falta si el bot está en más de uno)
+    ID_SERVIDOR = os.getenv("DISCORD_GUILD_ID")
 else:
     import nest_asyncio
 
@@ -33,6 +35,10 @@ else:
         TOKEN = userdata.get("DISCORD_BOT_TOKEN")
     except Exception:
         TOKEN = userdata.get("DISCORD_TOKEN")
+    try:
+        ID_SERVIDOR = userdata.get("DISCORD_GUILD_ID")
+    except Exception:
+        ID_SERVIDOR = None
 
 # None = leer todo el historial de cada canal. Con un límite (por ejemplo 20) se pierden los
 # mensajes más viejos si un canal recibe más mensajes nuevos que ese número entre una corrida
@@ -52,12 +58,17 @@ async def on_ready():
 
     mensajes_totales = []
 
-    for canal_id in CANALES:
-        canal = cliente.get_channel(int(canal_id))
-        if canal is None:
-            print(f"No encontré el canal con ID {canal_id} (¿el bot está en el servidor correcto?)")
-            continue
+    # los canales se detectan solos: todos los de texto que el bot puede leer. Si el bot está
+    # en más de un servidor, DISCORD_GUILD_ID (en .env o Secrets) limita la lectura a uno
+    canales = detectar_canales(cliente.guilds, ID_SERVIDOR)
+    if not canales:
+        print("No encontré canales de texto que el bot pueda leer "
+              "(¿está en el servidor? ¿tiene permisos de Ver canal y Leer historial?)")
+    elif len(cliente.guilds) > 1 and not ID_SERVIDOR:
+        print("Aviso: el bot está en más de un servidor y se leerán todos; "
+              "define DISCORD_GUILD_ID para limitarlo a uno.")
 
+    for canal in canales:
         leidos = 0
         async for mensaje in canal.history(limit=LIMITE_POR_CANAL):
             mensajes_totales.append(mensaje)

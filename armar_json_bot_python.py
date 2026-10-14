@@ -6,12 +6,35 @@ trabajo de procesamiento.py y base_datos.py; el bot solo arma el paquete.
 """
 from periodos import a_utc_iso, semana_de
 
-CANALES = {
-    "1550016804418621452": "#general",
-    "1551309664397033513": "#preguntas",
-    "1551309281041715230": "#chat-egresados",
-    "1551309330198953994": "#oportunidades-laborales",
-}
+# Ya no hay que declarar los canales a mano: el bot los detecta solos al conectarse
+# (detectar_canales). El nombre del canal sale de Discord, con "#" al inicio, igual que
+# antes ("#general", "#preguntas"...), así los hashes de los mensajes ya guardados no cambian.
+
+
+def nombre_canal(canal) -> str:
+    """Nombre del canal como se guarda en la base: '#' + el nombre que tiene en Discord."""
+    nombre = getattr(canal, "name", None)
+    return f"#{nombre}" if nombre else f"#{canal.id}"
+
+
+def detectar_canales(servidores, id_servidor=None) -> list:
+    """Regresa los canales de texto que el bot puede leer, en todos los servidores donde está.
+
+    - id_servidor (opcional): si se pasa, solo se revisa ese servidor. Es recomendable cuando
+      el bot está en más de uno, para no leer canales de comunidades que no son esta.
+    - Solo entran canales donde el bot puede ver el canal y leer el historial; los demás se
+      omiten (se avisan desde bot_lote.py) en vez de fallar a la mitad de la lectura.
+    """
+    canales = []
+    for servidor in servidores:
+        if id_servidor and str(servidor.id) != str(id_servidor):
+            continue
+        for canal in servidor.text_channels:
+            permisos = canal.permissions_for(servidor.me)
+            if permisos.view_channel and permisos.read_message_history:
+                canales.append(canal)
+    return canales
+
 
 ORIGEN_COMUNIDAD = "Discord_Grupo_ONE_G10"
 
@@ -33,7 +56,7 @@ def construir_paquete(mensajes: list) -> dict | None:
             continue
         interacciones.append({
             "autor": str(m.author),
-            "canal": CANALES.get(str(m.channel.id), f"#{m.channel.id}"),
+            "canal": nombre_canal(m.channel),
             "texto": texto,
             # fecha real en que se mandó el mensaje en Discord (no cuándo lo guardé yo),
             # es lo que después permite filtrar los mensajes por periodo
