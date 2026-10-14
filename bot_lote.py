@@ -6,7 +6,7 @@ import os
 
 import discord
 
-from armar_json_bot_python import CANALES, construir_paquete
+from armar_json_bot_python import CANALES, construir_paquete, detectar_canales
 from base_datos import crear_tabla
 from procesamiento import procesar_actividad
 
@@ -25,6 +25,7 @@ except ImportError:
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
     # acepta los dos nombres: DISCORD_BOT_TOKEN (el de este proyecto) y DISCORD_TOKEN (el que usa app.py)
     TOKEN = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
+    ID_SERVIDOR = (os.getenv("DISCORD_GUILD_ID") or "").strip() or None
 else:
     import nest_asyncio
 
@@ -33,6 +34,11 @@ else:
         TOKEN = userdata.get("DISCORD_BOT_TOKEN")
     except Exception:
         TOKEN = userdata.get("DISCORD_TOKEN")
+    try:
+        _guild_id = userdata.get("DISCORD_GUILD_ID")
+        ID_SERVIDOR = str(_guild_id).strip() or None if _guild_id else None
+    except Exception:
+        ID_SERVIDOR = None
 
 # None = leer todo el historial de cada canal. Con un límite (por ejemplo 20) se pierden los
 # mensajes más viejos si un canal recibe más mensajes nuevos que ese número entre una corrida
@@ -50,14 +56,18 @@ cliente = discord.Client(intents=intents)
 async def on_ready():
     print(f"Conectado como {cliente.user}")
 
+    if len(cliente.guilds) > 1 and not ID_SERVIDOR:
+        print("Aviso: Hay más de un servidor conectado y no se configuró DISCORD_GUILD_ID. Se procesarán todos los servidores disponibles.")
+
+    canales = detectar_canales(cliente.guilds, ID_SERVIDOR)
+    if not canales:
+        print("No se encontraron canales de texto autorizados para procesar (verifique permisos 'Ver canales' y 'Leer historial de mensajes', o DISCORD_GUILD_ID).")
+        await cliente.close()
+        return
+
     mensajes_totales = []
 
-    for canal_id in CANALES:
-        canal = cliente.get_channel(int(canal_id))
-        if canal is None:
-            print(f"No encontré el canal con ID {canal_id} (¿el bot está en el servidor correcto?)")
-            continue
-
+    for canal in canales:
         leidos = 0
         async for mensaje in canal.history(limit=LIMITE_POR_CANAL):
             mensajes_totales.append(mensaje)

@@ -6,17 +6,41 @@ trabajo de procesamiento.py y base_datos.py; el bot solo arma el paquete.
 """
 from periodos import a_utc_iso, semana_de
 
-CANALES = {
-    "1550016804418621452": "#general",
-    "1551309664397033513": "#preguntas",
-    "1551309281041715230": "#chat-egresados",
-    "1551309330198953994": "#oportunidades-laborales",
-}
+CANALES = {}
 
 ORIGEN_COMUNIDAD = "Discord_Grupo_ONE_G10"
 
 # la fecha de inicio del proyecto (y cómo se cuentan las semanas) ya no vive aquí:
 # está en periodos.py, para que solo haya un lugar donde cambiarla
+
+
+def nombre_canal(canal) -> str:
+    """Formatea el canal con prefijo '#' sin generar duplicados '##'."""
+    nombre = getattr(canal, "name", None)
+    if nombre:
+        return f"#{nombre.lstrip('#')}"
+    return f"#{getattr(canal, 'id', 'desconocido')}"
+
+
+def detectar_canales(servidores, id_servidor=None) -> list:
+    """Retorna los canales de texto legibles por el bot."""
+    id_servidor_str = str(id_servidor).strip() if id_servidor else None
+    if not id_servidor_str:
+        id_servidor_str = None
+
+    # Si se especificó un ID y no está en los servidores conectados, retorna vacío
+    if id_servidor_str and not any(str(getattr(s, "id", "")) == id_servidor_str for s in servidores):
+        return []
+
+    canales = []
+    for servidor in servidores:
+        if id_servidor_str and str(getattr(servidor, "id", "")) != id_servidor_str:
+            continue
+        for canal in getattr(servidor, "text_channels", []):
+            permisos = canal.permissions_for(servidor.me)
+            if getattr(permisos, "view_channel", False) and getattr(permisos, "read_message_history", False):
+                canales.append(canal)
+    return canales
 
 
 def construir_paquete(mensajes: list) -> dict | None:
@@ -37,7 +61,7 @@ def construir_paquete(mensajes: list) -> dict | None:
             continue
         interacciones.append({
             "autor": str(m.author),
-            "canal": CANALES.get(str(m.channel.id), f"#{m.channel.id}"),
+            "canal": nombre_canal(m.channel),
             "texto": texto,
             # fecha real en que se mandó el mensaje en Discord (no cuándo lo guardé yo),
             # es lo que después permite filtrar los mensajes por periodo

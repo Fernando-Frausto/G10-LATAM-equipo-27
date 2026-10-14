@@ -1,43 +1,25 @@
 {
-  "aprobados": [
-    {
-      "id_mensaje": 58,
-      "autor": "Spidey Boy#0000",
-      "canal_origen": "#general",
-      "comunidad": "Discord_Grupo_ONE_G10",
-      "fecha_envio": "2026-10-08T20:53:10+00:00",
-      "fecha_extraccion": "2026-10-12T20:23:46+00:00",
-      "semana": "Semana_03",
-      "texto_original": "# Nueva comunidad: Los Piratas del Código 🏴‍☠️ Si buscas un espacio para desarrollar tus competencias en programación y tecnología, te presentamos Los Piratas del Código. Es una comunidad diseñada para desarrolladores de todos los niveles —desde grumetes hasta capitanes— donde el objetivo es conquistar el conocimiento técnico y resolver errores complejos (los \"Krakens\" del código) de forma colaborativa. Aquí encontrarás una ruta de aprendizaje orientada a resultados, donde el botín es el conocimiento aplicado para mejorar tu inserción laboral y mantener tu actualización continua. Súmate a nuestro navío y comienza a construir tu propio tesoro profesional. ⚓ Revisa los detalles de acceso en el canal de bienvenida.",
-      "kpis": {
-        "relevancia": 70,
-        "sentimiento": "Positivo",
-        "temas_clave": "#PiratasDelCódigo, #ComunidadTech",
-        "segmento": "Desarrolladores y entusiastas de la programación de todos los niveles",
-        "razonamiento": "El mensaje describe detalladamente una nueva comunidad tech, su objetivo y beneficios, aportando información útil pero sin profundizar técnicamente."
-      },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
-    },
-    {
-      "id_mensaje": 55,
-      "autor": "isseigremory7244",
-      "canal_origen": "#chat-egresados",
-      "comunidad": "Discord_Grupo_ONE_G10",
-      "fecha_envio": "2026-10-03T23:54:08+00:00",
-      "fecha_extraccion": "2026-10-12T20:23:44+00:00",
-      "semana": "Semana_02",
-      "texto_original": "Consegui un nuevo trabajo",
-      "kpis": {
-        "relevancia": 85,
-        "sentimiento": "Positivo",
-        "temas_clave": "#NuevoTrabajo #Éxito",
-        "segmento": "Egresados",
-        "razonamiento": "Es un anuncio de éxito personal relevante para la comunidad de egresados, aunque breve."
-      },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
-    }
-  ],
+  "aprobados": [],
   "descartados": [
+    {
+      "id_mensaje": 59,
+      "autor": "editionab",
+      "canal_origen": "#preguntas",
+      "comunidad": "Discord_Grupo_ONE_G10",
+      "fecha_envio": "2026-10-13T21:47:20+00:00",
+      "fecha_extraccion": "2026-10-14T00:44:02+00:00",
+      "semana": "Semana_04",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
+      "texto_original": "Prueba de integración CloudEdTech: comparto esta imagen para validar que los archivos adjuntos de Discord se registren correctamente en el Motor IA y aparezcan en Content Studio.",
+      "kpis": {
+        "relevancia": 62,
+        "sentimiento": "Positivo",
+        "temas_clave": "#CloudEdTech #Integración #DiscordAttachments",
+        "segmento": "Desarrolladores e integradores de plataformas educativas",
+        "razonamiento": "El mensaje describe una prueba técnica de integración y validación de funcionalidades, aportando información útil pero sin profundizar en discusión o análisis."
+      },
+      "estado_revision": "rechazado"
+    },
     {
       "id_mensaje": 57,
       "autor": "editionab",
@@ -46,15 +28,16 @@
       "fecha_envio": "2026-10-05T18:13:21+00:00",
       "fecha_extraccion": "2026-10-12T20:23:46+00:00",
       "semana": "Semana_03",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
       "texto_original": "La nueva plataforma CloudEdTech me parece excelente, es rápida, clara y muy fácil de utilizar.",
       "kpis": {
-        "relevancia": 60,
+        "relevancia": 50,
         "sentimiento": "Positivo",
         "temas_clave": "#CloudEdTech #Feedback #Usabilidad",
-        "segmento": "usuarios de CloudEdTech",
-        "razonamiento": "El mensaje brinda una valoración positiva con algunos atributos, pero carece de profundidad o detalle adicional."
+        "segmento": "Usuarios de CloudEdTech",
+        "razonamiento": "El mensaje brinda una opinión positiva con algunos atributos, pero sin profundidad ni análisis detallado."
       },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
+      "estado_revision": "rechazado"
     },
     {
       "id_mensaje": 56,
@@ -64,15 +47,35 @@
       "fecha_envio": "2026-10-05T17:13:48+00:00",
       "fecha_extraccion": "2026-10-12T20:23:45+00:00",
       "semana": "Semana_03",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
       "texto_original": "Prueba de integración CloudEdTech con metadatos completos.",
       "kpis": {
         "relevancia": 45,
         "sentimiento": "Neutral",
         "temas_clave": "#CloudEdTech #integración #metadatos",
         "segmento": "Desarrolladores y comunidad tech",
-        "razonamiento": "El mensaje indica una prueba de integración, pero carece de detalle o discusión profunda."
+        "razonamiento": "Es una notificación breve de una prueba de integración, con poca profundidad informativa."
       },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
+      "estado_revision": "rechazado"
+    },
+    {
+      "id_mensaje": 55,
+      "autor": "isseigremory7244",
+      "canal_origen": "#chat-egresados",
+      "comunidad": "Discord_Grupo_ONE_G10",
+      "fecha_envio": "2026-10-03T23:54:08+00:00",
+      "fecha_extraccion": "2026-10-12T20:23:44+00:00",
+      "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
+      "texto_original": "Consegui un nuevo trabajo",
+      "kpis": {
+        "relevancia": 65,
+        "sentimiento": "Positivo",
+        "temas_clave": "#NuevoTrabajo #Éxito",
+        "segmento": "Egresados",
+        "razonamiento": "Es un anuncio breve de logro personal que aporta valor a la comunidad de egresados pero carece de profundidad."
+      },
+      "estado_revision": "rechazado"
     },
     {
       "id_mensaje": 54,
@@ -82,15 +85,16 @@
       "fecha_envio": "2026-10-02T03:31:58+00:00",
       "fecha_extraccion": "2026-10-12T20:23:44+00:00",
       "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
       "texto_original": "Hola a todos, como se consigue trabajo rapido?",
       "kpis": {
-        "relevancia": 35,
+        "relevancia": 45,
         "sentimiento": "Neutral",
         "temas_clave": "#trabajo #empleo #carrera",
-        "segmento": "Personas que buscan empleo o consejo laboral",
-        "razonamiento": "Es una pregunta breve y general sin detalle, por lo que aporta poco valor profundo."
+        "segmento": "Personas que buscan empleo",
+        "razonamiento": "El mensaje es una simple solicitud de consejo sin profundidad ni contexto, por lo que su valor informativo es bajo-medio."
       },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
+      "estado_revision": "rechazado"
     },
     {
       "id_mensaje": 53,
@@ -100,15 +104,16 @@
       "fecha_envio": "2026-10-02T01:35:29+00:00",
       "fecha_extraccion": "2026-10-12T20:23:43+00:00",
       "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
       "texto_original": "Hola, que tal?",
       "kpis": {
         "relevancia": 15,
         "sentimiento": "Positivo",
         "temas_clave": "N/A",
         "segmento": "N/A",
-        "razonamiento": "Saludo breve sin contenido ni información adicional."
+        "razonamiento": "Saludo breve sin contenido sustancial, por lo que su valor y profundidad son mínimos."
       },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
+      "estado_revision": "rechazado"
     },
     {
       "id_mensaje": 52,
@@ -118,15 +123,16 @@
       "fecha_envio": "2026-10-02T00:08:11+00:00",
       "fecha_extraccion": "2026-10-12T20:23:42+00:00",
       "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
       "texto_original": "La plataforma de CloudedTech está excelente y responde muy rápido.",
       "kpis": {
         "relevancia": 50,
         "sentimiento": "Positivo",
         "temas_clave": "#CloudedTech #Rendimiento",
         "segmento": "usuarios de CloudedTech",
-        "razonamiento": "El mensaje brinda una opinión positiva breve sobre la velocidad de la plataforma, aportando algo de valor pero sin profundidad."
+        "razonamiento": "El mensaje brinda feedback positivo breve sobre la velocidad de la plataforma, sin profundizar en detalles."
       },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
+      "estado_revision": "rechazado"
     },
     {
       "id_mensaje": 51,
@@ -136,15 +142,73 @@
       "fecha_envio": "2026-10-01T23:13:28+00:00",
       "fecha_extraccion": "2026-10-12T20:23:42+00:00",
       "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
       "texto_original": "La nueva plataforma de CloudedTech funciona excelente y responde muy rápido.",
       "kpis": {
-        "relevancia": 60,
+        "relevancia": 65,
         "sentimiento": "Positivo",
-        "temas_clave": "#CloudedTech #Rendimiento #Plataforma",
-        "segmento": "Comunidad tecnológica",
-        "razonamiento": "El mensaje brinda feedback positivo sobre la plataforma, pero sin detalle profundo, por lo que su valor es moderado."
+        "temas_clave": "#CloudedTech #Plataforma #Rendimiento",
+        "segmento": "Usuarios de CloudedTech",
+        "razonamiento": "Feedback breve pero útil que indica buen desempeño, sin profundizar demasiado."
       },
-      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido"
+      "estado_revision": "rechazado"
+    },
+    {
+      "id_mensaje": 50,
+      "autor": "editionab",
+      "canal_origen": "#general",
+      "comunidad": "Discord_Grupo_ONE_G10",
+      "fecha_envio": "2026-10-01T23:01:54+00:00",
+      "fecha_extraccion": "2026-10-12T20:23:41+00:00",
+      "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
+      "texto_original": "La plataforma está lenta y tengo un problema cada vez que intento usarla.",
+      "kpis": {
+        "relevancia": 35,
+        "sentimiento": "Negativo",
+        "temas_clave": "#plataforma #lentitud",
+        "segmento": "Usuarios de la plataforma",
+        "razonamiento": "Queja breve sin detalles ni propuestas, por lo que su valor informativo es bajo."
+      },
+      "estado_revision": "rechazado"
+    },
+    {
+      "id_mensaje": 49,
+      "autor": "editionab",
+      "canal_origen": "#general",
+      "comunidad": "Discord_Grupo_ONE_G10",
+      "fecha_envio": "2026-10-01T23:00:58+00:00",
+      "fecha_extraccion": "2026-10-12T20:23:40+00:00",
+      "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
+      "texto_original": "La nueva plataforma está excelente, es muy fácil de usar y responde rápido.",
+      "kpis": {
+        "relevancia": 65,
+        "sentimiento": "Positivo",
+        "temas_clave": "#plataforma #usabilidad #rendimiento",
+        "segmento": "usuarios de la plataforma",
+        "razonamiento": "El mensaje brinda feedback positivo con detalles de usabilidad y velocidad, pero es breve y sin profundidad analítica."
+      },
+      "estado_revision": "rechazado"
+    },
+    {
+      "id_mensaje": 48,
+      "autor": "editionab",
+      "canal_origen": "#chat-egresados",
+      "comunidad": "Discord_Grupo_ONE_G10",
+      "fecha_envio": "2026-10-01T22:54:16+00:00",
+      "fecha_extraccion": "2026-10-12T20:23:40+00:00",
+      "semana": "Semana_02",
+      "modelo_ia": "Groq (openai/gpt-oss-120b) - Rápido",
+      "texto_original": "La plataforma está muy bien organizada y me resulta fácil encontrar la información.",
+      "kpis": {
+        "relevancia": 58,
+        "sentimiento": "Positivo",
+        "temas_clave": "#PlataformaOrganizada, #Usabilidad",
+        "segmento": "egresados",
+        "razonamiento": "Feedback positivo sobre organización y facilidad de uso, aporta valor pero sin profundidad."
+      },
+      "estado_revision": "rechazado"
     }
   ]
 }

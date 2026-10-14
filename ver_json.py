@@ -11,7 +11,7 @@ from periodos import como_fecha, fechas_de_semanas, limites_utc, nombre_zona
 
 
 def obtener_json(canal=None, estado=None, limite="auto", desde=None, hasta=None,
-                 semana_desde=None, semana_hasta=None) -> dict:
+                 semana_desde=None, semana_hasta=None, incluir_bots=False) -> dict:
     """
     Regresa un diccionario con "total", "periodo" e "interacciones" (cada una con id,
     origen_comunidad, periodo_referencia, autor, canal, tipo, texto, enviado_en, estado,
@@ -26,6 +26,7 @@ def obtener_json(canal=None, estado=None, limite="auto", desde=None, hasta=None,
 
     limite: con "auto" son los 100 más recientes, pero sin tope cuando se pide un periodo.
     Si lo pasas tú, se respeta tal cual (None = sin tope).
+    incluir_bots: con False (por defecto) excluye bots y webhooks de la salida.
     """
     pidio_semanas = semana_desde is not None or semana_hasta is not None
     pidio_fechas = desde is not None or hasta is not None
@@ -43,7 +44,7 @@ def obtener_json(canal=None, estado=None, limite="auto", desde=None, hasta=None,
     if limite == "auto":
         limite = None if pidio_periodo else 100
 
-    filas = listar_interacciones(canal, estado, limite, desde_utc, hasta_utc)
+    filas = listar_interacciones(canal, estado, limite, desde_utc, hasta_utc, incluir_bots=incluir_bots)
 
     periodo = None
     if pidio_periodo:
@@ -64,11 +65,14 @@ if __name__ == "__main__":
     parser.add_argument("--semana-desde", type=int, help="primera semana del proyecto")
     parser.add_argument("--semana-hasta", type=int, help="última semana del proyecto (incluida)")
     parser.add_argument("--canal", help='solo ese canal, entre comillas, por ejemplo "#general"')
+    parser.add_argument("--incluir-bots", action="store_true", help="Incluye mensajes de bots y webhooks")
     args = parser.parse_args()
     try:
         paquete = obtener_json(canal=args.canal, desde=args.desde, hasta=args.hasta,
-                               semana_desde=args.semana_desde, semana_hasta=args.semana_hasta)
+                               semana_desde=args.semana_desde, semana_hasta=args.semana_hasta,
+                               incluir_bots=args.incluir_bots)
     except ValueError as error:
         raise SystemExit(f"Error: {error}")
     # ensure_ascii=False para que los acentos y emojis salgan tal cual, no como \u00e9
     print(json.dumps(paquete, indent=2, ensure_ascii=False))
+

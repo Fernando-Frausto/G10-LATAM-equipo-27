@@ -1,4 +1,5 @@
 from ver_json import obtener_json
+from evaluador_lotes import evaluar_lote
 import streamlit as st
 import subprocess
 import json
@@ -64,8 +65,11 @@ try:
     datos_locales = obtener_json(desde=fecha_desde, hasta=fecha_hasta)
     total_mensajes = datos_locales.get("total", 0)
     
-    # Llenar el espacio reservado arriba
-    espacio_contador.info(f"📊 Actualmente hay **{total_mensajes}** mensajes en la base de datos local listos para ser analizados.")
+    if total_mensajes > 0:
+        espacio_contador.info(f"📊 Actualmente hay **{total_mensajes}** mensajes en la base de datos local listos para ser analizados.")
+    elif not error_fechas:
+        espacio_contador.warning("💡 La base de datos está vacía en este entorno. Por favor, haz clic en 'Extraer últimos mensajes de Discord' para inicializarla.")
+        
     with espacio_json.expander("Ver JSON crudo de la Base de Datos"):
         st.json(datos_locales)
         
@@ -85,67 +89,36 @@ modulo_cerebro_nombre = opciones_cerebro[cerebro_elegido]
 limite_mensajes = st.slider("Número de mensajes a analizar (para no agotar tokens en pruebas):", 1, 20, 4)
 
 if st.button("🚀 Ejecutar Análisis", type="primary", disabled=(total_mensajes == 0 or error_fechas)):
-    with st.spinner(f"Analizando {limite_mensajes} mensajes usando {modulo_cerebro_nombre}..."):
+    with st.spinner(f"Analizando {limite_mensajes} mensajes usando {cerebro_elegido}..."):
         try:
-            import importlib
-            # Importación dinámica del cerebro seleccionado
-            modulo_cerebro = importlib.import_module(modulo_cerebro_nombre)
-            importlib.reload(modulo_cerebro) # Recargar por si hubo cambios
-            
             mensajes = datos_locales.get("interacciones", [])
-            
             if not mensajes:
                 st.warning("No hay mensajes en la base de datos para analizar. ¡Ejecuta la extracción primero!")
             else:
-                resultados_destacados = []
-                resultados_descartados = []
-                
                 barra_progreso = st.progress(0)
-                
-                mensajes_a_procesar = mensajes[:limite_mensajes]
-                for idx, msg in enumerate(mensajes_a_procesar):
-                    # Llamada a la IA
-                    respuesta = modulo_cerebro.cadena.invoke({"texto": msg["texto"], "canal": msg["canal"]})
-                    kpis = respuesta.model_dump()
-                    
-                    dato = {
-                        "id_mensaje": msg["id"],
-                        "autor": msg["autor"],
-                        "canal_origen": msg["canal"],
-                        "comunidad": msg.get("origen_comunidad"), 
-                        "fecha_envio": msg.get("enviado_en"),
-                        "fecha_extraccion": msg.get("creado_en"),
-                        "semana": msg.get("periodo_referencia"),
-                        "modelo_ia": cerebro_elegido,
-                        "texto_original": msg["texto"],
-                        "kpis": kpis
-                    }
-                    
-                    if kpis["relevancia"] >= 70:
-                        resultados_destacados.append(dato)
-                    else:
-                        resultados_descartados.append(dato)
-                        
-                    barra_progreso.progress((idx + 1) / len(mensajes_a_procesar))
-                
-                # Guardar el JSON Final
-                paquete_maestro = {
-                    "aprobados": resultados_destacados,
-                    "descartados": resultados_descartados
-                }
-                
-                with open("resultados_kpis.json", "w", encoding="utf-8") as archivo:
-                    json.dump(paquete_maestro, archivo, indent=2, ensure_ascii=False)
+                res = evaluar_lote(
+                    mensajes=mensajes,
+                    nombre_modulo_cerebro=modulo_cerebro_nombre,
+                    nombre_cerebro_legible=cerebro_elegido,
+                    limite=limite_mensajes,
+                    callback_progreso=lambda paso, total: barra_progreso.progress(paso / total),
+                )
 
-                from base_datos import guardar_lote_ia_supabase
-                guardados_supabase = guardar_lote_ia_supabase(paquete_maestro)
-                if guardados_supabase > 0:
-                    st.success(f"✨ Análisis completado: `resultados_kpis.json` generado y {guardados_supabase} registros sincronizados en Supabase (`lotes_ia_kpis`).")
-                else:
-                    st.success("✨ Análisis completado y archivo `resultados_kpis.json` generado con éxito.")
-                
+                if res.get("exito"):
+                    msg_exito = f"✨ Análisis completado: `resultados_kpis.json` generado con {res.get('exitosos', 0)} mensajes."
+                    if res.get("guardados_supabase", 0) > 0:
+                        msg_exito += f" {res.get('guardados_supabase')} registros sincronizados en Supabase (`lotes_ia_kpis`)."
+                    st.success(msg_exito)
+
+                if res.get("fallidos", 0) > 0 and res.get("exitosos", 0) > 0:
+                    st.warning(f"⚠️ {res.get('fallidos')} mensajes presentaron errores durante la inferencia y fueron omitidos.")
+
+                if res.get("exitosos", 0) == 0:
+                    st.error("⚠️ No se pudo procesar ningún mensaje. El lote anterior se mantiene intacto.")
+
         except Exception as e:
-            st.error(f"Error durante la ejecución de la IA: {e}")
+            st.error(f"Error durante la ejecución del análisis: {e}")
+
 
 st.divider()
 
@@ -162,19 +135,27 @@ if os.path.exists("resultados_kpis.json"):
         st.subheader(f"✅ Aprobados ({len(resultados.get('aprobados', []))})")
         for item in resultados.get("aprobados", []):
             with st.container(border=True):
-                st.markdown(f"**Autor:** {item['autor']} | **Canal:** {item['canal_origen']}")
-                st.info(item['texto_original'])
-                st.markdown(f"**Temas:** {item['kpis']['temas_clave']} | **Sentimiento:** {item['kpis']['sentimiento']}")
-                st.caption(f"Razonamiento: {item['kpis']['razonamiento']}")
+                st.markdown(f"**Autor:** {item.get('autor', 'Desconocido')} | **Canal:** {item.get('canal_origen', 'N/A')}")
+                st.info(item.get('texto_original', ''))
+                kpis = item.get('kpis') or {}
+                temas = kpis.get('temas_clave', 'N/A')
+                sentimiento = kpis.get('sentimiento', 'N/A')
+                razonamiento = kpis.get('razonamiento', 'Sin justificación')
+                st.markdown(f"**Temas:** {temas} | **Sentimiento:** {sentimiento}")
+                st.caption(f"Razonamiento: {razonamiento}")
                 
     with col_descartados:
         st.subheader(f"🗑️ Descartados ({len(resultados.get('descartados', []))})")
         for item in resultados.get("descartados", []):
             with st.container(border=True):
-                st.markdown(f"**Autor:** {item['autor']} | **Canal:** {item['canal_origen']}")
-                st.warning(item['texto_original'])
-                st.markdown(f"**Temas:** {item['kpis']['temas_clave']} | **Sentimiento:** {item['kpis']['sentimiento']}")
-                st.caption(f"Razonamiento: {item['kpis']['razonamiento']}")
+                st.markdown(f"**Autor:** {item.get('autor', 'Desconocido')} | **Canal:** {item.get('canal_origen', 'N/A')}")
+                st.warning(item.get('texto_original', ''))
+                kpis = item.get('kpis') or {}
+                temas = kpis.get('temas_clave', 'N/A')
+                sentimiento = kpis.get('sentimiento', 'N/A')
+                razonamiento = kpis.get('razonamiento', 'Sin justificación')
+                st.markdown(f"**Temas:** {temas} | **Sentimiento:** {sentimiento}")
+                st.caption(f"Razonamiento: {razonamiento}")
                 
     st.download_button(
         label="⬇️ Descargar resultados_kpis.json",

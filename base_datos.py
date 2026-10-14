@@ -116,8 +116,23 @@ def _corte_utc(corte) -> str:
     return a_utc_iso(corte)
 
 
+def es_mensaje_bot_o_webhook(item: dict) -> bool:
+    """Determina si un registro corresponde a un bot o webhook de Discord."""
+    autor = (item.get("autor") or "").strip()
+    tipo = (item.get("tipo") or "").strip().lower()
+    if autor == "Spidey Boy#0000":
+        return True
+    if "bot" in autor.lower():
+        return True
+    if autor.endswith("#0000"):
+        return True
+    if tipo in ("bot", "webhook"):
+        return True
+    return False
+
+
 def listar_interacciones(
-    canal=None, estado=None, limite=100, desde_utc=None, hasta_utc=None
+    canal=None, estado=None, limite=100, desde_utc=None, hasta_utc=None, incluir_bots=False
 ) -> list:
     """Regresa las interacciones guardadas como lista de diccionarios (las más recientes primero).
 
@@ -125,6 +140,7 @@ def listar_interacciones(
     desde_utc SÍ incluye ese instante y hasta_utc NO lo incluye, así dos periodos seguidos
     no repiten ni se saltan mensajes. Con limite=None no hay tope de mensajes. Los mensajes
     sin fecha (paquetes armados a mano) no aparecen cuando se filtra por fechas.
+    incluir_bots=False excluye por defecto mensajes de bots y webhooks.
     """
     conexion = obtener_conexion()
     try:
@@ -151,6 +167,12 @@ def listar_interacciones(
                 condiciones.append("enviado_en < %s")
                 parametros.append(_corte_utc(hasta_utc))
 
+            if not incluir_bots:
+                condiciones.append("autor != 'Spidey Boy#0000'")
+                condiciones.append("autor NOT ILIKE '%%bot%%'")
+                condiciones.append("autor NOT LIKE '%%#0000'")
+                condiciones.append("(tipo IS NULL OR tipo NOT IN ('bot', 'webhook'))")
+
             if condiciones:
                 consulta += " WHERE " + " AND ".join(condiciones)
             consulta += " ORDER BY id DESC"
@@ -160,7 +182,10 @@ def listar_interacciones(
 
             cursor.execute(consulta, parametros)
             filas = cursor.fetchall()
-            return [dict(fila) for fila in filas]
+            interacciones = [dict(fila) for fila in filas]
+            if not incluir_bots:
+                interacciones = [f for f in interacciones if not es_mensaje_bot_o_webhook(f)]
+            return interacciones
     finally:
         conexion.close()
 
@@ -225,15 +250,20 @@ def guardar_lote_ia_supabase(paquete_maestro: dict) -> int:
             for decision, llave in [("aprobado", "aprobados"), ("descartado", "descartados")]:
                 for item in paquete_maestro.get(llave, []):
                     kpis = item.get("kpis", {})
+                    if decision == "aprobado" or item.get("estado_revision") == "pendiente":
+                        estado_revision = "pendiente"
+                    else:
+                        estado_revision = "rechazado"
+
                     cursor.execute(
                         """
                         INSERT INTO lotes_ia_kpis (
                             id_mensaje, autor, canal_origen, comunidad, semana,
                             fecha_envio, fecha_extraccion, modelo_ia, texto_original,
                             relevancia, sentimiento, temas_clave, segmento,
-                            razonamiento, decision_ia, analizado_en
+                            razonamiento, decision_ia, estado_revision, analizado_en
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (id_mensaje) DO UPDATE SET
                             comunidad = COALESCE(EXCLUDED.comunidad, lotes_ia_kpis.comunidad),
                             semana = COALESCE(EXCLUDED.semana, lotes_ia_kpis.semana),
@@ -246,7 +276,9 @@ def guardar_lote_ia_supabase(paquete_maestro: dict) -> int:
                             segmento = EXCLUDED.segmento,
                             razonamiento = EXCLUDED.razonamiento,
                             decision_ia = EXCLUDED.decision_ia,
-                            analizado_en = EXCLUDED.analizado_en;
+                            estado_revision = EXCLUDED.estado_revision,
+                            analizado_en = EXCLUDED.analizado_en
+                        WHERE lotes_ia_kpis.estado_revision IN ('pendiente', 'rechazado');
                         """,
                         (
                             item.get("id_mensaje"),
@@ -264,6 +296,7 @@ def guardar_lote_ia_supabase(paquete_maestro: dict) -> int:
                             kpis.get("segmento"),
                             kpis.get("razonamiento"),
                             decision,
+                            estado_revision,
                             ahora_utc,
                         ),
                     )
@@ -271,4 +304,128 @@ def guardar_lote_ia_supabase(paquete_maestro: dict) -> int:
         conexion.commit()
         return total_guardados
     finally:
-        conexion.close()
+        conexion.close()
+
+
+def obtener_lote_kpis_supabase() -> dict | None:
+    """Consulta los registros de lotes_ia_kpis en Supabase y reconstruye el diccionario canónico.
+
+    Retorna {"aprobados": [...], "descartados": [...]} o None si no hay conexión o registros.
+    """
+    url_copy = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+    if not url_copy:
+        return None
+
+    try:
+        try:
+            conexion = obtener_conexion_copywriting()
+        except Exception:
+            conexion = obtener_conexion()
+
+        try:
+            with conexion.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, id_mensaje, autor, canal_origen, comunidad, semana,
+                           fecha_envio, fecha_extraccion, modelo_ia, texto_original,
+                           relevancia, sentimiento, temas_clave, segmento,
+                           razonamiento, decision_ia, estado_revision, analizado_en
+                    FROM lotes_ia_kpis
+                    ORDER BY id_mensaje ASC;
+                    """
+                )
+                filas = cursor.fetchall()
+                if not filas:
+                    return {"aprobados": [], "descartados": []}
+
+                aprobados = []
+                descartados = []
+                for f in filas:
+                    fila_dict = dict(f)
+                    item = {
+                        "id_mensaje": fila_dict.get("id_mensaje"),
+                        "autor": fila_dict.get("autor"),
+                        "canal_origen": fila_dict.get("canal_origen"),
+                        "comunidad": fila_dict.get("comunidad"),
+                        "semana": fila_dict.get("semana"),
+                        "fecha_envio": fila_dict.get("fecha_envio"),
+                        "fecha_extraccion": fila_dict.get("fecha_extraccion"),
+                        "modelo_ia": fila_dict.get("modelo_ia"),
+                        "texto_original": fila_dict.get("texto_original", ""),
+                        "decision_ia": fila_dict.get("decision_ia"),
+                        "estado_revision": fila_dict.get("estado_revision"),
+                        "kpis": {
+                            "relevancia": fila_dict.get("relevancia", 0),
+                            "sentimiento": fila_dict.get("sentimiento", "Neutral"),
+                            "temas_clave": fila_dict.get("temas_clave", "N/A"),
+                            "segmento": fila_dict.get("segmento", "N/A"),
+                            "razonamiento": fila_dict.get("razonamiento", ""),
+                        },
+                    }
+                    estado = str(fila_dict.get("estado_revision") or "").strip().lower()
+                    decision_ia = str(fila_dict.get("decision_ia") or "").strip().lower()
+
+                    if estado in ("aprobado", "procesado"):
+                        es_aprobado = True
+                    elif estado in ("desaprobado", "rechazado"):
+                        es_aprobado = False
+                    elif estado == "pendiente":
+                        es_aprobado = True
+                    else:
+                        # Fallback retrocompatible para registros antiguos
+                        es_aprobado = (decision_ia == "aprobado")
+
+                    if es_aprobado:
+                        item["copy_final"] = fila_dict.get("copy_final") or "Pendiente de redacción por Enoc..."
+                        aprobados.append(item)
+                    else:
+                        descartados.append(item)
+
+                return {"aprobados": aprobados, "descartados": descartados}
+        finally:
+            conexion.close()
+    except Exception:
+        return None
+
+
+def obtener_ultimo_reporte_semanal_supabase() -> dict | None:
+    """Consulta la tabla historial_reportes_semanales en Supabase y retorna el reporte más reciente.
+
+    Retorna el diccionario del reporte o None si no existe o ante error.
+    """
+    url_copy = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+    if not url_copy:
+        return None
+
+    try:
+        try:
+            conexion = obtener_conexion_copywriting()
+        except Exception:
+            conexion = obtener_conexion()
+
+        try:
+            with conexion.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    SELECT reporte_completo, etiqueta
+                    FROM historial_reportes_semanales
+                    ORDER BY id DESC
+                    LIMIT 1;
+                    """
+                )
+                fila = cursor.fetchone()
+                if not fila:
+                    return None
+
+                reporte = fila.get("reporte_completo")
+                if isinstance(reporte, str):
+                    import json
+                    return json.loads(reporte)
+                elif isinstance(reporte, dict):
+                    return reporte
+                return dict(fila)
+        finally:
+            conexion.close()
+    except Exception:
+        return None
+
