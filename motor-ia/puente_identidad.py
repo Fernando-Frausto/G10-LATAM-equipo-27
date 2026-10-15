@@ -4,7 +4,7 @@ from base_datos import obtener_identidad_interaccion
 from adaptador_supabase import buscar_id_supabase
 
 
-def resolver_identidad_supabase(id_local: int) -> dict:
+def resolver_identidad_supabase(id_local: int, *, permitir_conexion: bool = False) -> dict:
     """Resuelve una identidad sin habilitar conexiones externas."""
     identidad = obtener_identidad_interaccion(id_local)
 
@@ -17,11 +17,11 @@ def resolver_identidad_supabase(id_local: int) -> dict:
 
     resultado = buscar_id_supabase(
         identidad["hash"],
-        permitir_conexion=False,
+        permitir_conexion=permitir_conexion,
     )
 
     return {
         "id_local": identidad["id"],
-        "id_supabase": resultado.get("id_supabase"),
-        "estado": resultado.get("motivo"),
+        "id_supabase": resultado.id_supabase,
+        "estado": resultado.motivo,
     }

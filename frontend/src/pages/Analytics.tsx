@@ -1,4 +1,5 @@
 import { updateMessageWorkflow } from '../api/messageWorkflow'
+import { updateMessageCuration } from '../api/messageCuration'
 import {
     AlertTriangle,
     BarChart3,
@@ -16,7 +17,7 @@ import {
 
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { mockCommunityData } from '../data/mockCommunityData'
+
 
 type IncomingInteraction = {
     id: string
@@ -45,106 +46,71 @@ type MotorMessageResponse = {
             keywords: string[]
             relevance: number
             workflow_stage: string
+            curation_status: 'pending' | 'curated' | 'discarded'
         }
     }>
 }
 
 const MOTOR_API_URL =
-    import.meta.env.VITE_MOTOR_API_URL || 'http://127.0.0.1:8001'
+    import.meta.env.VITE_MOTOR_API_URL || 'http://127.0.0.1:8002'
 
-const emojiScores = [
-    {
-        emoji: '🔥',
-        label: 'Fuego',
-        description: 'Entusiasmo / Impacto',
-        value: 248,
-        trend: '+18.4%',
-    },
-    {
-        emoji: '🚀',
-        label: 'Cohete',
-        description: 'Lanzamiento / DevOps',
-        value: 215,
-        trend: '+12.1%',
-    },
-    {
-        emoji: '👍',
-        label: 'Pulgar arriba',
-        description: 'Aprobación',
-        value: 320,
-        trend: '+8.7%',
-    },
-    {
-        emoji: '💡',
-        label: 'Bombilla',
-        description: 'Ideas / Innovación',
-        value: 142,
-        trend: '+15.3%',
-    },
-    {
-        emoji: '⚠️',
-        label: 'Alerta',
-        description: 'Incidencias RAG',
-        value: 86,
-        trend: '-4.2%',
-    },
-]
+type MotorAnalyticsResponse = {
+    sentiment?: {
+        distribution?: Array<{ name: string; value: number }>
+    }
+    topics?: Array<{ topic: string; percentage: number }>
+    hashtags?: Array<{
+        id: number
+        name: string
+        mentions: number
+        growth: number | null
+    }>
+}
 
-const popularHashtags = [
-    { tag: '#ServidoresNVMe', value: 432, trend: '+24%' },
-    { tag: '#EdTech', value: 368, trend: '+18%' },
-    { tag: '#KVM', value: 295, trend: '+31%' },
-    { tag: '#Kubernetes', value: 230, trend: '+15%' },
-    { tag: '#CloudSLA', value: 215, trend: '+9%' },
-    { tag: '#Postgres', value: 180, trend: '+22%' },
-    { tag: '#InfoSec', value: 145, trend: '+12%' },
-    { tag: '#CloudComputing', value: 132, trend: '+16%' },
-    { tag: '#DevOps', value: 118, trend: '+11%' },
-    { tag: '#Virtualizacion', value: 104, trend: '+8%' },
-    { tag: '#IA', value: 96, trend: '+19%' },
-    { tag: '#Backend', value: 84, trend: '+7%' },
-    { tag: '#BasesDeDatos', value: 78, trend: '+14%' },
-    { tag: '#Ciberseguridad', value: 69, trend: '+10%' },
-    { tag: '#ComunidadTech', value: 61, trend: '+6%' },
-]
-
-const keyTopics = [
-    {
-        title: 'Rendimiento de Servidores y Virtualización',
-        description:
-            'Hipervisores KVM, GPU Passthrough, balance de carga y aislamiento multi-tenant.',
-        percentage: 42,
-        icon: BarChart3,
-    },
-    {
-        title: 'Soporte Técnico',
-        description:
-            'Resolución de incidencias críticas en campus, SLAs y tutoriales técnicos.',
-        percentage: 28,
-        icon: MessageSquare,
-    },
-    {
-        title: 'Almacenamiento All-NVMe',
-        description:
-            'Discos PCIe Gen5, reducción de latencia y cifrado de información en reposo.',
-        percentage: 18,
-        icon: ShieldCheck,
-    },
-    {
-        title: 'Migración Multi-Cloud y Kubernetes',
-        description:
-            'Orquestación de pods, escalabilidad, cuotas dinámicas y contención de costes.',
-        percentage: 12,
-        icon: Sparkles,
-    },
-]
+const topicIcons = [BarChart3, MessageSquare, ShieldCheck, Sparkles]
 
 function Analytics() {
     const navigate = useNavigate()
     const location = useLocation()
 
+    const [motorAnalytics, setMotorAnalytics] =
+        useState<MotorAnalyticsResponse | null>(null)
+    const [analyticsError, setAnalyticsError] = useState<string | null>(null)
+
+    useEffect(() => {
+        const controller = new AbortController()
+
+        const loadAnalytics = async () => {
+            try {
+                const response = await fetch(
+                    `${MOTOR_API_URL}/api/community/analytics`,
+                    { signal: controller.signal },
+                )
+                if (!response.ok) {
+                    throw new Error(`Analytics HTTP ${response.status}`)
+                }
+                const data =
+                    (await response.json()) as MotorAnalyticsResponse
+                setMotorAnalytics(data)
+                setAnalyticsError(null)
+            } catch (error) {
+                if (controller.signal.aborted) return
+                setAnalyticsError(
+                    error instanceof Error ? error.message : 'Error de Analytics',
+                )
+            }
+        }
+
+        void loadAnalytics()
+        return () => controller.abort()
+    }, [])
+
     const [analysisQueue, setAnalysisQueue] = useState<
-        Array<{ interactionId: number; interaction: IncomingInteraction }>
+        Array<{
+            interactionId: number
+            curationStatus: 'pending' | 'curated' | 'discarded'
+            interaction: IncomingInteraction
+        }>
     >([])
     const [queueError, setQueueError] = useState<string | null>(null)
     const [queueLoading, setQueueLoading] = useState(true)
@@ -180,7 +146,8 @@ function Analytics() {
                 const queue = data.messages
                     .filter(
                         (item) =>
-                            item.analysis.workflow_stage === 'en_analisis',
+                            item.analysis.workflow_stage === 'en_analisis' &&
+                        item.analysis.curation_status !== 'discarded',
                     )
                     .map((item) => {
                         const sentiment = item.analysis.sentiment
@@ -192,6 +159,7 @@ function Analytics() {
 
                         return {
                             interactionId: item.message.interaction_id,
+                            curationStatus: item.analysis.curation_status,
                             interaction: {
                                 id: item.message.message_id,
                                 author: item.message.author_name || 'Usuario',
@@ -237,14 +205,199 @@ function Analytics() {
     const incomingInteraction =
         selectedQueueItem?.interaction ?? null
 
-    const analyticsData = mockCommunityData.analytics
+    const [messageStats, setMessageStats] = useState<{
+        total: number
+        positive: number
+        relevance: number | null
+        alerts: number
+        priorityAlerts: number
+        questionCount: number
+        frequentQuestionTopic: string | null
+        frequentQuestionTopicCount: number
+    } | null>(null)
 
-    const brandAlignment = 100
+    useEffect(() => {
+        const controller = new AbortController()
+
+        const loadStats = async () => {
+            try {
+                const response = await fetch(
+                    `${MOTOR_API_URL}/api/community/messages?limit=500`,
+                    { signal: controller.signal },
+                )
+                if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+                const data = (await response.json()) as MotorMessageResponse & {
+                    total?: number
+                }
+
+                const messages = data.messages ?? []
+                const analyzed = messages.filter(
+                    (item) => Number.isFinite(Number(item.analysis?.relevance)),
+                )
+                const relevance = analyzed.length
+                    ? analyzed.reduce(
+                          (sum, item) => sum + Number(item.analysis.relevance),
+                          0,
+                      ) / analyzed.length
+                    : null
+
+                const questions = messages.filter((item) => {
+                    const content = item.message?.content?.trim() ?? ''
+                    return content.includes('?') ||
+                        content.includes('?')
+                })
+
+                const questionTopics = new Map<string, number>()
+
+                for (const item of questions) {
+                    const topic = item.analysis?.topic?.trim()
+                    if (
+                        !topic ||
+                        topic.toUpperCase() === 'SIN_CLASIFICAR'
+                    ) continue
+                    questionTopics.set(
+                        topic,
+                        (questionTopics.get(topic) ?? 0) + 1,
+                    )
+                }
+
+                const mostFrequentQuestionTopic =
+                    [...questionTopics.entries()].sort(
+                        (a, b) => b[1] - a[1],
+                    )[0] ?? null
+
+                setMessageStats({
+                    total: data.total ?? messages.length,
+                    positive: messages.filter(
+                        (item) => item.analysis?.sentiment === 'positive',
+                    ).length,
+                    relevance,
+                    alerts: messages.filter(
+                        (item) => item.analysis?.sentiment === 'negative',
+                    ).length,
+                    priorityAlerts: messages.filter(
+                        (item) =>
+                            item.analysis?.sentiment === 'negative' &&
+                            Number(item.analysis?.relevance) >= 70,
+                    ).length,
+                    questionCount: questions.length,
+                    frequentQuestionTopic:
+                        mostFrequentQuestionTopic?.[0] ?? null,
+                    frequentQuestionTopicCount:
+                        mostFrequentQuestionTopic?.[1] ?? 0,
+                })
+            } catch (error) {
+                if (!controller.signal.aborted) {
+                    setAnalyticsError(
+                        error instanceof Error ? error.message : 'Error al consultar mensajes',
+                    )
+                }
+            }
+        }
+
+        void loadStats()
+        return () => controller.abort()
+    }, [])
+
+    const totalMessages = messageStats?.total ?? 0
+    const positivePercentage =
+        messageStats && totalMessages > 0
+            ? (messageStats.positive / totalMessages) * 100
+            : null
+    const relevanceAverage = messageStats?.relevance ?? null
+
+    const popularHashtags = (motorAnalytics?.hashtags ?? [])
+        .slice()
+        .sort((a, b) => b.mentions - a.mentions)
+        .slice(0, 15)
+        .map((item) => ({
+            tag: item.name,
+            value: item.mentions,
+            trend:
+                item.growth === null
+                    ? 'N/D'
+                    : `${item.growth > 0 ? '+' : ''}${item.growth}%`,
+        }))
+
+    const keyTopics = (motorAnalytics?.topics ?? []).map((item, index) => ({
+        title: item.topic,
+        description: 'Tema detectado por el motor de análisis',
+        percentage: item.percentage,
+        icon: topicIcons[index % topicIcons.length],
+    }))
+
+    const brandAlignment = 'N/D'
+
+    const leadingTopic = [...(motorAnalytics?.topics ?? [])]
+        .sort((a, b) => b.percentage - a.percentage)[0]
+
+    const analyticsData = {
+        insights: {
+            main: leadingTopic
+                ? `Tema con mayor presencia: ${leadingTopic.topic} (${leadingTopic.percentage}%).`
+                : 'Sin datos suficientes para identificar el tema principal.',
+            frequent_questions:
+                messageStats === null
+                    ? 'Esperando datos de preguntas del Motor IA.'
+                    : messageStats.questionCount === 0
+                      ? 'No se detectaron preguntas en los mensajes consultados.'
+                      : messageStats.frequentQuestionTopic
+                        ? `${messageStats.questionCount} preguntas detectadas. Tema más frecuente: ${messageStats.frequentQuestionTopic} (${messageStats.frequentQuestionTopicCount} preguntas).`
+                        : `${messageStats.questionCount} preguntas detectadas, sin temas clasificados.`,
+            attention_required:
+                messageStats === null
+                    ? 'Sin datos disponibles sobre mensajes que requieren atención.'
+                    : `${messageStats.alerts} mensajes negativos detectados; ${messageStats.priorityAlerts} con relevancia alta (70 o más).`,
+        },
+    }
+
+
+    const [savingCuration, setSavingCuration] = useState(false)
+
+    const handleReviewCuration = async (
+        status: 'curated' | 'discarded',
+    ) => {
+        if (!selectedQueueItem || savingCuration) return
+
+        const id = selectedQueueItem.interactionId
+        setSavingCuration(true)
+        setWorkflowError(null)
+
+        try {
+            await updateMessageCuration(id, status)
+
+            setAnalysisQueue((current) =>
+                status === 'discarded'
+                    ? current.filter((item) => item.interactionId !== id)
+                    : current.map((item) =>
+                          item.interactionId === id
+                              ? { ...item, curationStatus: status }
+                              : item,
+                      ),
+            )
+        } catch (error) {
+            setWorkflowError(
+                error instanceof Error
+                    ? error.message
+                    : 'No fue posible guardar la curaduría',
+            )
+        } finally {
+            setSavingCuration(false)
+        }
+    }
 
     const handleSendToContent = async (
         interaction: IncomingInteraction,
     ) => {
         if (sendingToContent || !selectedQueueItem) return
+
+        if (selectedQueueItem.curationStatus !== 'curated') {
+            setWorkflowError(
+                'Este mensaje sigue pendiente de curaduría. Debe ser curado antes de enviarlo a Redacción.',
+            )
+            return
+        }
 
         setSendingToContent(true)
         setWorkflowError(null)
@@ -275,6 +428,11 @@ function Analytics() {
 
     return (
         <div className="space-y-8">
+            {analyticsError && (
+                <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    No fue posible actualizar todas las métricas: {analyticsError}
+                </p>
+            )}
             {/* HEADER */}
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
@@ -313,7 +471,7 @@ function Analytics() {
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-6">
                     <MetricCard
                         label="Mensajes analizados"
-                        value={analyticsData.messages_analyzed.toLocaleString('es-CO')}
+                        value={String(totalMessages)}
                         helper="Comunidad Discord"
                         icon={<MessageSquare size={19} />}
                         iconClass="bg-orange-100 text-orange-500"
@@ -321,7 +479,7 @@ function Analytics() {
 
                     <MetricCard
                         label="Sentimiento positivo"
-                        value={`${analyticsData.positive_sentiment}%`}
+                        value={positivePercentage === null ? 'N/D' : `${positivePercentage.toFixed(1)}%`}
                         helper="De los mensajes"
                         icon={<TrendingUp size={19} />}
                         iconClass="bg-emerald-100 text-emerald-600"
@@ -329,7 +487,7 @@ function Analytics() {
 
                     <MetricCard
                         label="Temas detectados"
-                        value={String(analyticsData.topics_detected)}
+                        value={String(motorAnalytics?.topics?.length ?? 0)}
                         helper="Temas principales"
                         icon={<BarChart3 size={19} />}
                         iconClass="bg-blue-100 text-blue-600"
@@ -337,7 +495,7 @@ function Analytics() {
 
                     <MetricCard
                         label="Relevancia promedio"
-                        value={`${analyticsData.average_relevance}%`}
+                        value={relevanceAverage === null ? 'N/D' : relevanceAverage.toFixed(2)}
                         helper="Contenido detectado"
                         icon={<Zap size={19} />}
                         iconClass="bg-purple-100 text-purple-600"
@@ -345,7 +503,7 @@ function Analytics() {
 
                     <MetricCard
                         label="Alineación de marca"
-                        value={`${brandAlignment}%`}
+                        value={String(brandAlignment)}
                         helper="Consistencia de tono CloudEdTech"
                         icon={<ShieldCheck size={19} />}
                         iconClass="bg-emerald-100 text-emerald-600"
@@ -354,7 +512,7 @@ function Analytics() {
 
                     <MetricCard
                         label="Alertas"
-                        value={String(analyticsData.alerts)}
+                        value={messageStats === null ? "N/D" : String(messageStats.priorityAlerts)}
                         helper="Requieren atención"
                         icon={<AlertTriangle size={19} />}
                         iconClass="bg-red-100 text-red-500"
@@ -388,7 +546,7 @@ function Analytics() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                    {emojiScores.map((item) => {
+                    {([] as Array<{emoji: string; label: string; description: string; value: number; trend: string}>).map((item) => {
                         const negative = item.trend.startsWith('-')
 
                         return (
@@ -454,7 +612,7 @@ function Analytics() {
                     <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
                         {popularHashtags.map((hashtag, index) => {
                             const percentage =
-                                (hashtag.value / popularHashtags[0].value) * 100
+                                popularHashtags[0]?.value ? (hashtag.value / popularHashtags[0].value) * 100 : 0
 
                             return (
                                 <div
@@ -662,11 +820,11 @@ function Analytics() {
 
                         <div>
                             <h2 className="font-bold text-slate-900">
-                                Mensajes listos para Copywriting
+                                Revisión de mensajes y curaduría
                             </h2>
 
                             <p className="mt-0.5 text-xs text-slate-500">
-                                Interacciones que cumplen los criterios de relevancia, tono y utilidad.
+                                Revisa las interacciones antes de habilitar su envío a Redacción.
                             </p>
                         </div>
                     </div>
@@ -709,7 +867,9 @@ function Analytics() {
 
                                 <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
                                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                                    Listo para Copywriting
+                                    {selectedQueueItem?.curationStatus === 'curated'
+                                        ? 'Listo para Copywriting'
+                                        : 'Pendiente de curadur?a'}
                                 </span>
                             </div>
 
@@ -764,14 +924,49 @@ function Analytics() {
                                     </span>
                                 </div>
 
+                                {selectedQueueItem?.curationStatus === 'pending' && (
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            disabled={savingCuration}
+                                            onClick={() => void handleReviewCuration('curated')}
+                                            className="rounded-xl bg-emerald-600 px-4 py-3 text-xs font-bold text-white disabled:opacity-50"
+                                        >
+                                            Aprobar curaduría
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={savingCuration}
+                                            onClick={() => void handleReviewCuration('discarded')}
+                                            className="rounded-xl border border-rose-300 px-4 py-3 text-xs font-bold text-rose-600 disabled:opacity-50"
+                                        >
+                                            Descartar
+                                        </button>
+                                    </div>
+                                )}
+
+                                {selectedQueueItem?.curationStatus === 'pending' && (
+                                    <p className="text-xs text-amber-700">
+                                        Pendiente de curaduría: aprueba el mensaje
+                                        para habilitar su envío a Redacción.
+                                    </p>
+                                )}
                                 <button
                                     type="button"
                                     onClick={() =>
                                         void handleSendToContent(incomingInteraction)
                                     }
-                                    disabled={sendingToContent}
+                                    disabled={
+                                        sendingToContent ||
+                                        savingCuration ||
+                                        selectedQueueItem?.curationStatus !== 'curated'
+                                    }
                                     aria-busy={sendingToContent}
-                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-orange-600"
+                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-xs font-bold text-white shadow-sm transition ${
+                                        selectedQueueItem?.curationStatus === 'curated'
+                                            ? 'bg-orange-500 hover:bg-orange-600'
+                                            : 'cursor-not-allowed bg-slate-400 opacity-70'
+                                    }`}
                                 >
                                     Enviar a Redacción de Contenidos
                                     <ChevronRight size={15} />
@@ -847,11 +1042,13 @@ function Analytics() {
                         </p>
 
                         <p className="mt-1 text-xs leading-5 text-blue-700">
-                            Las métricas complementarias de emojis, hashtags,
-                            alineación de marca y temas clave quedan preparadas
-                            visualmente para conectarse al Motor IA definitivo.
-                            Las interacciones seleccionadas desde Ingesta pueden
-                            continuar hacia Redacción de Contenidos.
+                            CloudEdTech consulta estad?sticas de sentimiento,
+                            temas y hashtags desde el Motor IA. Las preguntas
+                            frecuentes y alertas se calculan con los mensajes
+                            reales disponibles de Discord. El flujo editorial
+                            conecta Ingesta, An?lisis, Redacci?n de Contenidos
+                            y Aprobaciones. Algunas m?tricas complementarias
+                            siguen pendientes de integraci?n.
                         </p>
                     </div>
                 </div>

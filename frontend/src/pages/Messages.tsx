@@ -1,6 +1,5 @@
 import { updateMessageWorkflow } from '../api/messageWorkflow'
 import {
-    Check,
     ChevronRight,
     CirclePlus,
     Clock3,
@@ -41,6 +40,7 @@ type ApiMessage = {
         sentiment_score: number
         relevance: number
         curation_status: CurationStatus
+        workflow_stage: string
         topic: string
         keywords: string[]
         highlight: boolean
@@ -57,6 +57,7 @@ type CurationStatus = 'pending' | 'curated' | 'discarded'
 type MessageItem = {
     id: string
     interactionId: number
+    workflowStage: string
     initials: string
     author: string
     guild: string
@@ -170,6 +171,7 @@ function Messages() {
                 return {
                     id: message.message_id,
                     interactionId: message.interaction_id,
+                    workflowStage: analysis.workflow_stage,
                     initials,
                     author,
                     guild: message.guild_name || 'Discord',
@@ -216,10 +218,22 @@ function Messages() {
         (message) => message.highlight
     ).length
 
-    const ragIncidents = messageItems.filter(
-        (message) =>
-            message.sentiment === 'negative' &&
-            message.relevance >= 70
+
+
+    const pendingIngestion = messageItems.filter((message) =>
+        (message.workflowStage === 'ingesta' ||
+            message.workflowStage === 'en_ingesta') &&
+        !message.author.toLowerCase().includes('cloudedtech community bot') &&
+        (curationStatus[message.id] ?? 'pending') === 'pending'
+    ).length
+
+    const priorityIncidents = messageItems.filter((message) =>
+        (message.workflowStage === 'ingesta' ||
+            message.workflowStage === 'en_ingesta') &&
+        !message.author.toLowerCase().includes('cloudedtech community bot') &&
+        (curationStatus[message.id] ?? 'pending') !== 'discarded' &&
+        message.sentiment === 'negative' &&
+        message.relevance >= 70
     ).length
 
     const matchesTimeFilter = (date: Date) => {
@@ -237,6 +251,23 @@ function Messages() {
     }
 
     const filteredMessages = messageItems.filter((message) => {
+        // La bandeja activa solo muestra mensajes en Ingesta.
+        if (
+            message.workflowStage !== 'ingesta' &&
+            message.workflowStage !== 'en_ingesta'
+        ) {
+            return false
+        }
+
+        // Evitar que las respuestas del bot reingresen al flujo editorial.
+        if (message.author.toLowerCase().includes('cloudedtech community bot')) {
+            return false
+        }
+
+        if ((curationStatus[message.id] ?? 'pending') === 'discarded') {
+            return false
+        }
+
         const search = searchTerm.trim().toLowerCase()
 
         const matchesSearch =
@@ -306,10 +337,28 @@ function Messages() {
         setWorkflowError(null)
 
         try {
-            await updateMessageWorkflow(
-                message.interactionId,
-                'en_analisis',
-            )
+            const currentCuration =
+                curationStatus[message.id] ?? 'pending'
+
+            if (currentCuration === 'discarded') {
+                throw new Error(
+                    'Este mensaje fue descartado y no puede avanzar a An?lisis.',
+                )
+            }
+
+            if (
+                message.workflowStage === 'ingesta' ||
+                message.workflowStage === 'en_ingesta'
+            ) {
+                await updateMessageWorkflow(
+                    message.interactionId,
+                    'en_analisis',
+                )
+            } else if (message.workflowStage !== 'en_analisis') {
+                throw new Error(
+                    `El mensaje está en la etapa ${message.workflowStage} y no puede enviarse nuevamente a Análisis.`,
+                )
+            }
 
             navigate(`/analytics?interaction=${message.interactionId}`, {
         state: {
@@ -485,23 +534,14 @@ function Messages() {
 
                     <div className="flex divide-x divide-slate-200 rounded-xl border border-slate-100">
                         <div className="px-6 py-2 text-center">
-                            <p className="text-xs font-medium text-slate-500">
-                                Listos para curaduría
-                            </p>
-                            <p className="mt-1 text-lg font-bold text-orange-500">
-                                {messageItems.filter(
-                                    (message) =>
-                                        (curationStatus[message.id] || 'pending') === 'pending'
-                                ).length}
-                            </p>
+                            <p className="text-xs font-medium text-slate-500">Pendientes en Ingesta</p>
+                            <p className="mt-1 text-lg font-bold text-orange-500">{pendingIngestion}</p>
                         </div>
 
                         <div className="px-6 py-2 text-center">
-                            <p className="text-xs font-medium text-slate-500">
-                                Incidentes RAG
-                            </p>
+                            <p className="text-xs font-medium text-slate-500">Incidentes prioritarios</p>
                             <p className="mt-1 text-lg font-bold text-rose-600">
-                                {ragIncidents}
+                                {priorityIncidents}
                             </p>
                         </div>
                     </div>
@@ -901,25 +941,8 @@ function Messages() {
                                             status={status}
                                         />
 
-                                        <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-white p-1">
-                                            <button
-                                                type="button"
-                                                title="Pasar a curaduría"
-                                                onClick={() =>
-                                                    markCuration(
-                                                        message,
-                                                        'curated'
-                                                    )
-                                                }
-                                                className={`flex h-9 items-center justify-center rounded-lg transition ${
-                                                    status ===
-                                                    'curated'
-                                                        ? 'bg-emerald-600 text-white'
-                                                        : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'
-                                                }`}
-                                            >
-                                                <Check size={15} />
-                                            </button>
+                                        <div className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1">
+
 
                                             <button
                                                 type="button"

@@ -1,4 +1,4 @@
-﻿from base_datos import guardar_analisis, listar_interacciones
+from base_datos import guardar_analisis, listar_interacciones
 from cerebro_ia import cadena
 
 
@@ -97,4 +97,36 @@ def reanalizar_interacciones(ids: list[int]) -> dict:
         "encontrados": len(seleccionados),
         "analizados": analizados,
         "errores": errores,
+    }
+
+
+def preparar_copywriting_desde_analisis(
+    ids_locales: list[int],
+    *,
+    permitir_conexion: bool = False,
+) -> dict:
+    """Prepara registros Copywriting sin escribir datos remotos."""
+    from adaptador_copywriting import preparar_resultado_copywriting
+
+    preparados = []
+    errores = []
+
+    for id_local in ids_locales:
+        try:
+            registro = preparar_resultado_copywriting(
+                id_local,
+                permitir_conexion=permitir_conexion,
+            )
+            preparados.append(registro)
+        except Exception as exc:
+            errores.append({
+                "id_local": id_local,
+                "error": str(exc),
+            })
+
+    return {
+        "preparados": preparados,
+        "errores": errores,
+        "total_preparados": len(preparados),
+        "total_errores": len(errores),
     }

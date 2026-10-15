@@ -1,5 +1,9 @@
 import { CheckCircle2, Clock, MessageCircle, Send } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import {
+    getMotorMessageOrigin,
+    type MotorMessageOrigin,
+} from '../api/motorMessageOrigin'
 import type { ContentReviewStatus } from '../api/contentReview'
 import type { DiscordPublishingChannel } from '../api/motorDiscordPublishing'
 import type { MotorApprovalCard as MotorApprovalCardData } from '../api/motorApprovalMapper'
@@ -10,7 +14,12 @@ type Props = {
     reviewing: boolean
     reviewDisabled: boolean
     discordChannels?: DiscordPublishingChannel[]
-    onDiscordPublish: (contentId: number, channelId: string) => void
+    onDiscordPublish: (
+        contentId: number,
+        channelId: string,
+        modo?: "publicacion" | "respuesta",
+        mensajeOriginalId?: string,
+    ) => void
     publishing: boolean
     publicationDisabled: boolean
     onManualPublish: (contentId: number, publicationUrl: string) => void
@@ -61,6 +70,46 @@ export default function MotorApprovalCard({
     manualPublicationDisabled,
 }: Props) {
     const [selectedDiscordChannel, setSelectedDiscordChannel] = useState('')
+    const [discordPublishMode, setDiscordPublishMode] = useState<"publicacion" | "respuesta">("publicacion")
+    const [messageOrigin, setMessageOrigin] = useState<MotorMessageOrigin | null>(null)
+    const [originLoading, setOriginLoading] = useState(false)
+    const [originError, setOriginError] = useState(false)
+
+    useEffect(() => {
+        let active = true
+        const interactionId = item.interaction_id
+
+        setMessageOrigin(null)
+        setOriginError(false)
+        setOriginLoading(interactionId !== null)
+
+        if (interactionId !== null) {
+            void getMotorMessageOrigin(interactionId)
+                .then((origin) => {
+                    if (active) setMessageOrigin(origin)
+                })
+                .catch(() => {
+                    if (active) setOriginError(true)
+                })
+                .finally(() => {
+                    if (active) setOriginLoading(false)
+                })
+        }
+
+        return () => {
+            active = false
+        }
+    }, [item.interaction_id])
+
+    const originIsBot = Boolean(
+        messageOrigin?.autor?.toLowerCase().startsWith('cloudedtech community bot'),
+    )
+
+    const originUnverified = item.interaction_id !== null &&
+        (originLoading || originError || !messageOrigin)
+
+    const publicationBlockedByOrigin = originIsBot || originUnverified
+
     const [manualPublicationOpen, setManualPublicationOpen] = useState(false)
     const [manualPublicationUrl, setManualPublicationUrl] = useState('')
 
@@ -112,38 +161,46 @@ export default function MotorApprovalCard({
         onManualPublish(item.id, url)
     }
     function confirmDiscordPublication() {
-        if (
-            item.status !== 'aprobado' ||
-            item.publication_status !== 'no_publicado'
-        ) {
+        if (publicationBlockedByOrigin || publicationDisabled || publishing) return
+        if (item.status !== "aprobado" || item.publication_status !== "no_publicado") return
+
+        const isReply = discordPublishMode === "respuesta"
+        const channelId = isReply ? messageOrigin?.channel_id : selectedDiscordChannel
+        const channel = discordChannels.find((entry) => entry.id === channelId)
+
+        if (!channel || !channelId) {
+            window.alert("Selecciona un canal autorizado de Discord.")
+            return
+        }
+        if (isReply && (!messageOrigin?.message_id || originIsBot)) {
+            window.alert("No se pudo verificar el mensaje original para responder.")
             return
         }
 
-        const channel = discordChannels.find(
-            (entry) => entry.id === selectedDiscordChannel
-        )
-
-        if (!channel) {
-            return
-        }
-
-        const attachmentWarning = item.attachments.length > 0
-            ? `\n\nADVERTENCIA: Este contenido tiene ${item.attachments.length} archivo(s) adjunto(s). El publicador actual enviara solamente texto.`
-            : ''
+        const discordMessage = [
+            item.title?.trim(),
+            item.content?.trim(),
+            item.call_to_action?.trim(),
+            item.hashtags?.join(" ").trim(),
+        ].filter(Boolean).join("\n\n")
 
         const confirmation = window.confirm(
-            `?Confirmas la publicacion del contenido #${item.id}?` +
-            `\nTitulo: ${item.title}` +
-            `\nCanal de destino: #${channel.nombre}` +
-            attachmentWarning +
-            `\n\nEsta accion enviara un mensaje real a Discord cuando se habilite la integracion.`
+            `CONFIRMAR ENVIO REAL A DISCORD` +
+            `\n\nContenido #${item.id}` +
+            `\nModalidad: ${isReply ? "Responder mensaje original" : "Nueva publicacion"}` +
+            `\nCanal: #${channel.nombre}` +
+            (isReply ? `\nMensaje original: ${messageOrigin?.message_id}` : "") +
+            (item.attachments?.length
+                ? `\n\nAVISO: Este contenido tiene ${item.attachments.length} archivo(s) adjunto(s).` +
+                  `\nLa publicacion enviara SOLO TEXTO. Los archivos NO se adjuntaran al mensaje de Discord.`
+                : "") +
+            `\n\nCONTENIDO APROBADO:` +
+            `\n${discordMessage}` +
+            `\n\nConfirma solo si deseas enviar este contenido realmente a Discord.`
         )
-
         if (!confirmation) return
 
-        if (!publicationDisabled && !publishing) {
-            onDiscordPublish(item.id, selectedDiscordChannel)
-        }
+        onDiscordPublish(item.id, channelId, discordPublishMode, isReply ? messageOrigin?.message_id : undefined)
     }
 
     return (
@@ -156,6 +213,9 @@ export default function MotorApprovalCard({
 
                     <div>
                         <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">
+                                Contenido #{item.id}
+                            </span>
                             <h3 className="font-bold text-slate-900">
                                 {item.title}
                             </h3>
@@ -173,6 +233,59 @@ export default function MotorApprovalCard({
                             Canal de origen: {item.source_channel_id || 'Sin definir'}
                             {' · '}Versión {item.version}
                         </p>
+
+       {item.platform === 'discord' && item.interaction_id !== null && (
+         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+           <p className="font-semibold text-slate-800">
+             Origen de la interaccion #{item.interaction_id}
+           </p>
+
+           {originLoading && (
+             <p className="mt-1 text-slate-500">Consultando mensaje original...</p>
+           )}
+
+           {originError && (
+             <p className="mt-1 text-amber-700">
+               No fue posible verificar el origen. Publicacion bloqueada.
+             </p>
+           )}
+
+           {messageOrigin && (
+             <>
+               <p className="mt-1 text-slate-700">
+                 Autor: {messageOrigin.autor || 'No identificado'}
+               </p>
+               <p className="text-slate-700">
+                 Canal de origen: {discordChannels.find(
+                   (channel) => channel.id === messageOrigin.channel_id,
+                 )?.nombre
+                   ? `#${discordChannels.find(
+                       (channel) => channel.id === messageOrigin.channel_id,
+                     )?.nombre}`
+                   : messageOrigin.channel_id}
+               </p>
+               {messageOrigin.guild_id &&
+                 messageOrigin.channel_id &&
+                 messageOrigin.message_id && (
+                   <a
+                     href={`https://discord.com/channels/${messageOrigin.guild_id}/${messageOrigin.channel_id}/${messageOrigin.message_id}`}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="mt-1 inline-block font-medium text-blue-700 underline"
+                   >
+                     Ver mensaje original en Discord
+                   </a>
+                 )}
+               {originIsBot && (
+                 <p className="mt-2 font-semibold text-amber-700">
+                   Mensaje generado por el propio bot. Publicacion bloqueada.
+                 </p>
+               )}
+             </>
+           )}
+         </div>
+       )}
+
                     </div>
                 </div>
 
@@ -381,17 +494,32 @@ export default function MotorApprovalCard({
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="flex items-center gap-2 text-sm font-semibold text-emerald-600">
                             <CheckCircle2 size={18} />
-                            Revisi?n completada
+                            Revisión completada
                         </div>
 
                         {item.platform === 'discord' &&
                             item.publication_status === 'no_publicado' && (
                             <div className="flex flex-wrap items-center gap-2">
                                 <select
+                                    aria-label={`Modalidad Discord para contenido ${item.id}`}
+                                    value={discordPublishMode}
+                                    onChange={(event) => setDiscordPublishMode(event.target.value as "publicacion" | "respuesta")}
+                                    disabled={publishing || publicationDisabled}
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 disabled:opacity-50"
+                                >
+                                    <option value="publicacion">Nueva publicación</option>
+                                    <option value="respuesta" disabled={!messageOrigin?.message_id || originIsBot || originUnverified}>Responder mensaje original</option>
+                                </select>
+                                {discordPublishMode === "respuesta" && messageOrigin && (
+                                    <span className="text-xs text-slate-600">
+                                        Respuesta en canal original: #{discordChannels.find((c) => c.id === messageOrigin.channel_id)?.nombre || messageOrigin.channel_id}
+                                    </span>
+                                )}
+                                <select
                                     aria-label={`Canal Discord para contenido ${item.id}`}
                                     value={selectedDiscordChannel}
                                     onChange={(event) => setSelectedDiscordChannel(event.target.value)}
-                                    disabled={discordChannels.length === 0 || publishing || publicationDisabled}
+                                    disabled={discordPublishMode === "respuesta" || discordChannels.length === 0 || publishing || publicationDisabled}
                                     className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 disabled:opacity-50"
                                 >
                                     <option value="" disabled>
@@ -406,13 +534,14 @@ export default function MotorApprovalCard({
 
                                 <button
                                     type="button"
-                                    disabled={
-                                        publicationDisabled ||
-                                        publishing ||
+                                    disabled={publicationDisabled || publishing || publicationBlockedByOrigin ||
                                         !discordChannels.some(
-                                            (channel) =>
-                                                channel.id === selectedDiscordChannel
-                                        )
+                                            (channel) => channel.id === (
+                                                discordPublishMode === "respuesta"
+                                                    ? messageOrigin?.channel_id
+                                                    : selectedDiscordChannel
+                                            )
+                                        ) || (discordPublishMode === "respuesta" && !messageOrigin?.message_id)
                                     }
                                     onClick={confirmDiscordPublication}
                                     title={

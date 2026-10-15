@@ -40,13 +40,15 @@ export async function getDiscordPublishingChannels():
 export async function publishApprovedContent(
     contentId: number,
     channelId: string,
+    modo: "publicacion" | "respuesta" = "publicacion",
+    mensajeOriginalId?: string,
 ): Promise<DiscordPublishResponse> {
 
     if (!Number.isInteger(contentId) || contentId <= 0) {
         throw new Error('Identificador de contenido invalido')
     }
 
-    if (!/^\\d+$/.test(channelId)) {
+    if (!/^\d+$/.test(channelId)) {
         throw new Error('Canal de Discord invalido')
     }
 
@@ -56,6 +58,8 @@ export async function publishApprovedContent(
             method: 'POST',
             body: JSON.stringify({
                 canal_id: channelId,
+                modo,
+                mensaje_original_id: modo === "respuesta" ? mensajeOriginalId : null,
             }),
         },
     ) as DiscordPublishResponse

@@ -1,3 +1,4 @@
+import RecoverDiscordMessagesModal from '../components/RecoverDiscordMessagesModal'
 import { CheckCircle2, ShieldCheck, RefreshCcw } from 'lucide-react'
 import { useEffect, useState , useRef } from 'react'
 import { getMotorContents } from '../api/motorContent'
@@ -14,6 +15,7 @@ import MotorApprovalFilters, { type MotorReviewFilter } from '../components/Moto
 import { groupMotorApprovals, type MotorApprovalGroups } from '../api/motorApprovalGroups'
 
 function Approvals() {
+    const [recoverModalOpen, setRecoverModalOpen] = useState(false)
     const [motorActiveFilter, setMotorActiveFilter] =
         useState<MotorReviewFilter>('pending')
 
@@ -100,6 +102,8 @@ function Approvals() {
     async function handleDiscordPublish(
         contentId: number,
         channelId: string,
+        modo: "publicacion" | "respuesta" = "publicacion",
+        mensajeOriginalId?: string,
     ) {
         if (
             publicationInFlightRef.current ||
@@ -143,18 +147,35 @@ function Approvals() {
         setPublicationMessage(null)
 
         try {
-            const result = await publishApprovedContent(contentId, channelId)
+            const result = await publishApprovedContent(contentId, channelId, modo, mensajeOriginalId)
 
             setPublicationMessage(
                 `Contenido #${contentId} publicado en Discord. ` +
                 `Mensaje: ${result.mensaje_id}`
             )
         } catch (error) {
-            setPublicationMessage(
-                `Contenido #${contentId}: resultado no confirmado. ` +
-                `Verifica el estado antes de reintentar. Detalle: ` +
-                (error instanceof Error ? error.message : 'Error desconocido')
-            )
+            const detail = error instanceof Error
+                ? error.message
+                : 'Error desconocido'
+
+            const invalidChannel =
+                /canal de discord invalido|canal de discord inv?lido/i.test(detail)
+
+            if (invalidChannel) {
+                setPublicationLockedIds((current) =>
+                    current.filter((id) => id !== contentId)
+                )
+                setPublicationMessage(
+                    `Contenido #${contentId}: el servidor rechazo el canal seleccionado. ` +
+                    `El contenido no fue confirmado como publicado. ` +
+                    `Puedes seleccionar otro canal autorizado. Detalle: ${detail}`
+                )
+            } else {
+                setPublicationMessage(
+                    `Contenido #${contentId}: resultado no confirmado. ` +
+                    `Verifica el estado antes de reintentar. Detalle: ${detail}`
+                )
+            }
         } finally {
             publicationInFlightRef.current = false
             setPublishingId(null)
@@ -268,14 +289,14 @@ function Approvals() {
             })
 
             setReviewMessage(
-                `Contenido #${contentId}: revisi?n guardada correctamente.`
+                `Contenido #${contentId}: revisión guardada correctamente.`
             )
             setReloadKey((actual) => actual + 1)
         } catch (error) {
             setReviewMessage(
                 error instanceof Error
                     ? error.message
-                    : 'No fue posible guardar la revisi?n.'
+                    : 'No fue posible guardar la revisión.'
             )
         } finally {
             setReviewingId(null)
@@ -284,6 +305,11 @@ function Approvals() {
 
     return (
         <div className="space-y-8">
+            <RecoverDiscordMessagesModal
+                open={recoverModalOpen}
+                onClose={() => setRecoverModalOpen(false)}
+                channels={discordChannels}
+            />
             {/* ENCABEZADO */}
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-3">
@@ -307,7 +333,7 @@ function Approvals() {
                     <button
                         type="button"
                         disabled={motorLoading || reviewingId !== null}
-                        onClick={() => setReloadKey((actual) => actual + 1)}
+                        onClick={() => setRecoverModalOpen(true)}
                         title="Actualizar contenidos e indicadores del Motor IA"
                         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
@@ -482,7 +508,12 @@ function Approvals() {
                                     publicationLockedIds.includes(item.id)
                                 }
                                 publishing={publishingId === item.id}
-                                publicationDisabled={true}
+                                publicationDisabled={
+                                    motorLoading ||
+                                    reviewingId !== null ||
+                                    publishingId !== null ||
+                                    publicationLockedIds.includes(item.id)
+                                }
                                 onReview={handleReview}
                                 reviewing={reviewingId === item.id}
                                 reviewDisabled={reviewingId !== null || motorLoading}
@@ -506,11 +537,12 @@ function Approvals() {
                         </p>
 
                         <p className="mt-1 text-xs leading-5 text-blue-700">
-                            Los contenidos e indicadores provienen del Motor IA.
-                            Este tablero permanece en modo de consulta hasta
-                            implementar la autenticacion y los permisos de revision.
-                            Aprobar y publicar seran acciones independientes.
-                            No se publican contenidos externos desde esta pantalla.
+                            Los contenidos provienen del Motor IA y requieren
+                            revision humana. Aprobar, rechazar y solicitar ajustes
+                            son acciones independientes de la publicacion.
+                            Discord solo permite enviar contenidos aprobados,
+                            con seleccion de canal y confirmacion explicita.
+                            LinkedIn y X utilizan registro manual de publicacion.
                         </p>
                     </div>
                 </div>

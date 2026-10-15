@@ -10,78 +10,67 @@ def preparar_desde_identidad_local(
     id_local: int,
     datos_ia: dict,
     decision: str,
+    *,
+    permitir_conexion: bool = False,
 ) -> dict:
-    """Prepara datos solo si el puente confirma una identidad."""
+    """Prepara resultados solo con identidad y datos locales validados."""
     if type(id_local) is not int or id_local <= 0:
         raise ValueError("El ID local debe ser positivo.")
 
     if not isinstance(datos_ia, dict):
         raise TypeError("Los datos de IA deben ser un diccionario.")
 
-    identidad = resolver_identidad_supabase(id_local)
+    for campo in ("id_mensaje", "id_supabase", "identidad_validada"):
+        if campo in datos_ia:
+            raise ValueError(f"No se acepta el campo externo: {campo}")
 
-    if identidad.get("id_local") != id_local:
-        raise ValueError("La identidad local no coincide.")
+    interaccion = obtener_interaccion(id_local)
+    identidad_local = obtener_identidad_interaccion(id_local)
+
+    if interaccion is None or identidad_local is None:
+        raise ValueError("No se encontro la interaccion local.")
+
+    if not validar_integridad_hash(interaccion, identidad_local):
+        raise ValueError("El hash local no coincide.")
+
+    texto = interaccion.get("texto")
+    autor = interaccion.get("autor")
+    canal = interaccion.get("canal")
+
+    if not isinstance(texto, str) or not texto.strip():
+        raise ValueError("Texto local invalido.")
+
+    if not isinstance(autor, str) or not autor:
+        raise ValueError("Autor local invalido.")
+
+    if not isinstance(canal, str) or not canal:
+        raise ValueError("Canal local invalido.")
+
+    for campo, valor in (
+        ("texto_original", texto),
+        ("autor", autor),
+        ("canal_origen", canal),
+    ):
+        if campo in datos_ia and datos_ia[campo] != valor:
+            raise ValueError(f"El campo {campo} no coincide con SQLite.")
+
+    identidad = resolver_identidad_supabase(
+        id_local,
+        permitir_conexion=permitir_conexion,
+    )
 
     if identidad.get("estado") != "correspondencia_encontrada":
         raise ValueError("No existe identidad Supabase confirmada.")
 
-    id_supabase = identidad.get("id_supabase")
-
-    if type(id_supabase) is not int or id_supabase <= 0:
-        raise ValueError("El ID Supabase confirmado no es valido.")
-
-    if "id_mensaje" in datos_ia:
-        raise ValueError("No se acepta id_mensaje externo.")
-
-    if "id_supabase" in datos_ia:
-        raise ValueError("No se acepta id_supabase externo.")
-
-    if "identidad_validada" in datos_ia:
-        raise ValueError("No se acepta identidad_validada externa.")
-
-    interaccion = obtener_interaccion(id_local)
-
-    if interaccion is None:
-        raise ValueError("No se encontro la interaccion local.")
-
-    identidad_local = obtener_identidad_interaccion(id_local)
-
-    if identidad_local is None:
-        raise ValueError("No se encontro la identidad local.")
-
-    if not validar_integridad_hash(interaccion, identidad_local):
-        raise ValueError("La integridad SHA-256 del mensaje no coincide.")
-
-    texto_local = interaccion.get("texto")
-    texto_recibido = datos_ia.get("texto_original")
-
-    if not isinstance(texto_local, str):
-        raise ValueError("El texto local no es valido.")
-
-    if not isinstance(texto_recibido, str):
-        raise ValueError("Se requiere texto_original.")
-
-    if texto_recibido != texto_local:
-        raise ValueError("El texto no coincide con SQLite.")
-
-    autor_local = interaccion.get("autor")
-    canal_local = interaccion.get("canal")
-
-    if not isinstance(autor_local, str) or not autor_local:
-        raise ValueError("El autor local no es valido.")
-
-    if not isinstance(canal_local, str) or not canal_local:
-        raise ValueError("El canal local no es valido.")
-
-    if datos_ia.get("autor") != autor_local:
-        raise ValueError("El autor no coincide con SQLite.")
-
-    if datos_ia.get("canal_origen") != canal_local:
-        raise ValueError("El canal no coincide con SQLite.")
-
     registro = dict(datos_ia)
-    registro["id_supabase"] = id_supabase
+    registro["id_supabase"] = identidad["id_supabase"]
     registro["identidad_validada"] = True
+    registro["texto_original"] = texto
+    registro["autor"] = autor
+    registro["canal_origen"] = canal
+    registro["comunidad"] = interaccion.get("origen_comunidad")
+    registro["semana"] = interaccion.get("periodo_referencia")
+    registro["fecha_envio"] = interaccion.get("enviado_en")
+    registro["fecha_extraccion"] = interaccion.get("creado_en")
 
     return preparar_registro_supabase(registro, decision)

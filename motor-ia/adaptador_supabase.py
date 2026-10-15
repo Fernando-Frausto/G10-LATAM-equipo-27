@@ -1,4 +1,4 @@
-﻿"""Adaptador de identidad SQLite-Supabase. Solo lectura."""
+"""Adaptador de identidad SQLite-Supabase. Solo lectura."""
 
 import os
 import re
@@ -45,11 +45,7 @@ def buscar_id_supabase(
     except ImportError as exc:
         raise RuntimeError("Se requiere psycopg2.") from exc
 
-    conexion = psycopg2.connect(
-        database_url,
-        sslmode="require",
-        connect_timeout=5,
-    )
+    conexion = psycopg2.connect(database_url, sslmode='require', connect_timeout=5)
     try:
         conexion.set_session(readonly=True, autocommit=True)
         with conexion.cursor() as cursor:

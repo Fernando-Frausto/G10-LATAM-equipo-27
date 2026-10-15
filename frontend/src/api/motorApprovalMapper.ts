@@ -2,9 +2,12 @@ import type { MotorContent } from './motorContent'
 
 export type MotorApprovalCard = {
     id: number
+    interaction_id: number | null
     type: string
     title: string
     content: string
+    call_to_action: string | null
+    hashtags: string[]
     channel: string | null
     time: string
     status: string
@@ -41,11 +44,14 @@ export function mapMotorContentToApproval(
 ): MotorApprovalCard {
     return {
         id: item.id,
+        interaction_id: item.interaccion_id,
         type: item.tipo_contenido === 'respuesta'
             ? 'Respuesta'
             : 'Publicación',
         title: item.titulo,
         content: item.contenido,
+        call_to_action: item.llamada_accion,
+        hashtags: item.hashtags ?? [],
         channel: item.source_channel_id,
         time: item.creado_en,
         status: item.estado,
