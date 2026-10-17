@@ -1071,6 +1071,8 @@ def _asegurar_config_oci_desde_env() -> bool:
     de entorno OCI_* están definidas (para despliegues efímeros como Render).
     Retorna True si OCI está configurado y listo, o False en modo offline.
     """
+    import re
+
     for _s in (sys.stdout, sys.stderr):
         if hasattr(_s, "reconfigure"):
             try:
@@ -1085,12 +1087,28 @@ def _asegurar_config_oci_desde_env() -> bool:
     region = (os.getenv("OCI_REGION") or "").strip()
     private_key = (os.getenv("OCI_PRIVATE_KEY") or "").strip()
 
-    if not os.path.exists(config_file) and all([user_ocid, fingerprint, tenancy_ocid, region, private_key]):
+    if all([user_ocid, fingerprint, tenancy_ocid, region, private_key]) and (
+        not os.path.exists(config_file) or os.getenv("RENDER")
+    ):
         try:
             oci_dir = os.path.dirname(config_file) or os.path.expanduser("~/.oci")
             os.makedirs(oci_dir, exist_ok=True)
             key_path = os.path.join(oci_dir, "oci_api_key.pem")
-            pem_content = private_key.replace("\\n", "\n").strip() + "\n"
+            raw_pem = private_key.replace("\\n", "\n").strip()
+            m_pem = re.search(
+                r"-----BEGIN ([A-Z0-9 ]+)-----(.*?)-----END \1-----",
+                raw_pem,
+                re.DOTALL,
+            )
+            if m_pem:
+                tag_pem = m_pem.group(1)
+                b64_body = re.sub(r"\s+", "", m_pem.group(2))
+                lines_pem = [b64_body[i : i + 64] for i in range(0, len(b64_body), 64)]
+                pem_content = "\n".join(
+                    [f"-----BEGIN {tag_pem}-----", *lines_pem, f"-----END {tag_pem}-----"]
+                ) + "\n"
+            else:
+                pem_content = raw_pem + "\n"
             with open(key_path, "w", encoding="utf-8") as kf:
                 kf.write(pem_content)
             config_content = (
@@ -1107,6 +1125,51 @@ def _asegurar_config_oci_desde_env() -> bool:
             pass
 
     return bool(os.path.exists(config_file) or user_ocid)
+
+
+def _sanitizar_item_reporte(item: dict) -> dict:
+    """
+    Normaliza un registro de lote KPI para garantizar compatibilidad con
+    reporte_semanal.generar_reporte_semanal y json.dump (sin None en kpis
+    ni objetos datetime sin serializar).
+    """
+    from datetime import date as _date_cls
+
+    if not isinstance(item, dict):
+        return {}
+    limpio = {}
+    for k, v in item.items():
+        if k == "kpis":
+            continue
+        if isinstance(v, datetime):
+            limpio[k] = a_utc_iso(v)
+        elif isinstance(v, _date_cls):
+            limpio[k] = v.isoformat()
+        else:
+            limpio[k] = v
+
+    kpis_raw = item.get("kpis") if isinstance(item.get("kpis"), dict) else {}
+    temas_raw = kpis_raw.get("temas_clave")
+    if isinstance(temas_raw, list):
+        temas_limpio = [str(x) for x in temas_raw if x is not None]
+    elif isinstance(temas_raw, str) and temas_raw.strip():
+        temas_limpio = temas_raw.strip()
+    else:
+        temas_limpio = "N/A"
+
+    try:
+        rel_val = int(kpis_raw.get("relevancia") or 0)
+    except Exception:
+        rel_val = 0
+
+    limpio["kpis"] = {
+        "relevancia": rel_val,
+        "sentimiento": str(kpis_raw.get("sentimiento") or "Neutral"),
+        "temas_clave": temas_limpio,
+        "segmento": str(kpis_raw.get("segmento") or "N/A"),
+        "razonamiento": str(kpis_raw.get("razonamiento") or ""),
+    }
+    return limpio
 
 
 def _cargar_lote_consolidado_para_reporte() -> dict:
@@ -1155,7 +1218,7 @@ def _cargar_lote_consolidado_para_reporte() -> dict:
                         "kpis": {
                             "relevancia": rel,
                             "sentimiento": d.get("sentimiento") or "Neutral",
-                            "temas_clave": d.get("temas_clave") or "",
+                            "temas_clave": d.get("temas_clave") or "N/A",
                             "segmento": d.get("segmento") or "General",
                             "razonamiento": d.get("razonamiento") or "",
                         },
@@ -1173,8 +1236,8 @@ def _cargar_lote_consolidado_para_reporte() -> dict:
     if not paquete or not isinstance(paquete, dict):
         return {"aprobados": [], "descartados": []}
     return {
-        "aprobados": list(paquete.get("aprobados") or []),
-        "descartados": list(paquete.get("descartados") or []),
+        "aprobados": [_sanitizar_item_reporte(i) for i in (paquete.get("aprobados") or []) if isinstance(i, dict)],
+        "descartados": [_sanitizar_item_reporte(i) for i in (paquete.get("descartados") or []) if isinstance(i, dict)],
     }
 
 
@@ -1294,6 +1357,8 @@ async def oci_weekly_sync_v1(payload: dict = None):
         reporte = reporte_semanal.generar_reporte_semanal(semana_nombre, paquete)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar reporte semanal: {e}")
 
     meta = reporte.get("metadata", {})
     oci_meta = meta.get("oci_storage", {})
@@ -1329,15 +1394,83 @@ async def oci_weekly_sync_v1(payload: dict = None):
     }
 
 
+def _sincronizar_reportes_desde_oci_bucket(rep_dir: Path) -> None:
+    """
+    Si OCI está configurado, consulta los objetos en el bucket bajo 'activos/'
+    y descarga en 'reportes/{semana}.json' aquellos reportes que aún no estén en disco
+    local (útil en contenedores efímeros como Render).
+    """
+    import json
+    import re
+
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    if not _asegurar_config_oci_desde_env():
+        return
+    config_file = os.path.expanduser(os.getenv("OCI_CONFIG_FILE", "~/.oci/config"))
+    if not os.path.exists(config_file):
+        return
+    try:
+        import oci
+
+        bucket_name = (os.getenv("OCI_BUCKET_NAME") or "").strip() or "communitylab-assets"
+        config = oci.config.from_file(file_location=config_file)
+        client = oci.object_storage.ObjectStorageClient(config)
+        namespace = client.get_namespace().data
+        resp = client.list_objects(namespace_name=namespace, bucket_name=bucket_name, prefix="activos/")
+        objects = getattr(resp.data, "objects", []) or []
+        for obj in objects:
+            obj_name = str(getattr(obj, "name", "") or "")
+            m = re.fullmatch(r"activos/(\d{4}-semana-\d{2})/paquete-distribucion\.json", obj_name)
+            if not m:
+                continue
+            semana_tag = m.group(1)
+            local_file = rep_dir / f"{semana_tag}.json"
+            if local_file.exists():
+                try:
+                    rdata_local = json.loads(local_file.read_text(encoding="utf-8"))
+                    oci_st = rdata_local.get("metadata", {}).get("oci_storage", {})
+                    if not oci_st.get("subido"):
+                        oci_st["subido"] = True
+                        local_file.write_text(
+                            json.dumps(rdata_local, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                except Exception:
+                    pass
+                continue
+            get_resp = client.get_object(
+                namespace_name=namespace,
+                bucket_name=bucket_name,
+                object_name=obj_name,
+            )
+            raw_bytes = get_resp.data.content
+            rdata = json.loads(raw_bytes.decode("utf-8"))
+            if isinstance(rdata, dict):
+                meta = rdata.setdefault("metadata", {})
+                oci_meta = meta.setdefault("oci_storage", {})
+                oci_meta["bucket"] = bucket_name
+                oci_meta["ruta"] = obj_name
+                oci_meta["subido"] = True
+                local_file.write_text(
+                    json.dumps(rdata, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+    except Exception:
+        pass
+
+
 @app.get("/api/v1/oci-storage/reports")
 @app.get("/api/v1/oci-storage/reports/")
 async def oci_reports_v1():
-    """Lista el historial de reportes semanales generados en reportes/*.json."""
+    """Lista el historial de reportes semanales generados en reportes/*.json y sincronizados desde OCI."""
     import json
     import reporte_semanal
 
     rep_dir = Path("reportes")
     rep_dir.mkdir(parents=True, exist_ok=True)
+
+    _sincronizar_reportes_desde_oci_bucket(rep_dir)
 
     def _leer_reportes_disco() -> list[dict]:
         items = []
