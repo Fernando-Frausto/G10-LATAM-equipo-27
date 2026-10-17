@@ -85,6 +85,11 @@ cerebro_ia_gemini_flash = _motor_gemini
 cerebro_ia_gemma_4 = _motor_gemma
 app = _motor_api.app
 
+# Habilitar CORS para dominios de Netlify (*.netlify.app) y desarrollo local
+for _m in app.user_middleware:
+    if "CORSMiddleware" in str(_m.cls):
+        _m.kwargs["allow_origin_regex"] = r"https://.*\.netlify\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+"
+
 
 # ==============================================================================
 # Inferencia Determinista de Sentimiento y Temas (7 Categorías Cerradas)
