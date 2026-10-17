@@ -1755,10 +1755,10 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
         except Exception:
             pass
 
-        total_recibidas = resultado.get("total", 0)
-        guardadas_nuevas = resultado.get("nuevas", 0)
-        repetidas_omitidas = resultado.get("repetidas", 0)
-        vacias_omitidas = resultado.get("vacias", 0)
+        total_recibidas = resultado.get("total_recibidas", resultado.get("total", 0))
+        guardadas_nuevas = resultado.get("guardadas_nuevas", resultado.get("nuevas", 0))
+        repetidas_omitidas = resultado.get("repetidas_omitidas", resultado.get("repetidas", 0))
+        vacias_omitidas = resultado.get("vacias_omitidas", resultado.get("vacias", 0))
         periodo_ref = paquete.get("periodo_referencia") or f"Semana_{semana_de(datetime.now(timezone.utc)):02d}"
 
         if guardadas_nuevas > 0:
