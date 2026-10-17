@@ -122,6 +122,7 @@ function Messages() {
         | 'pending_eval'
         | 'pending_copy'
         | 'completos'
+        | 'descartados'
         | 'ingesta'
         | 'en_analisis'
 
@@ -343,44 +344,46 @@ function Messages() {
     }
 
     const filteredMessages = messageItems.filter((message) => {
-        const currentCuration = curationStatus[message.id] ?? 'pending'
-        const isCompleted =
-            currentCuration === 'curated' ||
-            message.workflowStage === 'en_aprobacion' ||
-            message.workflowStage === 'en_redaccion'
-
-        const isPendingEval =
-            !message.isAnalyzed ||
-            message.workflowStage === 'ingesta' ||
-            message.workflowStage === 'en_ingesta'
-
-        const isPendingCopy = !isCompleted && !isPendingEval
-
-        // Filtro por etapa de flujo editorial
-        if (stageFilter === 'completos') {
-            if (!isCompleted) return false
-        } else if (stageFilter === 'pending_copy') {
-            if (!isPendingCopy) return false
-        } else if (stageFilter === 'pending_eval') {
-            if (!isPendingEval) return false
-        } else if (stageFilter === 'ingesta') {
-            if (!isPendingEval) return false
-        } else if (stageFilter === 'en_analisis') {
-            if (!isPendingCopy) return false
-        }
-        // Cuando stageFilter === 'all', no se restringe por etapa (muestra todo + completos)
-
         // Evitar que las respuestas del bot reingresen al flujo editorial.
         if (message.author.toLowerCase().includes('cloudedtech community bot')) {
             return false
         }
 
+        const currentCuration = curationStatus[message.id] ?? 'pending'
+        const isDiscarded = currentCuration === 'discarded'
+
+        const isCompleted =
+            !isDiscarded &&
+            (currentCuration === 'curated' ||
+                message.workflowStage === 'en_aprobacion' ||
+                message.workflowStage === 'en_redaccion')
+
+        const isPendingEval =
+            !isDiscarded &&
+            (!message.isAnalyzed ||
+                message.workflowStage === 'ingesta' ||
+                message.workflowStage === 'en_ingesta')
+
+        const isPendingCopy = !isDiscarded && !isCompleted && !isPendingEval
+
+        // Filtro por etapa de flujo editorial
+        if (stageFilter === 'descartados') {
+            if (!isDiscarded) return false
+        } else if (stageFilter === 'completos') {
+            if (!isCompleted) return false
+        } else if (stageFilter === 'pending_copy' || stageFilter === 'en_analisis') {
+            if (!isPendingCopy) return false
+        } else if (stageFilter === 'pending_eval' || stageFilter === 'ingesta') {
+            if (!isPendingEval) return false
+        }
+        // Cuando stageFilter === 'all' ("Todas (Todos los mensajes)"), muestra todos los mensajes (incluidos descartados, pendientes y completos)
+
         if (curationFilter === 'discarded') {
-            if (currentCuration !== 'discarded') {
+            if (!isDiscarded) {
                 return false
             }
-        } else {
-            if (currentCuration === 'discarded') {
+        } else if (curationFilter !== 'all') {
+            if (isDiscarded) {
                 return false
             }
         }
@@ -513,7 +516,7 @@ function Messages() {
             } else {
                 setSyncFeedbackMessage({
                     type: 'warning',
-                    text: `⚠️ Mensaje de @${message.author} evaluado con ${res.relevancia}% de relevancia (< 70% requerido para Copy). Se movió automáticamente a 'Descartados' (puedes verlo o restaurarlo en Estado del mensaje: Descartado).`,
+                    text: `⚠️ Mensaje de @${message.author} evaluado con ${res.relevancia}% de relevancia (< 70% requerido para Copy). Se movió automáticamente a 'Etapa: Descartados'.`,
                 })
             }
         } catch (error) {
@@ -537,6 +540,7 @@ function Messages() {
                 pendingEvalInRange: 0,
                 pendingCopyInRange: 0,
                 completedInRange: 0,
+                discardedInRange: 0,
                 evaluableCount: 0,
             }
         }
@@ -548,6 +552,7 @@ function Messages() {
         let pendingEvalInRange = 0
         let pendingCopyInRange = 0
         let completedInRange = 0
+        let discardedInRange = 0
 
         for (const msg of messageItems) {
             if (msg.author.toLowerCase().includes('cloudedtech community bot')) {
@@ -562,12 +567,13 @@ function Messages() {
                 continue
             }
 
+            totalInRange++
+
             const st = curationStatus[msg.id] ?? 'pending'
             if (st === 'discarded') {
+                discardedInRange++
                 continue
             }
-
-            totalInRange++
 
             const isCompleted =
                 st === 'curated' ||
@@ -589,7 +595,8 @@ function Messages() {
         }
 
         const pendingInRange = pendingEvalInRange
-        const evaluableCount = onlyPending ? pendingEvalInRange : totalInRange
+        const activeInRange = pendingEvalInRange + pendingCopyInRange + completedInRange
+        const evaluableCount = onlyPending ? pendingEvalInRange : activeInRange
 
         return {
             isDateRangeInverted: false,
@@ -598,6 +605,7 @@ function Messages() {
             pendingEvalInRange,
             pendingCopyInRange,
             completedInRange,
+            discardedInRange,
             evaluableCount,
         }
     }, [messageItems, dateFrom, dateTo, onlyPending, curationStatus])
@@ -965,6 +973,11 @@ function Messages() {
                                     <ThumbsUp size={13} className="shrink-0" />
                                     <strong>{batchEvalMetrics.completedInRange}</strong> con proceso completo
                                 </span>
+                                <span className="text-slate-300">·</span>
+                                <span className="inline-flex items-center gap-1 font-semibold text-rose-700">
+                                    <X size={13} className="shrink-0" />
+                                    <strong>{batchEvalMetrics.discardedInRange}</strong> descartados
+                                </span>
                             </div>
 
                             {(dateFrom || dateTo) && (
@@ -1270,13 +1283,27 @@ function Messages() {
 
                     <select
                         value={stageFilter}
-                        onChange={(event) =>
-                            setStageFilter(event.target.value as StageFilterType)
-                        }
+                        onChange={(event) => {
+                            const nextStage = event.target.value as StageFilterType
+                            setStageFilter(nextStage)
+                            if (
+                                nextStage === 'descartados' &&
+                                curationFilter !== 'all' &&
+                                curationFilter !== 'discarded'
+                            ) {
+                                setCurationFilter('all')
+                            } else if (
+                                nextStage !== 'descartados' &&
+                                nextStage !== 'all' &&
+                                curationFilter === 'discarded'
+                            ) {
+                                setCurationFilter('all')
+                            }
+                        }}
                         className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-orange-400"
                     >
                         <option value="all">
-                            Etapa: Todas (Todo + Completos)
+                            Etapa: Todas (Todos los mensajes)
                         </option>
                         <option value="pending_eval">
                             Etapa: Pendientes de Evaluar
@@ -1286,6 +1313,9 @@ function Messages() {
                         </option>
                         <option value="completos">
                             Etapa: Solo Completos
+                        </option>
+                        <option value="descartados">
+                            Etapa: Descartados
                         </option>
                     </select>
                 </div>
@@ -1298,7 +1328,7 @@ function Messages() {
                     <span className="font-bold text-slate-700">
                         {filteredMessages.length}
                     </span>{' '}
-                    {curationFilter === 'discarded'
+                    {stageFilter === 'descartados' || curationFilter === 'discarded'
                         ? filteredMessages.length === 1
                             ? 'mensaje descartado'
                             : 'mensajes descartados'
@@ -1308,7 +1338,7 @@ function Messages() {
                         ? 'mensajes pendientes de evaluar'
                         : stageFilter === 'pending_copy' || stageFilter === 'en_analisis'
                         ? 'mensajes en la cola de copy'
-                        : 'mensajes en total (todo + completos)'}
+                        : 'mensajes en total (Todos los mensajes)'}
                     {(dateFrom || dateTo) && (
                         <span className="ml-1 font-semibold text-purple-700">
                             (en rango: {dateFrom || 'inicio'} a {dateTo || 'hoy'})
