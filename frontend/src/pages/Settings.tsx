@@ -15,8 +15,11 @@ import { useEffect, useState } from "react";
 import { getUsers } from "../api/users";
 import type { User } from "../api/users";
 
-const API_BASE_URL =
-  import.meta.env.VITE_MOTOR_API_URL || 'http://127.0.0.1:8002'
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.VITE_MOTOR_API_URL ||
+  'http://127.0.0.1:8002'
+).replace(/\/$/, '')
 
 type AiModel = {
   id: string

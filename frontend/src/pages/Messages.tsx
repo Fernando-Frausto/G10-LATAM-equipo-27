@@ -97,7 +97,7 @@ const DEFAULT_AI_MODELS: AiModel[] = [
 ]
 
 const API_BASE_URL =
-    import.meta.env.VITE_MOTOR_API_URL || 'http://127.0.0.1:8002'
+    (import.meta.env.VITE_API_URL || import.meta.env.VITE_MOTOR_API_URL || 'http://127.0.0.1:8002').replace(/\/$/, '')
 
 function Messages() {
     const navigate = useNavigate()

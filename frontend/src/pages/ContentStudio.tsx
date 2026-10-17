@@ -86,6 +86,7 @@ function ContentStudio() {
 
       try {
         const motorApiUrl = (
+          import.meta.env.VITE_API_URL ||
           import.meta.env.VITE_MOTOR_API_URL ||
           'http://127.0.0.1:8002'
         ).replace(/\/$/, '')
@@ -251,6 +252,7 @@ function ContentStudio() {
         setComplaintsError('')
 
         const motorApiUrl = (
+          import.meta.env.VITE_API_URL ||
           import.meta.env.VITE_MOTOR_API_URL ||
           'http://127.0.0.1:8002'
         ).replace(/\/$/, '')
