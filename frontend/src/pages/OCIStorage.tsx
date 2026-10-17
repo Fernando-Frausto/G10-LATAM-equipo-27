@@ -1,49 +1,119 @@
 import {
+    AlertTriangle,
+    CheckCircle2,
     Cloud,
     CloudUpload,
+    Copy,
+    Download,
+    Eye,
+    EyeOff,
     FileJson,
-    MapPin,
-    Server,
-    SlidersHorizontal,
-
-
-
-    Filter,
     FileText,
-
+    Filter,
+    FolderOpen,
+    Loader2,
+    MapPin,
+    RefreshCw,
+    Server,
 } from "lucide-react";
-
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+    getOCIReports,
     getOCIStorageStatus,
     getWeeklyPeriod,
     startWeeklySync,
 } from "../api/ociStorage";
-
 import type {
+    OCIReportItem,
     OCIStorageStatus,
     WeeklyPeriod,
 } from "../api/ociStorage";
 
-import { useEffect, useState } from "react";
+type FilterMode = "all" | "oci" | "local";
+
+function computeDefaultIsoWeekLabel(): string {
+    const now = new Date();
+    const target = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    const dayNr = (target.getUTCDay() + 6) % 7;
+    target.setUTCDate(target.getUTCDate() - dayNr + 3);
+    const firstThursday = target.valueOf();
+    target.setUTCMonth(0, 1);
+    if (target.getUTCDay() !== 4) {
+        target.setUTCMonth(0, 1 + ((4 - target.getUTCDay() + 7) % 7));
+    }
+    const weekNumber = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
+    const isoYear = target.getUTCFullYear();
+    return `${isoYear}-semana-${String(weekNumber).padStart(2, "0")}`;
+}
+
+function formatBytes(bytes: number): string {
+    if (!bytes || bytes <= 0) return "0 B";
+    if (bytes < 1024) return `${bytes} B`;
+    return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function formatDateTime(isoString?: string): string {
+    if (!isoString) return "—";
+    try {
+        const dt = new Date(isoString);
+        if (Number.isNaN(dt.getTime())) return isoString;
+        return dt.toLocaleString("es-CO", {
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+        });
+    } catch {
+        return isoString;
+    }
+}
 
 function OCIStorage() {
-    const [weeklyPeriod, setWeeklyPeriod] =
-        useState<WeeklyPeriod | null>(null);
-    const [ociStatus, setOciStatus] =
-        useState<OCIStorageStatus | null>(null);
-    useEffect(() => {
-        const loadWeeklyPeriod = async () => {
-            try {
-                const data = await getWeeklyPeriod();
-                setWeeklyPeriod(data);
-            } catch (error) {
-                console.error(
-                    "Error consultando el período semanal:",
-                    error
-                );
-            }
-        };
+    const [weeklyPeriod, setWeeklyPeriod] = useState<WeeklyPeriod | null>(null);
+    const [ociStatus, setOciStatus] = useState<OCIStorageStatus | null>(null);
+    const [reports, setReports] = useState<OCIReportItem[]>([]);
+    const [isLoadingReports, setIsLoadingReports] = useState<boolean>(true);
+    const [selectedReport, setSelectedReport] = useState<OCIReportItem | null>(null);
+    const [showJsonPreview, setShowJsonPreview] = useState<boolean>(false);
+    const [copiedJson, setCopiedJson] = useState<boolean>(false);
 
+    const [weekLabelInput, setWeekLabelInput] = useState<string>(computeDefaultIsoWeekLabel);
+    const [isSyncing, setIsSyncing] = useState<boolean>(false);
+    const [retryingWeek, setRetryingWeek] = useState<string | null>(null);
+    const [statusFilter, setStatusFilter] = useState<FilterMode>("all");
+
+    const [feedbackBanner, setFeedbackBanner] = useState<{
+        type: "success" | "offline" | "error";
+        message: string;
+    } | null>(null);
+
+    const isWeekLabelValid = useMemo(
+        () => /^\d{4}-semana-\d{2}$/.test(weekLabelInput.trim()),
+        [weekLabelInput]
+    );
+
+    const loadReports = useCallback(async () => {
+        setIsLoadingReports(true);
+        try {
+            const res = await getOCIReports();
+            const list = res.reports || [];
+            setReports(list);
+            setSelectedReport((prev) => {
+                if (prev) {
+                    const updated = list.find((r) => r.semana === prev.semana);
+                    return updated || prev;
+                }
+                return list[0] || null;
+            });
+        } catch (error) {
+            console.error("Error cargando historial de reportes OCI:", error);
+        } finally {
+            setIsLoadingReports(false);
+        }
+    }, []);
+
+    useEffect(() => {
         getOCIStorageStatus()
             .then((data) => {
                 setOciStatus(data);
@@ -52,646 +122,546 @@ function OCIStorage() {
                 console.error("Error consultando OCI Storage:", error);
             });
 
-        loadWeeklyPeriod();
-    }, []);
+        getWeeklyPeriod()
+            .then((data) => {
+                setWeeklyPeriod(data);
+                const suggestedLabel = data.iso_week_label || data.semana_nombre || data.week_label;
+                if (suggestedLabel && /^\d{4}-semana-\d{2}$/.test(suggestedLabel)) {
+                    setWeekLabelInput(suggestedLabel);
+                }
+            })
+            .catch((error) => {
+                console.error("Error consultando el período semanal:", error);
+            });
+
+        loadReports();
+    }, [loadReports]);
+
+    const activeReport = selectedReport ?? reports[0] ?? null;
+
+    const ociSyncedCount = useMemo(
+        () => reports.filter((r) => r.subido_oci).length,
+        [reports]
+    );
+    const localSavedCount = useMemo(
+        () => reports.filter((r) => !r.subido_oci).length,
+        [reports]
+    );
+
+    const filteredReports = useMemo(() => {
+        if (statusFilter === "oci") {
+            return reports.filter((r) => r.subido_oci);
+        }
+        if (statusFilter === "local") {
+            return reports.filter((r) => !r.subido_oci);
+        }
+        return reports;
+    }, [reports, statusFilter]);
+
+    const handleDownloadJson = (item: OCIReportItem) => {
+        const jsonString = JSON.stringify(item.reporte, null, 2);
+        const blob = new Blob([jsonString], {
+            type: "application/json;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${item.semana}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleCopyJson = async () => {
+        if (!activeReport) return;
+        try {
+            await navigator.clipboard.writeText(
+                JSON.stringify(activeReport.reporte, null, 2)
+            );
+            setCopiedJson(true);
+            setTimeout(() => setCopiedJson(false), 2000);
+        } catch (error) {
+            console.error("No se pudo copiar el JSON:", error);
+        }
+    };
+
+    const executeWeeklySync = async (targetWeek: string, isRowRetry = false) => {
+        const cleanWeek = targetWeek.trim();
+        if (!/^\d{4}-semana-\d{2}$/.test(cleanWeek)) {
+            setFeedbackBanner({
+                type: "error",
+                message: "Formato inválido. Usa AAAA-semana-NN (ej. 2026-semana-42).",
+            });
+            return;
+        }
+
+        if (isRowRetry) {
+            setRetryingWeek(cleanWeek);
+        } else {
+            setIsSyncing(true);
+        }
+        setFeedbackBanner(null);
+
+        try {
+            const response = await startWeeklySync(cleanWeek);
+            const semanaRes = response.semana || cleanWeek;
+            const bucketRes =
+                response.bucket || ociStatus?.bucket || "communitylab-assets";
+            const rutaRes =
+                response.ruta_oci ||
+                `activos/${semanaRes}/paquete-distribucion.json`;
+            const subidoOci = Boolean(response.subido_oci);
+
+            if (response.reporte) {
+                const jsonLength = JSON.stringify(response.reporte, null, 2).length;
+                const newItem: OCIReportItem = {
+                    semana: semanaRes,
+                    nombre_archivo: `${semanaRes}.json`,
+                    tamano_bytes: jsonLength,
+                    generado_en:
+                        response.reporte.metadata?.generado_en ||
+                        new Date().toISOString(),
+                    bucket: bucketRes,
+                    ruta_oci: rutaRes,
+                    subido_oci: subidoOci,
+                    resumen_metricas: response.reporte.resumen_metricas,
+                    reporte: response.reporte,
+                };
+                setSelectedReport(newItem);
+                setShowJsonPreview(true);
+            }
+
+            if (subidoOci) {
+                setFeedbackBanner({
+                    type: "success",
+                    message: `🎉 Reporte ${semanaRes}.json empaquetado y subido exitosamente a Oracle Cloud (${bucketRes}/${rutaRes}).`,
+                });
+            } else {
+                setFeedbackBanner({
+                    type: "offline",
+                    message: `⚠️ Modo Offline: Sin conexión activa a OCI en este entorno. Reporte generado y respaldado en reportes/${semanaRes}.json.`,
+                });
+            }
+
+            await loadReports();
+        } catch (error) {
+            const errMsg =
+                error instanceof Error
+                    ? error.message
+                    : "Error inesperado al generar el reporte semanal.";
+            setFeedbackBanner({
+                type: "error",
+                message: `❌ ${errMsg}`,
+            });
+        } finally {
+            setIsSyncing(false);
+            setRetryingWeek(null);
+        }
+    };
+
+    const isServiceConnected =
+        ociStatus?.status === "connected" || ociStatus?.status === "ready";
+    const isOciOnline = Boolean(ociStatus?.oci_configured);
+    const bucketName = ociStatus?.bucket || "communitylab-assets";
+    const regionName = ociStatus?.region || "mx-queretaro-1";
+
     return (
         <div>
             {/* Encabezado */}
             <div>
                 <h2 className="text-2xl font-bold text-slate-900">
-                    Nube y Almacenamiento
+                    Informes y Almacenamiento (OCI)
                 </h2>
-
                 <p className="mt-1 text-slate-500">
-                    Infraestructura, almacenamiento y distribución de CloudEdTech.
+                    Empaquetado de reportes semanales de comunidad, respaldo JSON y distribución hacia Oracle Cloud Infrastructure.
                 </p>
             </div>
 
-
-            {/* Estado OCI */}
+            {/* Cabecera de Estado OCI y 4 Contadores Reales (RF-01) */}
             <div className="mt-8 overflow-hidden rounded-2xl bg-[#080A27] p-6 text-white shadow-sm">
-
                 <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-start">
-
                     <div className="flex items-start gap-4">
-
-                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
                             <Cloud size={24} />
                         </div>
 
                         <div>
                             <div className="flex flex-wrap items-center gap-3">
-
                                 <h3 className="text-lg font-bold">
                                     OCI Object Storage
                                 </h3>
 
                                 <span
-                                    className={`rounded-full px-3 py-1 text-xs font-semibold ${ociStatus?.status === "ready"
-                                            ? "bg-emerald-500/15 text-emerald-300"
-                                            : "bg-amber-500/15 text-amber-300"
-                                        }`}
+                                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                        !isServiceConnected
+                                            ? "bg-slate-500/20 text-slate-300"
+                                            : isOciOnline
+                                              ? "bg-emerald-500/15 text-emerald-300"
+                                              : "bg-amber-500/15 text-amber-300"
+                                    }`}
                                 >
-                                    {ociStatus?.status === "ready"
-                                        ? "Módulo disponible"
-                                        : "Verificando..."}
+                                    {!isServiceConnected
+                                        ? "Verificando..."
+                                        : isOciOnline
+                                          ? "Conectado a OCI (Modo Online)"
+                                          : "Modo Respaldo Local / Offline"}
                                 </span>
-
                             </div>
 
                             <p className="mt-2 text-sm text-slate-300">
                                 {ociStatus?.message ??
-                                    "Consultando el estado del módulo OCI Storage..."}
+                                    "Consultando el estado del módulo OCI Object Storage..."}
                             </p>
 
-                            <div className="mt-4 flex items-center gap-2 text-sm text-slate-400">
-                                <MapPin size={15} />
-                                Colombia Central (Bogotá)
+                            <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-400">
+                                <span className="inline-flex items-center gap-1.5">
+                                    <MapPin size={15} className="text-orange-400" />
+                                    Región: <strong className="text-slate-200">{regionName}</strong>
+                                </span>
+                                <span className="inline-flex items-center gap-1.5">
+                                    <FolderOpen size={15} className="text-orange-400" />
+                                    Bucket: <strong className="text-slate-200">{bucketName}</strong>
+                                </span>
                             </div>
                         </div>
-
                     </div>
-
 
                     <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-
                         <div className="flex items-center gap-2">
-                            <Server
-                                size={16}
-                                className="text-orange-400"
-                            />
-
+                            <Server size={16} className="text-orange-400" />
                             <span className="text-sm font-semibold">
-                                Oracle Cloud
+                                Oracle Cloud Infrastructure
                             </span>
                         </div>
-
                         <p className="mt-1 text-xs text-slate-400">
-                            Pendiente de conexión con infraestructura OCI
+                            {isOciOnline
+                                ? `Sincronización directa activa en ${bucketName}`
+                                : "Respaldo local garantizado en reportes/*.json"}
                         </p>
-
                     </div>
-
                 </div>
-
 
                 <div className="mt-6 grid grid-cols-2 gap-3 border-t border-white/10 pt-5 md:grid-cols-4">
-
-                    {[
-                        ["JSON", "—"],
-                        ["Reportes", "—"],
-                        ["Assets IA", "—"],
-                        ["Exportaciones", "—"],
-                    ].map(([label, value]) => (
-
-                        <div
-                            key={label}
-                            className="rounded-xl bg-white/5 p-4"
-                        >
-                            <p className="text-xs text-slate-400">
-                                {label}
-                            </p>
-
-                            <p className="mt-1 text-xl font-bold">
-                                {value}
-                            </p>
-                        </div>
-
-                    ))}
-
-                </div>
-
-            </div>
-            {/* Infraestructura CloudEdTech */}
-            <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-
-                {/* Servicios CloudEdTech */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-500">
-                            <Server size={20} />
-                        </div>
-
-                        <div>
-                            <h3 className="font-bold text-slate-900">
-                                Servicios CloudEdTech
-                            </h3>
-
-                            <p className="text-sm text-slate-500">
-                                APIs y servicios desplegados para la plataforma.
-                            </p>
-                        </div>
+                    <div className="rounded-xl bg-white/5 p-4">
+                        <p className="text-xs text-slate-400">Reportes Semanales</p>
+                        <p className="mt-1 text-xl font-bold">{reports.length}</p>
                     </div>
 
+                    <div className="rounded-xl bg-white/5 p-4">
+                        <p className="text-xs text-slate-400">Mensajes Consolidados</p>
+                        <p className="mt-1 text-xl font-bold">
+                            {activeReport?.resumen_metricas?.total_mensajes ?? 0}
+                        </p>
+                    </div>
 
-                    <div className="mt-6 space-y-4">
+                    <div className="rounded-xl bg-white/5 p-4">
+                        <p className="text-xs text-slate-400">Activos Aprobados</p>
+                        <p className="mt-1 text-xl font-bold text-emerald-300">
+                            {activeReport?.resumen_metricas?.total_aprobados ?? 0}
+                        </p>
+                    </div>
 
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                            <div>
-                                <p className="text-sm font-semibold text-slate-800">
-                                    Admin API
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                    Autenticación, usuarios y administración
-                                </p>
-                            </div>
-
-                            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                                Local
-                            </span>
-                        </div>
-
-
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                            <div>
-                                <p className="text-sm font-semibold text-slate-800">
-                                    Motor IA
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                    Análisis de comunidad e inteligencia artificial
-                                </p>
-                            </div>
-
-                            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                                Local
-                            </span>
-                        </div>
-
-
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm font-semibold text-slate-800">
-                                    HTTPS
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                    Acceso seguro a las APIs
-                                </p>
-                            </div>
-
-                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
-                                Pendiente
-                            </span>
-                        </div>
-
+                    <div className="rounded-xl bg-white/5 p-4">
+                        <p className="text-xs text-slate-400">Estado Almacenamiento</p>
+                        <p className="mt-1 text-base font-bold sm:text-lg">
+                            {ociSyncedCount} en OCI · {localSavedCount} Local
+                        </p>
                     </div>
                 </div>
-
-
-                {/* Gestión administrativa */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-500">
-                            <Cloud size={20} />
-                        </div>
-
-                        <div>
-                            <h3 className="font-bold text-slate-900">
-                                Gestión administrativa
-                            </h3>
-
-                            <p className="text-sm text-slate-500">
-                                Persistencia, seguridad y control administrativo.
-                            </p>
-                        </div>
-                    </div>
-
-
-                    <div className="mt-6 space-y-4">
-
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                            <div>
-                                <p className="text-sm font-semibold text-slate-800">
-                                    PostgreSQL
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                    Usuarios, roles y datos administrativos
-                                </p>
-                            </div>
-
-                            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                                Local
-                            </span>
-                        </div>
-
-
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                            <div>
-                                <p className="text-sm font-semibold text-slate-800">
-                                    Sesiones activas
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                    Control de acceso por usuario
-                                </p>
-                            </div>
-
-                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
-                                Pendiente
-                            </span>
-                        </div>
-
-
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm font-semibold text-slate-800">
-                                    Auditoría
-                                </p>
-
-                                <p className="text-xs text-slate-400">
-                                    Registro de acciones administrativas
-                                </p>
-                            </div>
-
-                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                                Disponible
-                            </span>
-                        </div>
-
-                    </div>
-                </div>
-
             </div>
 
-            {/* Sincronización semanal */}
+            {/* Panel Principal: Reporte Semanal y Distribución OCI — Flujo de Tania (RF-03) */}
             <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
                 <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
-
                     <div className="flex items-start gap-3">
-
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-orange-500">
                             <CloudUpload size={20} />
                         </div>
 
                         <div>
                             <h3 className="font-bold text-slate-900">
-                                Sincronización semanal
+                                📦 Reporte Semanal y Distribución (OCI)
                             </h3>
-
                             <p className="text-sm text-slate-500">
-                                Prepara y envía la información consolidada de la comunidad
-                                hacia OCI Object Storage.
+                                Empaqueta los mensajes analizados por IA, calcula métricas de sentimiento, temas y segmentos, guarda el JSON semanal y lo distribuye a Oracle Cloud.
                             </p>
                         </div>
-
                     </div>
 
-
-                    <span
-                        className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${weeklyPeriod?.status === "pending"
-                                ? "bg-amber-100 text-amber-700"
-                                : "bg-emerald-100 text-emerald-700"
-                            }`}
-                    >
-                        {weeklyPeriod?.status === "pending"
-                            ? "Pendiente"
-                            : weeklyPeriod?.status ?? "Cargando..."}
+                    <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        {weeklyPeriod
+                            ? `Período activo: ${weeklyPeriod.start_date} — ${weeklyPeriod.end_date}`
+                            : "Listo para empaquetar"}
                     </span>
-
                 </div>
 
-
-                <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto]">
-
-                    <div className="rounded-xl bg-slate-50 p-5">
-
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Período de sincronización
-                        </p>
-
-                        <p className="mt-2 font-semibold text-slate-800">
-                            {weeklyPeriod
-                                ? `${weeklyPeriod.start_date} — ${weeklyPeriod.end_date}`
-                                : "Cargando período..."}
-                        </p>
-
-                        <p className="mt-2 text-sm text-slate-500">
-                            Los datos recopilados durante este período serán preparados
-                            para almacenamiento y respaldo en la nube.
-                        </p>
-
-                    </div>
-
-
-                    <button
-                        type="button"
-                        onClick={async () => {
-                            try {
-                                const data = await startWeeklySync();
-
-                                console.log("WEEKLY SYNC:", data);
-                            } catch (error) {
-                                console.error(
-                                    "Error preparando sincronización semanal:",
-                                    error
-                                );
-                            }
-                        }}
-                        className="inline-flex min-h-20 items-center justify-center gap-2 rounded-xl bg-orange-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-orange-600 lg:min-w-52"
-                    >
-                        <CloudUpload size={17} />
-                        Preparar sincronización
-                    </button>
-
-                </div>
-
-
-                <div className="mt-4 flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-
-                    <Cloud
-                        size={16}
-                        className="mt-0.5 shrink-0 text-blue-500"
-                    />
-
-                    <p className="text-xs leading-5 text-blue-700">
-                        El módulo de sincronización está disponible. El envío definitivo
-                        quedará habilitado cuando OCI Object Storage esté conectado.
-                    </p>
-
-                </div>
-
-            </div>
-
-            {/* Automatización de reportes */}
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-                {/* Encabezado */}
-                <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-
-                    <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#080A27] text-orange-500">
-                            <SlidersHorizontal size={19} />
-                        </div>
-
-                        <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                                <h3 className="font-bold text-slate-900">
-                                    Panel de Automatización de Envíos de Reportes
-                                </h3>
-
-                                <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-[10px] font-semibold text-orange-600">
-                                    LangGraph Cron Dispatcher
-                                </span>
-                            </div>
-
-                            <p className="mt-1 text-sm text-slate-500">
-                                Configura los disparadores automáticos para remitir datasets
-                                semanales y diarios a los equipos técnicos.
-                            </p>
-                        </div>
-                    </div>
-
-
-                    <div className="flex items-center gap-3">
-                        <span className="text-xs font-semibold text-slate-600">
-                            Envío Automatizado General:
-                        </span>
-
-                        <button
-                            type="button"
-                            className="relative h-6 w-11 rounded-full bg-orange-500"
-                            aria-label="Envío automatizado general"
+                <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <label
+                            htmlFor="week-label-input"
+                            className="block text-xs font-bold uppercase tracking-wide text-slate-600"
                         >
-                            <span className="absolute right-1 top-1 h-4 w-4 rounded-full bg-white shadow" />
-                        </button>
-                    </div>
-
-                </div>
-
-
-                <div className="my-5 border-t border-slate-100" />
-
-
-                {/* Frecuencia */}
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-700">
-                    Frecuencia de programación
-                </p>
-
-
-                <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-
-                    {/* Diario */}
-                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4">
-
-                        <div>
-                            <p className="text-sm font-bold text-slate-900">
-                                Reporte Diario (11:59 PM)
-                            </p>
-
-                            <p className="mt-1 text-xs text-slate-500">
-                                Compila el resumen de incidencias, temas y quejas RAG al cierre del día.
-                            </p>
-                        </div>
-
-                        <button
-                            type="button"
-                            className="relative ml-4 h-6 w-11 shrink-0 rounded-full bg-orange-500"
-                            aria-label="Reporte diario"
-                        >
-                            <span className="absolute right-1 top-1 h-4 w-4 rounded-full bg-white shadow" />
-                        </button>
-
-                    </div>
-
-
-                    {/* Semanal */}
-                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4">
-
-                        <div>
-                            <p className="text-sm font-bold text-slate-900">
-                                Reporte Semanal (Domingos 11:59 PM)
-                            </p>
-
-                            <p className="mt-1 text-xs text-slate-500">
-                                Genera el dataset integral con embeddings vectoriales para auditorías institucionales.
-                            </p>
-                        </div>
-
-                        <button
-                            type="button"
-                            className="relative ml-4 h-6 w-11 shrink-0 rounded-full bg-orange-500"
-                            aria-label="Reporte semanal"
-                        >
-                            <span className="absolute right-1 top-1 h-4 w-4 rounded-full bg-white shadow" />
-                        </button>
-
-                    </div>
-
-                </div>
-
-
-                {/* Configuración */}
-                <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
-
-                    <label className="block">
-                        <span className="text-xs font-semibold text-slate-700">
-                            Correo de Destino
-                        </span>
-
-                        <input
-                            type="email"
-                            placeholder="Configurar correo..."
-                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-orange-400"
-                        />
-                    </label>
-
-
-                    <label className="block">
-                        <span className="text-xs font-semibold text-slate-700">
-                            Webhook de Notificación (Discord / Slack)
-                        </span>
-
-                        <input
-                            type="text"
-                            placeholder="Configurar webhook..."
-                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-orange-400"
-                        />
-                    </label>
-
-
-                    <label className="block">
-                        <span className="text-xs font-semibold text-slate-700">
-                            Esquema de Formato JSON
-                        </span>
-
-                        <select
-                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-orange-400"
-                            defaultValue="json-v2"
-                        >
-                            <option value="json-v2">
-                                JSON v2 (Enriquecido con Embeddings FAISS)
-                            </option>
-
-                            <option value="json-v1">
-                                JSON v1 (Estructura estándar)
-                            </option>
-                        </select>
-                    </label>
-
-                </div>
-
-
-                {/* Pie */}
-                <div className="mt-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                        <span className="h-2 w-2 rounded-full bg-amber-400" />
-                        Configuración pendiente de persistencia
-                    </div>
-
-
-                    <button
-                        type="button"
-                        disabled
-                        className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white opacity-60"
-                    >
-                        Guardar Configuración de Automatización
-                    </button>
-
-                </div>
-
-            </div>
-
-
-
-
-            {/* Carga y respaldo manual */}
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-                <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
-                        <FileJson size={20} />
-                    </div>
-
-                    <div>
-                        <h3 className="font-bold text-slate-900">
-                            Carga y Respaldo Manual
-                        </h3>
-
-                        <p className="text-sm text-slate-500">
-                            Gestiona cargas excepcionales y respaldos hacia OCI Object Storage.
-                        </p>
-                    </div>
-                </div>
-
-
-                <div className="mt-6 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-8 text-center">
-
-                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-white text-orange-500 shadow-sm">
-                        <CloudUpload size={23} />
-                    </div>
-
-                    <p className="mt-4 text-sm font-bold text-slate-800">
-                        Arrastra un archivo o selecciónalo manualmente
-                    </p>
-
-                    <p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-slate-500">
-                        Esta opción se utilizará para cargas excepcionales de archivos
-                        JSON, reportes, exportaciones y paquetes generados por CloudEdTech.
-                    </p>
-
-
-                    <div className="mt-5 flex flex-wrap justify-center gap-2">
-
-                        {[
-                            "JSON",
-                            "Reportes",
-                            "Exportaciones",
-                            "Assets IA",
-                        ].map((type) => (
-                            <span
-                                key={type}
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500"
-                            >
-                                {type}
+                            Etiqueta de la Semana (AAAA-semana-NN)
+                        </label>
+                        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <input
+                                id="week-label-input"
+                                type="text"
+                                value={weekLabelInput}
+                                onChange={(e) => setWeekLabelInput(e.target.value)}
+                                placeholder="Ej: 2026-semana-42"
+                                className={`w-full rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none transition sm:max-w-xs ${
+                                    isWeekLabelValid
+                                        ? "border-slate-300 focus:border-orange-500"
+                                        : "border-red-400 focus:border-red-500"
+                                }`}
+                            />
+                            <span className="text-xs text-slate-500">
+                                Destino OCI:{" "}
+                                <code className="rounded bg-slate-200/70 px-1.5 py-0.5 font-mono text-slate-700">
+                                    {bucketName}/activos/{weekLabelInput.trim() || "AAAA-semana-NN"}/paquete-distribucion.json
+                                </code>
                             </span>
-                        ))}
-
+                        </div>
+                        {!isWeekLabelValid && (
+                            <p className="mt-2 text-xs font-medium text-red-600">
+                                El formato debe ser exactamente AAAA-semana-NN (por ejemplo: 2026-semana-42).
+                            </p>
+                        )}
                     </div>
-
 
                     <button
                         type="button"
-                        disabled
-                        className="mt-6 inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white opacity-60"
+                        disabled={isSyncing || !isWeekLabelValid}
+                        onClick={() => executeWeeklySync(weekLabelInput)}
+                        className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl bg-orange-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60 lg:min-w-64"
                     >
-                        <CloudUpload size={16} />
-                        Seleccionar archivo
+                        {isSyncing ? (
+                            <>
+                                <Loader2 size={18} className="animate-spin" />
+                                Empaquetando y subiendo...
+                            </>
+                        ) : (
+                            <>
+                                <CloudUpload size={18} />
+                                📦 Generar y Subir Reporte a OCI
+                            </>
+                        )}
                     </button>
-
-                    <p className="mt-3 text-[11px] text-slate-400">
-                        La carga estará disponible cuando OCI Object Storage esté conectado.
-                    </p>
-
                 </div>
 
+                {/* Banner de resultado de operación */}
+                {feedbackBanner && (
+                    <div
+                        className={`mt-4 flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
+                            feedbackBanner.type === "success"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                : feedbackBanner.type === "offline"
+                                  ? "border-amber-200 bg-amber-50 text-amber-800"
+                                  : "border-red-200 bg-red-50 text-red-800"
+                        }`}
+                    >
+                        {feedbackBanner.type === "success" ? (
+                            <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" />
+                        ) : (
+                            <AlertTriangle
+                                size={18}
+                                className={`mt-0.5 shrink-0 ${
+                                    feedbackBanner.type === "offline"
+                                        ? "text-amber-600"
+                                        : "text-red-600"
+                                }`}
+                            />
+                        )}
+                        <div className="flex-1 font-medium">{feedbackBanner.message}</div>
+                    </div>
+                )}
             </div>
 
-            {/* Estado de informes */}
-            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            {/* Visor Interactivo del Reporte Semanal y Descarga Directa (RF-04) */}
+            {activeReport && (
+                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <div className="flex flex-col justify-between gap-4 border-b border-slate-100 pb-4 lg:flex-row lg:items-center">
+                        <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                                <FileJson size={20} />
+                            </div>
+                            <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <h3 className="font-bold text-slate-900">
+                                        Inspección del Reporte: {activeReport.semana}
+                                    </h3>
+                                    <span
+                                        className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                            activeReport.subido_oci
+                                                ? "bg-emerald-100 text-emerald-700"
+                                                : "bg-amber-100 text-amber-700"
+                                        }`}
+                                    >
+                                        {activeReport.subido_oci
+                                            ? "✅ Subido a OCI"
+                                            : "💾 Respaldo Local"}
+                                    </span>
+                                </div>
+                                <p className="mt-0.5 text-xs text-slate-500">
+                                    Generado: {formatDateTime(activeReport.generado_en)} · Ruta OCI:{" "}
+                                    <code className="font-mono text-slate-700">
+                                        {activeReport.bucket}/{activeReport.ruta_oci}
+                                    </code>
+                                </p>
+                            </div>
+                        </div>
 
-                {/* Encabezado */}
-                <div className="flex flex-col justify-between gap-4 border-b border-slate-200 p-6 lg:flex-row lg:items-center">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowJsonPreview((prev) => !prev)}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                            >
+                                {showJsonPreview ? (
+                                    <>
+                                        <EyeOff size={15} />
+                                        👁️ Ocultar JSON del Reporte Semanal ({activeReport.semana})
+                                    </>
+                                ) : (
+                                    <>
+                                        <Eye size={15} />
+                                        👁️ Ver JSON del Reporte Semanal ({activeReport.semana})
+                                    </>
+                                )}
+                            </button>
 
-                    <div>
-                        <h3 className="font-bold text-slate-900">
-                            Estado de Informes Semanales y Diarios
-                        </h3>
-
-                        <p className="mt-1 text-xs text-slate-500">
-                            Control de envíos programados y transmisión manual inmediata.
-                        </p>
+                            <button
+                                type="button"
+                                onClick={() => handleDownloadJson(activeReport)}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                            >
+                                <Download size={15} />
+                                ⬇️ Descargar {activeReport.semana}.json
+                            </button>
+                        </div>
                     </div>
 
+                    {/* Resumen de métricas del reporte seleccionado */}
+                    <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Consolidado de Mensajes
+                            </p>
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                                <div className="rounded-lg bg-white p-2.5 shadow-xs">
+                                    <p className="text-[11px] text-slate-500">Total</p>
+                                    <p className="text-lg font-bold text-slate-900">
+                                        {activeReport.resumen_metricas?.total_mensajes ?? 0}
+                                    </p>
+                                </div>
+                                <div className="rounded-lg bg-white p-2.5 shadow-xs">
+                                    <p className="text-[11px] text-emerald-600">Aprobados</p>
+                                    <p className="text-lg font-bold text-emerald-600">
+                                        {activeReport.resumen_metricas?.total_aprobados ?? 0}
+                                    </p>
+                                </div>
+                                <div className="rounded-lg bg-white p-2.5 shadow-xs">
+                                    <p className="text-[11px] text-slate-500">Descartados</p>
+                                    <p className="text-lg font-bold text-slate-600">
+                                        {activeReport.resumen_metricas?.total_descartados ?? 0}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Sentimientos y Segmentos
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                {Object.entries(
+                                    activeReport.resumen_metricas?.sentimiento || {}
+                                ).map(([sent, count]) => (
+                                    <span
+                                        key={sent}
+                                        className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-xs"
+                                    >
+                                        {sent}: {count}
+                                    </span>
+                                ))}
+                                {Object.entries(
+                                    activeReport.resumen_metricas?.segmentos || {}
+                                ).map(([seg, count]) => (
+                                    <span
+                                        key={seg}
+                                        className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700"
+                                    >
+                                        {seg}: {count}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Top Temas en Tendencia
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                {(activeReport.resumen_metricas?.temas_tendencia || [])
+                                    .length > 0 ? (
+                                    activeReport.resumen_metricas.temas_tendencia.map(
+                                        (t) => (
+                                            <span
+                                                key={t.tema}
+                                                className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700"
+                                            >
+                                                {t.tema} ({t.menciones})
+                                            </span>
+                                        )
+                                    )
+                                ) : (
+                                    <span className="text-xs text-slate-400">
+                                        Sin hashtags registrados en este corte
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Bloque JSON Desplegable */}
+                    {showJsonPreview && (
+                        <div className="mt-5 overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+                            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5 text-xs text-slate-300">
+                                <span className="font-mono font-semibold">
+                                    reportes/{activeReport.nombre_archivo} ({formatBytes(activeReport.tamano_bytes)})
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={handleCopyJson}
+                                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1 text-xs font-medium text-slate-200 transition hover:bg-slate-700"
+                                >
+                                    <Copy size={13} />
+                                    {copiedJson ? "¡Copiado!" : "Copiar JSON"}
+                                </button>
+                            </div>
+                            <pre className="max-h-96 overflow-auto p-4 font-mono text-xs leading-relaxed text-emerald-300">
+                                {JSON.stringify(activeReport.reporte, null, 2)}
+                            </pre>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Tabla Conectada: Historial de Informes Semanales (RF-05) */}
+            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex flex-col justify-between gap-4 border-b border-slate-200 p-6 lg:flex-row lg:items-center">
+                    <div>
+                        <h3 className="font-bold text-slate-900">
+                            Historial de Informes Semanales
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                            Reportes generados en el servidor local y sincronizados con el bucket de distribución en OCI.
+                        </p>
+                    </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-
                         <div className="mr-2 flex items-center gap-1 text-xs text-slate-500">
                             <Filter size={14} />
                             Filtrar por Estado:
@@ -699,107 +669,185 @@ function OCIStorage() {
 
                         <button
                             type="button"
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm"
+                            onClick={() => setStatusFilter("all")}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                                statusFilter === "all"
+                                    ? "border border-slate-300 bg-slate-900 text-white shadow-xs"
+                                    : "text-slate-600 hover:bg-slate-100"
+                            }`}
                         >
-                            Todos
+                            Todos ({reports.length})
                         </button>
 
                         <button
                             type="button"
-                            className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                            onClick={() => setStatusFilter("oci")}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                                statusFilter === "oci"
+                                    ? "border border-emerald-600 bg-emerald-600 text-white shadow-xs"
+                                    : "text-slate-600 hover:bg-slate-100"
+                            }`}
                         >
-                            Enviado
+                            Subido a OCI ({ociSyncedCount})
                         </button>
 
                         <button
                             type="button"
-                            className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                            onClick={() => setStatusFilter("local")}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                                statusFilter === "local"
+                                    ? "border border-amber-500 bg-amber-500 text-white shadow-xs"
+                                    : "text-slate-600 hover:bg-slate-100"
+                            }`}
                         >
-                            No Enviado / Pendiente
+                            Respaldo Local / Offline ({localSavedCount})
                         </button>
-
-                        <button
-                            type="button"
-                            className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
-                        >
-                            Error
-                        </button>
-
                     </div>
-
                 </div>
 
-
-                {/* Tabla */}
                 <div className="overflow-x-auto">
-
                     <table className="w-full min-w-[950px]">
-
                         <thead className="bg-slate-50">
-
                             <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-
-                                <th className="px-6 py-4">
-                                    Semana / Período
-                                </th>
-
-                                <th className="px-6 py-4">
-                                    Nombre de archivo JSON
-                                </th>
-
-                                <th className="px-6 py-4">
-                                    Tamaño & subida
-                                </th>
-
-                                <th className="px-6 py-4">
-                                    Estado de envío
-                                </th>
-
-                                <th className="px-6 py-4 text-right">
-                                    Control de envío / Acciones
-                                </th>
-
+                                <th className="px-6 py-4">Semana / Período</th>
+                                <th className="px-6 py-4">Archivo JSON & Ruta OCI</th>
+                                <th className="px-6 py-4">Métricas & Tamaño</th>
+                                <th className="px-6 py-4">Estado de Distribución</th>
+                                <th className="px-6 py-4 text-right">Acciones</th>
                             </tr>
-
                         </thead>
 
-
                         <tbody className="divide-y divide-slate-100">
+                            {isLoadingReports ? (
+                                <tr>
+                                    <td colSpan={5} className="px-6 py-12 text-center">
+                                        <div className="inline-flex items-center gap-2 text-sm text-slate-500">
+                                            <Loader2 size={18} className="animate-spin text-orange-500" />
+                                            Cargando historial de reportes semanales...
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : filteredReports.length === 0 ? (
+                                <tr>
+                                    <td colSpan={5} className="px-6 py-14 text-center">
+                                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
+                                            <FileText size={22} />
+                                        </div>
+                                        <p className="mt-4 text-sm font-semibold text-slate-700">
+                                            No hay informes semanales en esta vista
+                                        </p>
+                                        <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-slate-400">
+                                            Usa el botón &ldquo;📦 Generar y Subir Reporte a OCI&rdquo; en el panel superior para empaquetar los mensajes evaluados.
+                                        </p>
+                                    </td>
+                                </tr>
+                            ) : (
+                                filteredReports.map((item) => {
+                                    const isRowRetrying = retryingWeek === item.semana;
+                                    const isSelected = activeReport?.semana === item.semana;
+                                    return (
+                                        <tr
+                                            key={item.semana}
+                                            className={`transition hover:bg-slate-50/80 ${
+                                                isSelected ? "bg-orange-50/30" : ""
+                                            }`}
+                                        >
+                                            <td className="px-6 py-4">
+                                                <p className="text-sm font-bold text-slate-900">
+                                                    {item.semana}
+                                                </p>
+                                                <p className="mt-0.5 text-xs text-slate-500">
+                                                    {formatDateTime(item.generado_en)}
+                                                </p>
+                                            </td>
 
-                            {/* Sin datos reales */}
-                            <tr>
+                                            <td className="px-6 py-4">
+                                                <p className="font-mono text-xs font-semibold text-slate-800">
+                                                    reportes/{item.nombre_archivo}
+                                                </p>
+                                                <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+                                                    {item.bucket}/{item.ruta_oci}
+                                                </p>
+                                            </td>
 
-                                <td
-                                    colSpan={5}
-                                    className="px-6 py-14 text-center"
-                                >
+                                            <td className="px-6 py-4">
+                                                <p className="text-xs font-semibold text-slate-800">
+                                                    {item.resumen_metricas?.total_mensajes ?? 0} mensajes{" "}
+                                                    <span className="font-normal text-slate-500">
+                                                        ({item.resumen_metricas?.total_aprobados ?? 0} aprobados /{" "}
+                                                        {item.resumen_metricas?.total_descartados ?? 0} descartados)
+                                                    </span>
+                                                </p>
+                                                <p className="mt-0.5 text-xs text-slate-400">
+                                                    Tamaño: {formatBytes(item.tamano_bytes)}
+                                                </p>
+                                            </td>
 
-                                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
-                                        <FileText size={22} />
-                                    </div>
+                                            <td className="px-6 py-4">
+                                                <span
+                                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
+                                                        item.subido_oci
+                                                            ? "bg-emerald-50 text-emerald-700"
+                                                            : "bg-amber-50 text-amber-700"
+                                                    }`}
+                                                >
+                                                    {item.subido_oci
+                                                        ? "✅ Subido a OCI"
+                                                        : "💾 Respaldo Local"}
+                                                </span>
+                                            </td>
 
-                                    <p className="mt-4 text-sm font-semibold text-slate-700">
-                                        Aún no hay informes almacenados
-                                    </p>
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="inline-flex flex-wrap items-center justify-end gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSelectedReport(item);
+                                                            setShowJsonPreview(true);
+                                                        }}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                                                    >
+                                                        <Eye size={13} />
+                                                        👁️ Ver JSON
+                                                    </button>
 
-                                    <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-slate-400">
-                                        Los informes diarios y semanales aparecerán aquí
-                                        cuando la generación y OCI Object Storage estén
-                                        conectados.
-                                    </p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadJson(item)}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                                                    >
+                                                        <Download size={13} />
+                                                        ⬇️ Descargar
+                                                    </button>
 
-                                </td>
-
-                            </tr>
-
+                                                    <button
+                                                        type="button"
+                                                        disabled={isRowRetrying || isSyncing}
+                                                        onClick={() =>
+                                                            executeWeeklySync(item.semana, true)
+                                                        }
+                                                        className="inline-flex items-center gap-1 rounded-lg bg-orange-500 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-orange-600 disabled:opacity-50"
+                                                    >
+                                                        <RefreshCw
+                                                            size={13}
+                                                            className={
+                                                                isRowRetrying ? "animate-spin" : ""
+                                                            }
+                                                        />
+                                                        {item.subido_oci
+                                                            ? "🔄 Reintentar OCI"
+                                                            : "☁️ Subir a OCI"}
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            )}
                         </tbody>
-
                     </table>
-
                 </div>
-
             </div>
-
         </div>
     );
 }
