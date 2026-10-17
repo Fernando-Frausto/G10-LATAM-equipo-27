@@ -14,6 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 import discord
 from fastapi import HTTPException, Body, status
 from fastapi.responses import JSONResponse
@@ -1058,9 +1065,183 @@ async def audit_v1():
     return []
 
 
+def _asegurar_config_oci_desde_env() -> bool:
+    """
+    Asegura que el archivo de configuración de OCI exista en disco si las variables
+    de entorno OCI_* están definidas (para despliegues efímeros como Render).
+    Retorna True si OCI está configurado y listo, o False en modo offline.
+    """
+    for _s in (sys.stdout, sys.stderr):
+        if hasattr(_s, "reconfigure"):
+            try:
+                _s.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+    config_file = os.path.expanduser(os.getenv("OCI_CONFIG_FILE", "~/.oci/config"))
+    user_ocid = (os.getenv("OCI_USER_OCID") or "").strip()
+    fingerprint = (os.getenv("OCI_FINGERPRINT") or "").strip()
+    tenancy_ocid = (os.getenv("OCI_TENANCY_OCID") or "").strip()
+    region = (os.getenv("OCI_REGION") or "").strip()
+    private_key = (os.getenv("OCI_PRIVATE_KEY") or "").strip()
+
+    if not os.path.exists(config_file) and all([user_ocid, fingerprint, tenancy_ocid, region, private_key]):
+        try:
+            oci_dir = os.path.dirname(config_file) or os.path.expanduser("~/.oci")
+            os.makedirs(oci_dir, exist_ok=True)
+            key_path = os.path.join(oci_dir, "oci_api_key.pem")
+            pem_content = private_key.replace("\\n", "\n").strip() + "\n"
+            with open(key_path, "w", encoding="utf-8") as kf:
+                kf.write(pem_content)
+            config_content = (
+                "[DEFAULT]\n"
+                f"user={user_ocid}\n"
+                f"fingerprint={fingerprint}\n"
+                f"tenancy={tenancy_ocid}\n"
+                f"region={region}\n"
+                f"key_file={key_path}\n"
+            )
+            with open(config_file, "w", encoding="utf-8") as cf:
+                cf.write(config_content)
+        except Exception:
+            pass
+
+    return bool(os.path.exists(config_file) or user_ocid)
+
+
+def _cargar_lote_consolidado_para_reporte() -> dict:
+    """Obtiene el lote consolidado de mensajes evaluados desde Supabase, JSON local o SQLite."""
+    import json
+
+    paquete = None
+    try:
+        paquete = _base_datos_raiz.obtener_lote_kpis_supabase()
+    except Exception:
+        paquete = None
+
+    if not paquete or (not paquete.get("aprobados") and not paquete.get("descartados")):
+        for ruta_cand in ("resultados_kpis.json", str(_DIR_RAIZ / "resultados_kpis.json")):
+            if os.path.exists(ruta_cand):
+                try:
+                    with open(ruta_cand, encoding="utf-8") as f:
+                        datos_json = json.load(f)
+                    if isinstance(datos_json, dict) and (datos_json.get("aprobados") or datos_json.get("descartados")):
+                        paquete = datos_json
+                        break
+                except Exception:
+                    pass
+
+    if not paquete or (not paquete.get("aprobados") and not paquete.get("descartados")):
+        aprobados_sql = []
+        descartados_sql = []
+        try:
+            _asegurar_esquema_sqlite()
+            with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+                conn.row_factory = sqlite3.Row
+                filas = conn.execute(
+                    "SELECT * FROM interacciones WHERE estado = 'analizado' OR relevancia IS NOT NULL"
+                ).fetchall()
+                for r in filas:
+                    d = dict(r)
+                    rel = int(d.get("relevancia") or 0)
+                    item = {
+                        "id_mensaje": d.get("id"),
+                        "autor": d.get("autor") or "Usuario",
+                        "canal_origen": d.get("canal") or "#general",
+                        "comunidad": d.get("origen_comunidad") or "Discord",
+                        "semana": d.get("periodo_referencia") or "Semana_01",
+                        "fecha_envio": d.get("enviado_en") or d.get("creado_en"),
+                        "texto_original": d.get("texto") or "",
+                        "kpis": {
+                            "relevancia": rel,
+                            "sentimiento": d.get("sentimiento") or "Neutral",
+                            "temas_clave": d.get("temas_clave") or "",
+                            "segmento": d.get("segmento") or "General",
+                            "razonamiento": d.get("razonamiento") or "",
+                        },
+                    }
+                    st_cur = str(d.get("estado_curaduria") or "").lower()
+                    if st_cur == "discarded" or (st_cur != "curated" and rel < 70):
+                        descartados_sql.append(item)
+                    else:
+                        aprobados_sql.append(item)
+        except Exception:
+            pass
+        if aprobados_sql or descartados_sql:
+            paquete = {"aprobados": aprobados_sql, "descartados": descartados_sql}
+
+    if not paquete or not isinstance(paquete, dict):
+        return {"aprobados": [], "descartados": []}
+    return {
+        "aprobados": list(paquete.get("aprobados") or []),
+        "descartados": list(paquete.get("descartados") or []),
+    }
+
+
+def _construir_paquete_para_semana(semana_objetivo: str) -> dict:
+    """
+    Filtra el lote consolidado para la semana indicada (por etiqueta exacta AAAA-semana-NN,
+    por sufijo Semana_NN o por semana ISO de fecha_envio). Si el subconjunto filtrado queda
+    vacío, aplica el fallback seguro retornando el lote consolidado completo.
+    """
+    import re
+
+    consolidado = _cargar_lote_consolidado_para_reporte()
+    aprobados_all = consolidado.get("aprobados", [])
+    descartados_all = consolidado.get("descartados", [])
+    if not aprobados_all and not descartados_all:
+        return consolidado
+
+    m = re.fullmatch(r"(\d{4})-semana-(\d{2})", str(semana_objetivo or "").strip())
+    if not m:
+        return consolidado
+
+    anio_obj = int(m.group(1))
+    num_obj = int(m.group(2))
+    etiqueta_lower = semana_objetivo.strip().lower()
+    sufijo_semana_lower = f"semana_{num_obj:02d}"
+
+    def _coincide_semana(item: dict) -> bool:
+        sem_item = str(item.get("semana") or item.get("periodo_referencia") or "").strip().lower()
+        if sem_item in (etiqueta_lower, sufijo_semana_lower):
+            return True
+        fecha_raw = item.get("fecha_envio") or item.get("enviado_en") or item.get("creado_en")
+        if fecha_raw:
+            try:
+                dt = como_fecha(fecha_raw)
+                iso = dt.isocalendar()
+                if (iso.year == anio_obj and iso.week == num_obj) or semana_de(dt) == num_obj:
+                    return True
+            except Exception:
+                pass
+        return False
+
+    aprobados_filt = [i for i in aprobados_all if _coincide_semana(i)]
+    descartados_filt = [i for i in descartados_all if _coincide_semana(i)]
+
+    if aprobados_filt or descartados_filt:
+        return {"aprobados": aprobados_filt, "descartados": descartados_filt}
+    return consolidado
+
+
 @app.get("/api/v1/oci-storage/status")
+@app.get("/api/v1/oci-storage/status/")
 async def oci_status_v1():
-    return {"status": "connected", "message": "OCI Object Storage listo (puente unificado)"}
+    oci_configured = _asegurar_config_oci_desde_env()
+    bucket = (os.getenv("OCI_BUCKET_NAME") or "").strip() or "communitylab-assets"
+    region = (os.getenv("OCI_REGION") or "").strip() or "mx-queretaro-1"
+    return {
+        "status": "connected",
+        "oci_configured": bool(oci_configured),
+        "mode": "online" if oci_configured else "offline",
+        "bucket": bucket,
+        "region": region,
+        "message": (
+            "OCI Object Storage conectado y listo para subir reportes."
+            if oci_configured
+            else "Modo Respaldo Local / Offline activo (reportes guardados en servidor)."
+        ),
+    }
 
 
 @app.get("/api/v1/oci-storage/weekly-period")
@@ -1073,9 +1254,12 @@ async def oci_weekly_period_v1():
     lunes = FECHA_INICIO + timedelta(days=(semana_num - 1) * 7)
     domingo = lunes + timedelta(days=6)
     semana_nombre = f"{lunes.year}-semana-{semana_num:02d}"
+    iso = ahora.isocalendar()
+    iso_week_label = f"{iso.year}-semana-{iso.week:02d}"
     return {
         "semana_nombre": semana_nombre,
         "week_label": semana_nombre,
+        "iso_week_label": iso_week_label,
         "start_date": lunes.isoformat(),
         "end_date": domingo.isoformat(),
         "status": "ready",
@@ -1085,9 +1269,18 @@ async def oci_weekly_period_v1():
 @app.post("/api/v1/oci-storage/weekly-sync")
 @app.post("/api/v1/oci-storage/weekly-sync/")
 async def oci_weekly_sync_v1(payload: dict = None):
+    import json
+    import reporte_semanal
+
+    _asegurar_config_oci_desde_env()
     p = payload or {}
     semana_nombre = p.get("semana")
-    if not semana_nombre:
+    if semana_nombre:
+        try:
+            semana_nombre = reporte_semanal.validar_etiqueta(str(semana_nombre))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
         from periodos import semana_de, FECHA_INICIO
         from datetime import timedelta
         ahora = datetime.now(timezone.utc)
@@ -1095,29 +1288,28 @@ async def oci_weekly_sync_v1(payload: dict = None):
         lunes = FECHA_INICIO + timedelta(days=(semana_num - 1) * 7)
         semana_nombre = f"{lunes.year}-semana-{semana_num:02d}"
 
-    # Cargar paquete de Supabase o local
-    paquete = _base_datos_raiz.obtener_lote_kpis_supabase()
-    if not paquete or (not paquete.get("aprobados") and not paquete.get("descartados")):
-        if os.path.exists("resultados_kpis.json"):
-            import json
-            try:
-                with open("resultados_kpis.json", encoding="utf-8") as f:
-                    paquete = json.load(f)
-            except Exception:
-                pass
-    if not paquete or (not paquete.get("aprobados") and not paquete.get("descartados")):
-        paquete = {"aprobados": [], "descartados": []}
+    paquete = _construir_paquete_para_semana(semana_nombre)
 
-    import reporte_semanal
-    reporte = reporte_semanal.generar_reporte_semanal(semana_nombre, paquete)
+    try:
+        reporte = reporte_semanal.generar_reporte_semanal(semana_nombre, paquete)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     meta = reporte.get("metadata", {})
     oci_meta = meta.get("oci_storage", {})
     resumen = reporte.get("resumen_metricas", {})
     semana_res = meta.get("semana") or semana_nombre
     subido_oci = bool(oci_meta.get("subido", False))
-    bucket = oci_meta.get("bucket", "communitylab-assets")
+    bucket = oci_meta.get("bucket", os.getenv("OCI_BUCKET_NAME", "communitylab-assets"))
     ruta_oci = oci_meta.get("ruta", f"activos/{semana_res}/paquete-distribucion.json")
+
+    ruta_local = Path("reportes") / f"{semana_res}.json"
+    if ruta_local.exists():
+        try:
+            with open(ruta_local, "w", encoding="utf-8") as rf:
+                json.dump(reporte, rf, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     return {
         "exito": True,
@@ -1127,8 +1319,76 @@ async def oci_weekly_sync_v1(payload: dict = None):
         "bucket": bucket,
         "ruta_oci": ruta_oci,
         "resumen": resumen,
+        "reporte": reporte,
         "sync_id": f"sync_{semana_res}",
-        "message": "Sincronización con OCI Storage completada con éxito." if subido_oci else "Reporte generado y guardado localmente.",
+        "message": (
+            "Sincronización con OCI Storage completada con éxito."
+            if subido_oci
+            else "Reporte generado y guardado localmente."
+        ),
+    }
+
+
+@app.get("/api/v1/oci-storage/reports")
+@app.get("/api/v1/oci-storage/reports/")
+async def oci_reports_v1():
+    """Lista el historial de reportes semanales generados en reportes/*.json."""
+    import json
+    import reporte_semanal
+
+    rep_dir = Path("reportes")
+    rep_dir.mkdir(parents=True, exist_ok=True)
+
+    def _leer_reportes_disco() -> list[dict]:
+        items = []
+        for f in rep_dir.glob("*.json"):
+            try:
+                raw_text = f.read_text(encoding="utf-8")
+                rdata = json.loads(raw_text)
+                if not isinstance(rdata, dict):
+                    continue
+                meta = rdata.get("metadata")
+                rmet = rdata.get("resumen_metricas")
+                if not isinstance(meta, dict) or not isinstance(rmet, dict):
+                    continue
+                oci_meta = meta.get("oci_storage") if isinstance(meta.get("oci_storage"), dict) else {}
+                semana_val = str(meta.get("semana") or f.stem)
+                items.append({
+                    "semana": semana_val,
+                    "nombre_archivo": f.name,
+                    "tamano_bytes": f.stat().st_size,
+                    "generado_en": meta.get("generado_en") or a_utc_iso(datetime.now(timezone.utc)),
+                    "bucket": oci_meta.get("bucket") or os.getenv("OCI_BUCKET_NAME", "communitylab-assets"),
+                    "ruta_oci": oci_meta.get("ruta") or f"activos/{semana_val}/paquete-distribucion.json",
+                    "subido_oci": bool(oci_meta.get("subido", False)),
+                    "resumen_metricas": rmet,
+                    "reporte": rdata,
+                })
+            except Exception:
+                continue
+        items.sort(key=lambda x: (str(x.get("semana") or ""), str(x.get("generado_en") or "")), reverse=True)
+        return items
+
+    reports = _leer_reportes_disco()
+    if not reports:
+        paquete_init = _cargar_lote_consolidado_para_reporte()
+        if paquete_init.get("aprobados") or paquete_init.get("descartados"):
+            try:
+                _asegurar_config_oci_desde_env()
+                iso = datetime.now(timezone.utc).isocalendar()
+                etiqueta_init = f"{iso.year}-semana-{iso.week:02d}"
+                rep_generado = reporte_semanal.generar_reporte_semanal(etiqueta_init, paquete_init)
+                ruta_init = rep_dir / f"{etiqueta_init}.json"
+                if ruta_init.exists():
+                    with open(ruta_init, "w", encoding="utf-8") as wf:
+                        json.dump(rep_generado, wf, ensure_ascii=False, indent=2)
+                reports = _leer_reportes_disco()
+            except Exception:
+                pass
+
+    return {
+        "reports": reports,
+        "total": len(reports),
     }
 
 

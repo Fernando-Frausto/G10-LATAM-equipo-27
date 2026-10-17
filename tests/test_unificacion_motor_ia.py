@@ -1512,6 +1512,174 @@ def test_dashboard_total_audience_reconciliacion_y_fallback_autor(monkeypatch, c
         assert data["total_audience"] == 10
 
 
+# ==============================================================================
+# 13. Integración Funcional de Informes y Almacenamiento OCI - Tania (Spec 011)
+# ==============================================================================
+
+def test_oci_status_incluye_modo_y_bucket(client):
+    """Verifica que GET /api/v1/oci-storage/status retorne 200 e incluya oci_configured, mode, bucket y region."""
+    resp = client.get("/api/v1/oci-storage/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "connected"
+    assert "message" in data
+    assert "oci_configured" in data
+    assert isinstance(data["oci_configured"], bool)
+    assert data.get("mode") in ("online", "offline")
+    assert "bucket" in data and isinstance(data["bucket"], str) and len(data["bucket"]) > 0
+    assert "region" in data and isinstance(data["region"], str) and len(data["region"]) > 0
+
+
+def test_oci_weekly_period_incluye_iso_week_label(client):
+    """Verifica que GET /api/v1/oci-storage/weekly-period retorne 200 e incluya iso_week_label con formato AAAA-semana-NN."""
+    import re
+    resp = client.get("/api/v1/oci-storage/weekly-period")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "semana_nombre" in data
+    assert "week_label" in data
+    assert "start_date" in data
+    assert "end_date" in data
+    assert data["status"] == "ready"
+    assert "iso_week_label" in data
+    assert re.fullmatch(r"^\d{4}-semana-\d{2}$", data["iso_week_label"]), (
+        f"iso_week_label '{data.get('iso_week_label')}' no cumple el patrón AAAA-semana-NN"
+    )
+
+
+def test_oci_weekly_sync_retorna_reporte_completo_y_valida_etiqueta(client, tmp_path, monkeypatch):
+    """
+    Verifica que POST /api/v1/oci-storage/weekly-sync:
+    1) Con etiqueta válida retorne 200 e incluya 'reporte' con 'metadata', 'resumen_metricas' y 'activos_copywriting'.
+    2) Con etiqueta inválida retorne HTTP 400 Bad Request.
+    """
+    monkeypatch.chdir(tmp_path)
+    paquete_mock = {
+        "aprobados": [
+            {
+                "id_mensaje": 10,
+                "autor": "alice",
+                "canal_origen": "#general",
+                "semana": "Semana_01",
+                "fecha_envio": "2026-10-15T12:00:00+00:00",
+                "texto_original": "Excelente curso de Python e IA",
+                "kpis": {
+                    "relevancia": 90,
+                    "sentimiento": "Positivo",
+                    "temas_clave": "#python #ia",
+                    "segmento": "Estudiante",
+                    "razonamiento": "Alto valor para copywriting",
+                },
+            }
+        ],
+        "descartados": [
+            {
+                "id_mensaje": 11,
+                "autor": "bob",
+                "canal_origen": "#soporte",
+                "semana": "Semana_01",
+                "fecha_envio": "2026-10-15T13:00:00+00:00",
+                "texto_original": "Error de conexión",
+                "kpis": {
+                    "relevancia": 40,
+                    "sentimiento": "Negativo",
+                    "temas_clave": "#soporte",
+                    "segmento": "Estudiante",
+                    "razonamiento": "Queja técnica",
+                },
+            }
+        ],
+    }
+
+    with patch.object(puente_motor_ia._base_datos_raiz, "obtener_lote_kpis_supabase", return_value=paquete_mock), \
+         patch("reporte_semanal.subir_json_a_oci", return_value=False):
+        resp_ok = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "2026-semana-42"})
+        assert resp_ok.status_code == 200
+        data_ok = resp_ok.json()
+        assert data_ok["exito"] is True
+        assert data_ok["semana"] == "2026-semana-42"
+        assert "reporte" in data_ok
+        reporte = data_ok["reporte"]
+        assert "metadata" in reporte
+        assert "resumen_metricas" in reporte
+        assert "activos_copywriting" in reporte
+        assert reporte["resumen_metricas"]["total_mensajes"] == 2
+        assert reporte["resumen_metricas"]["total_aprobados"] == 1
+        assert reporte["resumen_metricas"]["total_descartados"] == 1
+
+        # Etiqueta inválida -> HTTP 400 Bad Request
+        resp_inv = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "semana-invalida"})
+        assert resp_inv.status_code == 400
+
+
+def test_oci_reports_lista_historial_reportes(client, tmp_path, monkeypatch):
+    """
+    Verifica que GET /api/v1/oci-storage/reports retorne 200 con {'reports': [...], 'total': int},
+    ignore archivos corruptos y cada elemento contenga las llaves requeridas.
+    """
+    import json
+    monkeypatch.chdir(tmp_path)
+    reportes_dir = tmp_path / "reportes"
+    reportes_dir.mkdir(parents=True, exist_ok=True)
+
+    reporte_valido = {
+        "metadata": {
+            "proyecto": "CommunityLab",
+            "semana": "2026-semana-42",
+            "version_esquema": "1.0",
+            "generado_en": "2026-10-17T10:00:00+00:00",
+            "oci_storage": {
+                "bucket": "communitylab-assets",
+                "ruta": "activos/2026-semana-42/paquete-distribucion.json",
+                "subido": False,
+            },
+        },
+        "resumen_metricas": {
+            "total_mensajes": 5,
+            "total_aprobados": 3,
+            "total_descartados": 2,
+            "sentimiento": {"Positivo": 3, "Negativo": 2},
+            "temas_tendencia": [{"tema": "#ia", "menciones": 3}],
+            "segmentos": {"Estudiante": 5},
+        },
+        "activos_copywriting": {"aprobados": [], "descartados": []},
+    }
+
+    (reportes_dir / "2026-semana-42.json").write_text(
+        json.dumps(reporte_valido, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    # Archivo JSON corrupto que debe ser ignorado sin romper el endpoint
+    (reportes_dir / "corrupto.json").write_text("{json_corrupto_invalido", encoding="utf-8")
+
+    resp = client.get("/api/v1/oci-storage/reports")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "reports" in data
+    assert "total" in data
+    assert data["total"] == 1
+    assert len(data["reports"]) == 1
+
+    item = data["reports"][0]
+    for key in (
+        "semana",
+        "nombre_archivo",
+        "tamano_bytes",
+        "generado_en",
+        "bucket",
+        "ruta_oci",
+        "subido_oci",
+        "resumen_metricas",
+        "reporte",
+    ):
+        assert key in item, f"Falta la llave '{key}' en el elemento de historial: {item}"
+
+    assert item["semana"] == "2026-semana-42"
+    assert item["nombre_archivo"] == "2026-semana-42.json"
+    assert item["tamano_bytes"] > 0
+    assert item["subido_oci"] is False
+    assert item["resumen_metricas"]["total_mensajes"] == 5
+
+
 
 
 
