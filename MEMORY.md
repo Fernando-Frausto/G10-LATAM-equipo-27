@@ -2,22 +2,23 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
-- **Arquitectura desacoplada (Regla 2):** `app.py` funciona como carrocería Streamlit limpia. La orquestación y el bucle de IA viven en `evaluador_lotes.py` con tolerancia a fallos por mensaje (try/except) y protección ante fallo total.
-- **Backend y API REST (`api.py`):** `/api/kpis` y `/api/reporte-semanal` consultan prioritariamente Supabase (`lotes_ia_kpis` e `historial_reportes_semanales`) con fallback local transparente y contrato canónico garantizado (`{"aprobados": [...], "descartados": [...]}` con `copy_final`). CORS configurable.
-- **Filtrado de bots:** Exclusión de bots (`Spidey Boy#0000`, `%bot%`, discriminadores `#0000`, tipos `bot`/`webhook`) en `base_datos.py` y `ver_json.py`.
-- **Integración HITL con Enoc:** Mensajes aprobados por IA van con `estado_revision = 'pendiente'`; descartados van con `'rechazado'`. Protección en Supabase `WHERE estado_revision IN ('pendiente', 'rechazado')` (estados humanos `'procesado'`, `'aprobado'`, `'desaprobado'` no se sobrescriben). Soberanía humana en `/api/kpis`.
-- **DRY en Prompts y Modelos:** `prompts_ia.py` centraliza `FormatoSalida` y `template_filtro`. Modelos leen `GEMMA_MODEL` y `GEMINI_MODEL` con saneamiento `.strip()` y fallback limpio.
-- **Canales automáticos de Discord:** Detección dinámica de canales de texto por permisos (`view_channel`, `read_message_history`), aislamiento con `DISCORD_GUILD_ID`, normalización `#nombre` para no romper hashes SHA-256 en Supabase y filtro de bots/webhooks inmutable.
-- **Tests (TDD):** 48 pruebas unitarias y de integración asíncrona automáticas en `tests/` con mocks (`pytest`), sin llamadas de red ni dependencias externas.
-- **Persistencia e integraciones:** Ingesta de Discord a Supabase (`DATABASE_URL`), bandeja HITL en Supabase de Copywriting (`SUPABASE_DB_URL`), reportes en OCI Object Storage y anuncios vía webhook de Discord.
+- **Sincronización Discord y Evaluación IA:** Ingesta bajo demanda (`POST /api/v1/discord/sync`), evaluación individual (`POST /api/v1/ai/evaluate-message`) y por lotes (`POST /api/v1/ai/evaluate-batch`) con 3 cerebros (Groq, Gemma, Gemini).
+- **Frontend Transparente (Messages.tsx):** Mensajes en ingesta/crudos muestran estrictamente `⏳ Pendiente por Analizar` sin datos artificiales de IA. Mensajes evaluados muestran `👍 Analizado con IA` con sus métricas reales.
+- **Frontend Intuitivo y 100% Funcional (Messages.tsx - Spec 008):** Eliminado botón duplicado de sincronización de Discord, retirado botón muerto 'Añadir interacción' y checkboxes huérfanos. Corregido filtro de 'Descartados' para poder consultarlos y restaurarlos con botón `RotateCcw` esmeralda (`markCuration(id, 'pending')`). Deshabilitación preventiva en descartados para 'Analytics' y 'Evaluar IA'. Navegación resiliente a Analytics sin excepciones en mensajes evaluados. Métricas de Estado Discord unificadas ('Pendientes en Copy' e 'Incidentes prioritarios' con exclusión estricta de bots). Filtro de etapas alineado con el pipeline (`Todas Todo + Completos`, `Pendientes de Evaluar`, `Pendientes de Copy`, `Solo Completos`). Insignias: `⏳ Falta análisis con IA` (crudos), `✍️ Falta redacción de copy` (analizados esperando a Enoc), `✅ Listo / Aprobado` y `🚫 Descartado`.
+- **Dashboard 100% Funcional y Reconciliado (Dashboard.tsx - Spec 009):** Reemplazado placeholder estático provisional por `<FeaturedStories key={analyticsVersion} />` interactivo con historias en vivo, citas reales, carrusel resiliente (`disabled={stories.length <= 1}`) y botones activos a `/messages` y `/approvals`. Botón "Actualizar datos" sincroniza sincrónicamente KPIs, gráficos y carrusel mediante `analyticsVersion`. Reconciliada métrica `total_audience` (10 miembros humanos reales excluyendo bots) vía fallback `author_id = author_id or autor` en puente. Null safety y formato de variaciones neutras (`0% esta semana` / `0 puntos`) en las 6 tarjetas de KPIs.
+- **Caché TTL y Optimización del Dashboard:** TTL de 15s en `puente_motor_ia.py`. Carga reducida de 30-90s a ~1.5s inicial y <20ms subsecuente.
+- **Tests y Calidad:** 78 pruebas al 100% en verde (`pytest tests/ -v`). Compilación limpia (`npm run build`). Inmutabilidad de los 17 archivos `.py` de la raíz, `backend/` y `motor-ia/`.
 
 ## Decisiones (y por qué)
-- **Aislamiento Constitucional:** Lógica pesada de IA y persistencia en `evaluador_lotes.py`, no en `app.py`, garantizando modularidad y testabilidad.
-- **Resiliencia de Datos:** Si un mensaje falla por rate limit, se omite y el resto del lote se guarda; si el 100% falla, se protege el archivo previo sin sobrescribirlo.
-- **Doble Supabase:** Ingesta centralizada en `DATABASE_URL` (puerto 6543) y bandeja de curación de Copywriting en `SUPABASE_DB_URL` (puerto 5432).
-- **TDD Estricto:** Cada cambio funcional debe estar precedido por su test y validado al 100% en verde por QA (@reviewer) antes de considerarse terminado.
+- **Eliminación de Tecnicismos y Redundancias:** 'Curaduría' confunde a usuarios no técnicos. La insignia ahora describe el estado real del trabajo pendiente (IA o redacción de copy de Enoc). Se removió 'Actualizar' ya que el streaming de 5s y las acciones en la UI autorefrescan los datos.
+- **Permiso Explícito de Modificación:** El usuario autorizó formalmente modificar frontend y adaptadores para usabilidad integral.
+- **Caché TTL Inteligente (15s):** El servicio del dashboard realiza 15+ subconsultas y múltiples componentes frontend llaman en paralelo; la caché elimina más de 90 conexiones SSL redundantes a Supabase y bloqueos de SQLite sin desactualizar datos ante mutaciones (`invalidar_cache_supabase`).
+- **Aislamiento Constitucional:** Cero modificaciones a código base existente de la raíz ni backend/; unificación encapsulada en puente no invasivo y cliente tipado de frontend (`communityLive.ts`).
+- **Resiliencia con Fallback Fluido:** Frontend consume endpoints en vivo pero mantiene resiliencia automática ante caídas de backend o modo demo.
+- **Soberanía Humana (HITL):** Los estados y textos editados por humanos (`copy_final`) prevalecen sobre el motor de IA.
 
 ## Errores a evitar
-- Nunca saltarse el flujo formal (SDD) ni asumir que un cambio es "demasiado pequeño" para planificarse: siempre genera deuda técnica o cabos sueltos.
+- Nunca modificar los archivos preexistentes de la raíz, `backend/` ni `motor-ia/`.
+- Nunca saltarse el flujo formal (SDD) ni asumir que un cambio es "demasiado pequeño".
 - Nunca hacer push directo a `main` (Regla 1). Todo el trabajo se mantiene en ramas `feature/`.
 - Nunca escribir credenciales en código duro (Regla 4).
