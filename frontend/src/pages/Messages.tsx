@@ -501,11 +501,27 @@ function Messages() {
         if (evaluatingMessageId !== null) return
 
         setEvaluatingMessageId(message.interactionId)
+        setSyncFeedbackMessage(null)
         try {
-            await evaluateSingleMessage(message.interactionId, selectedAiBrain)
+            const res = await evaluateSingleMessage(message.interactionId, selectedAiBrain)
             await loadMessages()
+            if (res.relevancia >= 70) {
+                setSyncFeedbackMessage({
+                    type: 'success',
+                    text: `✅ Mensaje de @${message.author} evaluado (${res.relevancia}% relevancia · ${res.sentimiento}). Pasó a 'Pendientes de Copy' para redacción.`,
+                })
+            } else {
+                setSyncFeedbackMessage({
+                    type: 'warning',
+                    text: `⚠️ Mensaje de @${message.author} evaluado con ${res.relevancia}% de relevancia (< 70% requerido para Copy). Se movió automáticamente a 'Descartados' (puedes verlo o restaurarlo en Estado del mensaje: Descartado).`,
+                })
+            }
         } catch (error) {
             console.error('Error al evaluar mensaje con IA:', error)
+            setSyncFeedbackMessage({
+                type: 'error',
+                text: error instanceof Error ? `❌ ${error.message}` : '❌ Error al evaluar el mensaje con IA.',
+            })
         } finally {
             setEvaluatingMessageId(null)
         }

@@ -319,7 +319,7 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
             # Respetar mutaciones locales si el usuario ya interactuó con la fila
             if iid in locales:
                 cur_loc, flujo_loc = locales[iid]
-                if cur_loc is not None:
+                if cur_loc is not None and (flujo_loc != "ingesta" or cur_loc != "pending" or not kpi):
                     estado_curaduria = cur_loc
                 if flujo_loc is not None and (flujo_loc != "ingesta" or not kpi):
                     etapa_flujo = flujo_loc
@@ -1283,11 +1283,51 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
         except Exception:
             pass
 
-    invalidar_cache_supabase()
-    _sincronizar_supabase_a_sqlite()
-
     aprobados = resultado_eval.get("aprobados", [])
     descartados = resultado_eval.get("descartados", [])
+
+    _asegurar_esquema_sqlite()
+    with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+        for item_ev in aprobados + descartados:
+            id_m = item_ev.get("id_mensaje")
+            if id_m is None:
+                continue
+            kpis_ev = item_ev.get("kpis") or {}
+            rel_ev = kpis_ev.get("relevancia") if kpis_ev.get("relevancia") is not None else 0
+            sent_ev = kpis_ev.get("sentimiento") or "Neutral"
+            score_ev = _calcular_sentiment_score(sent_ev)
+            temas_ev = kpis_ev.get("temas_clave") or ""
+            canal_ev = item_ev.get("canal_origen") or "#general"
+            texto_ev = item_ev.get("texto_original") or ""
+            tema_ev = _inferir_tema(temas_ev, canal_ev, texto_ev)
+            seg_ev = kpis_ev.get("segmento") or "General"
+            raz_ev = kpis_ev.get("razonamiento") or ""
+            st_rev_ev = str(item_ev.get("estado_revision") or "pendiente").lower()
+            if st_rev_ev in ("aprobado", "procesado"):
+                cur_ev = "curated"
+            elif st_rev_ev in ("rechazado", "desaprobado"):
+                cur_ev = "discarded"
+            else:
+                cur_ev = "pending"
+            conn.execute("""
+                UPDATE interacciones SET
+                    relevancia = ?,
+                    sentimiento = ?,
+                    sentiment_score = ?,
+                    temas_clave = ?,
+                    tema = ?,
+                    segmento = ?,
+                    razonamiento = ?,
+                    estado_curaduria = ?,
+                    estado = 'analizado',
+                    etapa_flujo = 'en_analisis',
+                    etapa = 'en_analisis'
+                WHERE id = ?
+            """, (rel_ev, sent_ev, score_ev, temas_ev, tema_ev, seg_ev, raz_ev, cur_ev, int(id_m)))
+        conn.commit()
+
+    invalidar_cache_supabase()
+    _sincronizar_supabase_a_sqlite()
 
     return {
         "exito": bool(resultado_eval.get("exito", True)),
