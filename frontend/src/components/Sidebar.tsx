@@ -1,20 +1,11 @@
 import {
     BarChart3,
     CheckCircle,
-    FileText,
-    Home,
-    MessageSquare,
-    Settings,
-    ShieldCheck,
-    Star,
-    WandSparkles,
-    LogOut,
-    Hash,
-    Users,
-    CalendarDays,
-    Download,
-    FileClock,
     CloudUpload,
+    Home,
+    LogOut,
+    MessageSquare,
+    WandSparkles,
     X,
 } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
@@ -68,9 +59,6 @@ function Sidebar({
 }: SidebarProps) {
     const navigate = useNavigate()
     const user = getUser()
-
-    const isCommunityManager =
-        user?.role === 'community_manager'
 
     const roleLabels: Record<string, string> = {
         admin: 'Administrador',
@@ -159,208 +147,56 @@ function Sidebar({
                     </p>
 
                     <div className="space-y-2">
-                        {isCommunityManager ? (
-                            <>
-                                <SidebarItem
-                                    to="/dashboard"
-                                    icon={<Home size={18} />}
-                                    label="Dashboard"
-                                    onNavigate={handleNavigate}
-                                />
+                        <SidebarItem
+                            to="/dashboard"
+                            icon={<Home size={18} />}
+                            label="Dashboard"
+                            onNavigate={handleNavigate}
+                        />
 
-                                <SidebarItem
-                                    to="/messages"
-                                    icon={
-                                        <MessageSquare size={18} />
-                                    }
-                                    label="Ingesta Discord"
-                                    onNavigate={handleNavigate}
-                                />
+                        <SidebarItem
+                            to="/messages"
+                            icon={
+                                <MessageSquare size={18} />
+                            }
+                            label="Ingesta de mensajes"
+                            onNavigate={handleNavigate}
+                        />
 
-                                <SidebarItem
-                                    to="/analytics"
-                                    icon={<BarChart3 size={18} />}
-                                    label="Análisis"
-                                    onNavigate={handleNavigate}
-                                />
+                        <SidebarItem
+                            to="/analytics"
+                            icon={<BarChart3 size={18} />}
+                            label="Análisis"
+                            onNavigate={handleNavigate}
+                        />
 
-                                <SidebarItem
-                                    to="/content"
-                                    icon={
-                                        <WandSparkles size={18} />
-                                    }
-                                    label="Redacción de contenidos"
-                                    onNavigate={handleNavigate}
-                                />
+                        <SidebarItem
+                            to="/content"
+                            icon={
+                                <WandSparkles size={18} />
+                            }
+                            label="Redacción de contenidos"
+                            onNavigate={handleNavigate}
+                        />
 
-                                <SidebarItem
-                                    to="/approvals"
-                                    icon={
-                                        <CheckCircle size={18} />
-                                    }
-                                    label="Aprobaciones"
-                                    onNavigate={handleNavigate}
-                                />
+                        <SidebarItem
+                            to="/approvals"
+                            icon={
+                                <CheckCircle size={18} />
+                            }
+                            label="Aprobaciones"
+                            onNavigate={handleNavigate}
+                        />
 
-                                <SidebarItem
-                                    to="/oci-storage"
-                                    icon={
-                                        <CloudUpload size={18} />
-                                    }
-                                    label="Informes y Almacenamiento"
-                                    onNavigate={handleNavigate}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <SidebarItem
-                                    to="/dashboard"
-                                    icon={<Home size={18} />}
-                                    label="Dashboard"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/messages"
-                                    icon={
-                                        <MessageSquare size={18} />
-                                    }
-                                    label="Mensajes"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/highlights"
-                                    icon={<Star size={18} />}
-                                    label="Historias destacadas"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/hashtags"
-                                    icon={<Hash size={18} />}
-                                    label="Hashtags"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/audience"
-                                    icon={<Users size={18} />}
-                                    label="Audiencia"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/analytics"
-                                    icon={<BarChart3 size={18} />}
-                                    label="Análisis"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/calendar"
-                                    icon={
-                                        <CalendarDays size={18} />
-                                    }
-                                    label="Calendar"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/export"
-                                    icon={<Download size={18} />}
-                                    label="Export"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/my-reports"
-                                    icon={<FileClock size={18} />}
-                                    label="My Reports"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                {user?.role === 'admin' && (
-                                    <SidebarItem
-                                        to="/oci-storage"
-                                        icon={
-                                            <CloudUpload size={18} />
-                                        }
-                                        label="OCI Storage"
-                                        onNavigate={
-                                            handleNavigate
-                                        }
-                                    />
-                                )}
-
-                                {(user?.role === 'admin' ||
-                                    user?.role ===
-                                        'reviewer') && (
-                                    <>
-                                        <SidebarItem
-                                            to="/content"
-                                            icon={
-                                                <WandSparkles
-                                                    size={18}
-                                                />
-                                            }
-                                            label="Content Studio"
-                                            onNavigate={
-                                                handleNavigate
-                                            }
-                                        />
-
-                                        <SidebarItem
-                                            to="/approvals"
-                                            icon={
-                                                <CheckCircle
-                                                    size={18}
-                                                />
-                                            }
-                                            label="Aprobaciones"
-                                            onNavigate={
-                                                handleNavigate
-                                            }
-                                        />
-                                    </>
-                                )}
-                            </>
-                        )}
+                        <SidebarItem
+                            to="/oci-storage"
+                            icon={
+                                <CloudUpload size={18} />
+                            }
+                            label="Informes y Almacenamiento"
+                            onNavigate={handleNavigate}
+                        />
                     </div>
-
-                    {/* Administración */}
-                    {user?.role === 'admin' && (
-                        <>
-                            <p className="mb-3 mt-8 px-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                                Administración
-                            </p>
-
-                            <div className="space-y-2">
-                                <SidebarItem
-                                    to="/audit"
-                                    icon={<FileText size={18} />}
-                                    label="Auditoría"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/security"
-                                    icon={
-                                        <ShieldCheck size={18} />
-                                    }
-                                    label="Seguridad"
-                                    onNavigate={handleNavigate}
-                                />
-
-                                <SidebarItem
-                                    to="/settings"
-                                    icon={<Settings size={18} />}
-                                    label="Configuración"
-                                    onNavigate={handleNavigate}
-                                />
-                            </div>
-                        </>
-                    )}
                 </nav>
 
                 {/* Zona inferior siempre visible */}

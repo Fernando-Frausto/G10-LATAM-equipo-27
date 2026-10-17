@@ -39,7 +39,7 @@ function App() {
           }
         >
           <Route element={<MainLayout />}>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/messages" element={<Messages />} />
 
@@ -68,15 +68,6 @@ function App() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/content" element={<ContentStudio />} />
             <Route path="/approvals" element={<Approvals />} />
-          </Route>
-
-          <Route
-            element={
-              <RoleProtectedRoute
-                allowedRoles={["admin", "community_manager"]}
-              />
-            }
-          >
             <Route path="/oci-storage" element={<OCIStorage />} />
           </Route>
 
