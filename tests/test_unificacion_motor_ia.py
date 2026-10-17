@@ -1412,6 +1412,14 @@ def test_evaluate_single_message_exitoso_y_persistencia():
         assert data["estado"] == "analizado"
         assert data["etapa_flujo"] == "en_analisis"
 
+        # Verificar que evaluar_lote recibió enviado_en, creado_en y periodo_referencia
+        mock_eval.assert_called_once()
+        mensajes_arg = mock_eval.call_args.kwargs.get("mensajes") or mock_eval.call_args.args[0]
+        assert len(mensajes_arg) == 1
+        assert mensajes_arg[0]["enviado_en"] == "2026-10-10T12:00:00+00:00"
+        assert mensajes_arg[0]["creado_en"] == "2026-10-10T12:00:00+00:00"
+        assert mensajes_arg[0]["periodo_referencia"] == "Semana_01"
+
         # Verificar que en SQLite local la fila se actualizó
         interaccion = puente_motor_ia.obtener_interaccion_puente(501)
         assert interaccion is not None

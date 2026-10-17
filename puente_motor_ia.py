@@ -1257,7 +1257,15 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
             "message": "No se encontraron mensajes en el rango seleccionado.",
         }
 
-    # 3. Invocar evaluación del lote
+    # 3. Invocar evaluación del lote asegurando metadatos de fecha y semana
+    for m in mensajes:
+        env_val = m.get("enviado_en") or m.get("fecha_envio") or a_utc_iso(datetime.now(timezone.utc))
+        cre_val = m.get("creado_en") or m.get("fecha_extraccion") or env_val
+        per_val = m.get("periodo_referencia") or m.get("semana") or periodo_de(env_val, f"Semana_{semana_de(datetime.now(timezone.utc)):02d}")
+        m["enviado_en"] = env_val
+        m["creado_en"] = cre_val
+        m["periodo_referencia"] = per_val
+
     import evaluador_lotes
     resultado_eval = evaluador_lotes.evaluar_lote(
         mensajes=mensajes,
@@ -1319,13 +1327,26 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
     if not interaccion:
         raise HTTPException(status_code=404, detail=f"No se encontró el mensaje con ID {interaction_id}")
 
+    enviado_en_val = interaccion.get("enviado_en") or interaccion.get("fecha_envio") or a_utc_iso(datetime.now(timezone.utc))
+    creado_en_val = interaccion.get("creado_en") or interaccion.get("fecha_extraccion") or enviado_en_val
+    periodo_val = (
+        interaccion.get("periodo_referencia")
+        or interaccion.get("semana")
+        or periodo_de(enviado_en_val, f"Semana_{semana_de(datetime.now(timezone.utc)):02d}")
+    )
+
     msg_dict = {
         "id": interaction_id,
         "texto": interaccion.get("texto") or interaccion.get("content") or "",
         "canal": interaccion.get("canal") or interaccion.get("channel") or "#general",
         "autor": interaccion.get("autor") or interaccion.get("author") or "Usuario",
-        "origen_comunidad": interaccion.get("origen_comunidad") or "Discord",
-        "fecha_envio": interaccion.get("enviado_en") or a_utc_iso(datetime.now(timezone.utc)),
+        "origen_comunidad": interaccion.get("origen_comunidad") or "Discord_Grupo_ONE_G10",
+        "enviado_en": enviado_en_val,
+        "creado_en": creado_en_val,
+        "periodo_referencia": periodo_val,
+        "fecha_envio": enviado_en_val,
+        "fecha_extraccion": creado_en_val,
+        "semana": periodo_val,
     }
 
     import evaluador_lotes
