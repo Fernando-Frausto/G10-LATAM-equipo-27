@@ -17,7 +17,12 @@ import { getComplaintPublishPreview, publishComplaintResponse } from '../api/con
 import type { ComplaintPublishPreview } from '../api/contentWorkflow'
 import { updateMessageWorkflow } from '../api/messageWorkflow'
 import { getPublishedComplaintIds } from '../api/contentWorkflow'
-import { mockCommunityData } from '../data/mockCommunityData'
+
+const AI_PROVIDERS = [
+  'Groq (Llama 3.3)',
+  'Google Gemma 4',
+  'Google Gemini Flash Lite',
+] as const
 
 type DiscordAttachment = {
   id: string
@@ -67,6 +72,39 @@ type DraftState = {
   regenerating?: boolean
   error?: string
   savedId?: number
+}
+
+function buildDefaultDrafts(
+  message?: WorkflowMessage | null,
+): Record<ContentFormat, DraftState> {
+  if (!message || !message.content.trim()) {
+    return {
+      linkedin: { content: '', submitted: false },
+      x: { content: '', submitted: false },
+      discord: { content: '', submitted: false },
+    }
+  }
+
+  const source = message.content.trim()
+
+  return {
+    linkedin: {
+      interactionId: message.interactionId,
+      content: `Una conversación de nuestra comunidad nos invita a reflexionar:\n\n"${source}"\n\nTema: ${message.topic}\n\nEn CloudEdTech valoramos las experiencias compartidas y el aprendizaje colaborativo.\n\n#CloudEdTech #Comunidad #Aprendizaje`,
+      submitted: false,
+    },
+    x: {
+      interactionId: message.interactionId,
+      content: `Desde nuestra comunidad: ${source}`.slice(0, 280),
+      submitted: false,
+    },
+    discord: {
+      interactionId: message.interactionId,
+      attachments: [...message.attachments],
+      content: `Gracias por compartir tu mensaje en #${message.channel}.\n\n"${source}"\n\nDesde CloudEdTech queremos continuar esta conversación con la comunidad.`,
+      submitted: false,
+    },
+  }
 }
 
 function ContentStudio() {
@@ -127,6 +165,12 @@ function ContentStudio() {
               ? current
               : messages[0]?.interactionId ?? null,
           )
+          if (messages.length > 0) {
+            setDrafts((current) => {
+              if (current.linkedin.interactionId) return current
+              return buildDefaultDrafts(messages[0])
+            })
+          }
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -153,9 +197,10 @@ function ContentStudio() {
       (item) => item.interactionId === selectedWorkflowId,
     ) ?? null
 
-
-  const generatedContent = mockCommunityData.content_studio[0]
-
+  const [complaintAiProvider, setComplaintAiProvider] =
+    useState<string>('Groq (Llama 3.3)')
+  const [workspaceAiProvider, setWorkspaceAiProvider] =
+    useState<string>('Groq (Llama 3.3)')
 
   const [activeComplaint, setActiveComplaint] = useState<number | null>(null)
   const activeComplaintRef = useRef<number | null>(null)
@@ -306,32 +351,7 @@ function ContentStudio() {
 
   const [drafts, setDrafts] = useState<
     Record<ContentFormat, DraftState>
-  >({
-    linkedin: {
-      content: generatedContent.content,
-      submitted: false,
-    },
-
-    x: {
-      content: `💬 Desde nuestra comunidad:
-
-${''}
-
-#CloudEdTech`,
-      submitted: false,
-    },
-
-    discord: {
-      content: `🚀 ¡Tenemos una nueva historia para compartir!
-
-${''}
-
-💡 Seguimos construyendo y aprendiendo juntos como comunidad.
-
-#CloudEdTech #Comunidad`,
-      submitted: false,
-    },
-  })
+  >(() => buildDefaultDrafts(null))
 
   const discordFiles = (drafts.discord.attachments ?? []).filter(
     (file) =>
@@ -366,38 +386,7 @@ ${''}
 
     if (!source) return
 
-    const newDrafts: Record<ContentFormat, DraftState> = {
-      linkedin: {
-        interactionId: message.interactionId,
-        content: `Una conversacion de nuestra comunidad nos invita a reflexionar:
-
-"${source}"
-
-Tema: ${message.topic}
-
-En CloudEdTech valoramos las experiencias compartidas y el aprendizaje colaborativo.
-
-#CloudEdTech #Comunidad #Aprendizaje`,
-        submitted: false,
-      },
-      x: {
-        interactionId: message.interactionId,
-        content: `Desde nuestra comunidad: ${source}`,
-        submitted: false,
-      },
-      discord: {
-        interactionId: message.interactionId,
-        attachments: [...message.attachments],
-        content: `Gracias por compartir tu mensaje en #${message.channel}.
-
-"${source}"
-
-Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
-        submitted: false,
-      },
-    }
-
-    setDrafts(newDrafts)
+    setDrafts(buildDefaultDrafts(message))
     setActiveFormat('linkedin')
     setShowDiscordFiles(false)
   }
@@ -481,12 +470,6 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
 
       if (draft.interactionId) {
         await updateMessageWorkflow(draft.interactionId, 'en_aprobacion')
-        setWorkflowMessages((current) =>
-          current.filter((item) => item.interactionId !== draft.interactionId),
-        )
-        setSelectedWorkflowId((current) =>
-          current === draft.interactionId ? null : current,
-        )
       }
 
       setDrafts((current) => ({
@@ -567,6 +550,7 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
         canal: message.channel,
         formato: format,
         tono: 'profesional',
+        proveedor: workspaceAiProvider,
       })
 
       setDrafts((current) => {
@@ -832,20 +816,44 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
 
       {/* Selector de formato */}
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
-            <FileText size={18} />
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
+              <FileText size={18} />
+            </div>
+
+            <div>
+              <h3 className="font-bold text-slate-900">
+                Contenido generado
+              </h3>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Revisa y adapta cada formato antes de enviarlo a
+                aprobación
+              </p>
+            </div>
           </div>
 
-          <div>
-            <h3 className="font-bold text-slate-900">
-              Contenido generado
-            </h3>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Revisa y adapta cada formato antes de enviarlo a
-              aprobación
-            </p>
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="workspace-ai-provider"
+              className="text-xs font-semibold text-slate-600"
+            >
+              Modelo IA:
+            </label>
+            <select
+              id="workspace-ai-provider"
+              value={workspaceAiProvider}
+              disabled={Object.values(drafts).some((d) => d.regenerating)}
+              onChange={(event) => setWorkspaceAiProvider(event.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+            >
+              {AI_PROVIDERS.map((provider) => (
+                <option key={provider} value={provider}>
+                  {provider}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -1268,7 +1276,29 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
               </p>
             </div>
 
-            <div className="mt-5">
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label
+                  htmlFor="complaint-ai-provider"
+                  className="text-xs font-semibold text-slate-600"
+                >
+                  Modelo IA:
+                </label>
+                <select
+                  id="complaint-ai-provider"
+                  value={complaintAiProvider}
+                  disabled={complaintGenerating || complaintPublishing}
+                  onChange={(event) => setComplaintAiProvider(event.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                >
+                  {AI_PROVIDERS.map((provider) => (
+                    <option key={provider} value={provider}>
+                      {provider}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <button
                 type="button"
                 disabled={complaintGenerating || complaintPublishing}
@@ -1283,7 +1313,10 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
                   setComplaintGenerationError('')
 
                   try {
-                    const data = await generateComplaintResponse(interactionId)
+                    const data = await generateComplaintResponse(
+                      interactionId,
+                      complaintAiProvider,
+                    )
 
                     if (
                       typeof data.respuesta !== 'string' ||
@@ -1312,7 +1345,7 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
                     }
                   }
                 }}
-                className="flex items-center gap-2 rounded-lg bg-indigo-100 px-4 py-2.5 text-sm font-semibold text-indigo-500 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
               >
                 <Sparkles size={16} className={complaintGenerating ? 'animate-pulse' : ''} />
                 {complaintGenerating ? 'Generando respuesta...' : 'Generar con IA'}
@@ -1389,11 +1422,18 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
                       {complaintDestination.original_content || '(Sin contenido de texto)'}
                     </p>
                   </div>
+                ) : complaintDestination && !complaintDestination.ready ? (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" role="alert">
+                    <p className="font-semibold">Destino de Discord no disponible</p>
+                    <p className="mt-1">
+                      {complaintDestination.detail || 'El bot de Discord no está listo o las credenciales no están configuradas.'}
+                    </p>
+                  </div>
                 ) : (
                   <p className="mt-3 text-xs text-amber-800">
                     Canal indicado en la lista: <strong>
                       {complaints.find((item) => item.id === activeComplaint)?.canal || 'No identificado'}
-                    </strong>. Destino pendiente de verificaci?n.
+                    </strong>. Destino pendiente de verificación.
                   </p>
                 )}
 
@@ -1506,6 +1546,10 @@ Desde CloudEdTech queremos continuar esta conversacion con la comunidad.`,
                     setComplaintPublishSuccess(
                       `Publicado en Discord. Canal: #${destination.channel_name}. ` +
                       `ID del mensaje: ${resultado.discord_message_id}`
+                    )
+
+                    setComplaints((current) =>
+                      current.filter((item) => item.id !== interactionId)
                     )
                   } catch (error) {
                     setComplaintPublishError(

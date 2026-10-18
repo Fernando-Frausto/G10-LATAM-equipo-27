@@ -1683,3 +1683,471 @@ def test_oci_reports_lista_historial_reportes(client, tmp_path, monkeypatch):
 
 
 
+
+
+# ==============================================================================
+# 14. Spec 012: Soporte a Quejas y Mesa de Trabajo de Copywriting (TDD Fase Red)
+# ==============================================================================
+
+def _insertar_interaccion_spec012(
+    interaccion_id: int = 701,
+    texto: str = "Tengo un problema grave con el curso de backend",
+    canal: str = "#soporte",
+    autor: str = "usuario_molesto",
+    channel_id: str = "458",
+    message_id: str = "1001",
+    etapa_flujo: str = "en_analisis",
+):
+    """Inserta una interacción de prueba directamente en la base SQLite temporal."""
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, etapa_flujo, etapa, channel_id, message_id
+            ) VALUES (
+                ?, ?, 'Discord', 'Semana_01', ?, ?, 'mensaje',
+                ?, '2026-10-18T10:00:00+00:00', '2026-10-18T10:00:00+00:00', 'pendiente', ?, ?, ?, ?
+            )
+            """,
+            (
+                interaccion_id,
+                f"hash_{interaccion_id}",
+                autor,
+                canal,
+                texto,
+                etapa_flujo,
+                etapa_flujo,
+                channel_id,
+                message_id,
+            ),
+        )
+        conn.commit()
+
+
+# --- Contrato 1: POST /api/v1/content-workflow/complaints/generate-response ---
+
+def test_complaint_generate_response_exitoso_proveedor_default(client):
+    """
+    (Spec 012 - RF-01) POST /api/v1/content-workflow/complaints/generate-response
+    Valida generación estructurada con proveedor por defecto ('Groq (Llama 3.3)').
+    """
+    _insertar_interaccion_spec012(interaccion_id=701, texto="No puedo ingresar a la plataforma desde ayer.")
+
+    with patch.dict(os.environ, {"GROQ_API_KEY": "gsk_test123"}), \
+         patch.object(puente_motor_ia, "_generar_respuesta_queja_ia", create=True,
+                      return_value={"respuesta": "Lamentamos el inconveniente con tu acceso a la plataforma."}):
+        payload = {"interaccion_id": 701}
+        resp = client.post("/api/v1/content-workflow/complaints/generate-response", json=payload)
+        assert resp.status_code == 200, f"Error inesperado: {resp.status_code} - {resp.text}"
+        data = resp.json()
+        assert data["interaccion_id"] == 701
+        assert "respuesta" in data and len(data["respuesta"]) > 0
+        assert data["proveedor_usado"] == "Groq (Llama 3.3)"
+        assert data["estado"] == "borrador"
+        assert data["requiere_revision"] is True
+
+
+def test_complaint_generate_response_proveedores_especificos(client):
+    """
+    (Spec 012 - RF-01) POST /api/v1/content-workflow/complaints/generate-response
+    Valida generación con proveedores específicos ('Google Gemma 4' y 'Google Gemini Flash Lite').
+    """
+    _insertar_interaccion_spec012(interaccion_id=701, texto="Duda sobre el certificado de finalización.")
+
+    with patch.dict(os.environ, {"GOOGLE_API_KEY": "AIza_mock_key", "GEMINI_API_KEY": "AIza_mock_key"}):
+        for proveedor_solicitado in ["Google Gemma 4", "Google Gemini Flash Lite"]:
+            with patch.object(puente_motor_ia, "_generar_respuesta_queja_ia", create=True,
+                              return_value={"respuesta": f"Respuesta generada con {proveedor_solicitado}."}):
+                payload = {
+                    "interaccion_id": 701,
+                    "proveedor": proveedor_solicitado,
+                }
+                resp = client.post("/api/v1/content-workflow/complaints/generate-response", json=payload)
+                assert resp.status_code == 200, f"Error con {proveedor_solicitado}: {resp.status_code} - {resp.text}"
+                data = resp.json()
+                assert data["interaccion_id"] == 701
+                assert data["proveedor_usado"] == proveedor_solicitado
+                assert data["estado"] == "borrador"
+                assert data["requiere_revision"] is True
+
+
+def test_complaint_generate_response_interaccion_no_encontrada_404(client):
+    """
+    (Spec 012 - RF-01) POST /api/v1/content-workflow/complaints/generate-response
+    Valida rechazo HTTP 404 cuando la interacción solicitada no existe.
+    """
+    resp = client.post("/api/v1/content-workflow/complaints/generate-response", json={"interaccion_id": 999999})
+    assert resp.status_code == 404
+    assert "no existe" in resp.json().get("detail", "").lower()
+
+
+def test_complaint_generate_response_texto_vacio_422(client):
+    """
+    (Spec 012 - RF-01) POST /api/v1/content-workflow/complaints/generate-response
+    Valida rechazo HTTP 422 cuando la interacción no contiene texto o solo contiene espacios.
+    """
+    _insertar_interaccion_spec012(interaccion_id=702, texto="    ")
+    resp = client.post("/api/v1/content-workflow/complaints/generate-response", json={"interaccion_id": 702})
+    assert resp.status_code == 422
+    assert "no contiene texto" in resp.json().get("detail", "").lower()
+
+
+def test_complaint_generate_response_credenciales_faltantes_502(client):
+    """
+    (Spec 012 - RF-01) POST /api/v1/content-workflow/complaints/generate-response
+    Valida rechazo HTTP 502 sin sustitución silenciosa cuando faltan credenciales del proveedor.
+    """
+    _insertar_interaccion_spec012(interaccion_id=701, texto="Reporte de error en video.")
+    with patch.dict(os.environ, {"GROQ_API_KEY": ""}, clear=False):
+        payload = {"interaccion_id": 701, "proveedor": "Groq (Llama 3.3)"}
+        resp = client.post("/api/v1/content-workflow/complaints/generate-response", json=payload)
+        assert resp.status_code == 502
+        detail = resp.json().get("detail", "")
+        assert "Groq (Llama 3.3)" in detail or "credenciales" in detail.lower()
+
+
+# --- Contrato 2: GET /api/v1/content-workflow/complaints/{id}/publish-preview ---
+
+def test_complaint_publish_preview_sin_token_discord_retorna_ready_false(client):
+    """
+    (Spec 012 - RF-02) GET /api/v1/content-workflow/complaints/{id}/publish-preview
+    Valida retorno HTTP 200 con ready: false y detalle explicativo si falta token del bot.
+    """
+    _insertar_interaccion_spec012(
+        interaccion_id=703,
+        texto="Error crítico al enviar tarea final",
+        canal="#soporte",
+        channel_id="458",
+        message_id="1003",
+        autor="charlie",
+    )
+    with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "", "DISCORD_TOKEN": ""}, clear=False):
+        resp = client.get("/api/v1/content-workflow/complaints/703/publish-preview")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["interaccion_id"] == 703
+        assert data["ready"] is False
+        assert data["channel_id"] == "458"
+        assert data["channel_name"] == "soporte"
+        assert data["source_message_id"] == "1003"
+        assert data["author"] == "charlie"
+        assert data["original_content"] == "Error crítico al enviar tarea final"
+        assert "bot" in data.get("detail", "").lower()
+
+
+def test_complaint_publish_preview_con_token_y_destino_valido_retorna_ready_true(client):
+    """
+    (Spec 012 - RF-02) GET /api/v1/content-workflow/complaints/{id}/publish-preview
+    Valida retorno HTTP 200 con ready: true y metadatos cuando bot y destino son válidos.
+    """
+    _insertar_interaccion_spec012(
+        interaccion_id=703,
+        texto="Error crítico al enviar tarea final",
+        canal="#soporte",
+        channel_id="458",
+        message_id="1003",
+        autor="charlie",
+    )
+    with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "bot_token_123", "DISCORD_GUILD_ID": "guild_999"}, clear=False), \
+         patch.object(puente_motor_ia, "_verificar_mensaje_discord", create=True, return_value=True):
+        resp = client.get("/api/v1/content-workflow/complaints/703/publish-preview")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["interaccion_id"] == 703
+        assert data["ready"] is True
+        assert data["channel_id"] == "458"
+        assert data["channel_name"] == "soporte"
+        assert data["source_message_id"] == "1003"
+        assert data["author"] == "charlie"
+        assert data["original_content"] == "Error crítico al enviar tarea final"
+
+
+def test_complaint_publish_preview_rechazos_404(client):
+    """
+    (Spec 012 - RF-02) GET /api/v1/content-workflow/complaints/{id}/publish-preview
+    Valida 404 si la interacción no existe o si el mensaje original ya no existe en Discord.
+    """
+    # 1. Interacción inexistente
+    resp_no_int = client.get("/api/v1/content-workflow/complaints/999999/publish-preview")
+    assert resp_no_int.status_code == 404
+    assert "no existe" in resp_no_int.json().get("detail", "").lower()
+
+    # 2. Mensaje no existe en Discord (cuando hay token configurado)
+    _insertar_interaccion_spec012(interaccion_id=703, channel_id="458", message_id="1003")
+    with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "bot_token_123"}, clear=False), \
+         patch.object(puente_motor_ia, "_verificar_mensaje_discord", create=True, return_value=False):
+        resp_no_msg = client.get("/api/v1/content-workflow/complaints/703/publish-preview")
+        assert resp_no_msg.status_code == 404
+        assert "discord" in resp_no_msg.json().get("detail", "").lower()
+
+
+# --- Contrato 3: POST /api/v1/content-workflow/complaints/publish-response ---
+
+def test_complaint_publish_response_validaciones_caracteres_y_confirmacion(client):
+    """
+    (Spec 012 - RF-03) POST /api/v1/content-workflow/complaints/publish-response
+    Valida rechazo HTTP 400 si confirmado es falso o si la respuesta no cumple entre 1 y 2000 caracteres.
+    """
+    _insertar_interaccion_spec012(interaccion_id=704)
+    with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "token_bot_123"}, clear=False):
+        # 1. No confirmado
+        resp_no_conf = client.post("/api/v1/content-workflow/complaints/publish-response", json={
+            "interaccion_id": 704,
+            "respuesta": "Hola, atendemos tu caso.",
+            "confirmado": False,
+        })
+        assert resp_no_conf.status_code == 400
+
+        # 2. Respuesta vacía
+        resp_vacia = client.post("/api/v1/content-workflow/complaints/publish-response", json={
+            "interaccion_id": 704,
+            "respuesta": "   ",
+            "confirmado": True,
+        })
+        assert resp_vacia.status_code == 400
+
+        # 3. Respuesta que excede 2000 caracteres
+        resp_larga = client.post("/api/v1/content-workflow/complaints/publish-response", json={
+            "interaccion_id": 704,
+            "respuesta": "A" * 2001,
+            "confirmado": True,
+        })
+        assert resp_larga.status_code == 400
+
+
+def test_complaint_publish_response_sin_token_discord_502(client):
+    """
+    (Spec 012 - RF-03) POST /api/v1/content-workflow/complaints/publish-response
+    Valida rechazo HTTP 502 si falta el token de Discord al intentar publicar.
+    """
+    _insertar_interaccion_spec012(interaccion_id=704)
+    with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "", "DISCORD_TOKEN": ""}, clear=False):
+        resp = client.post("/api/v1/content-workflow/complaints/publish-response", json={
+            "interaccion_id": 704,
+            "respuesta": "Hola, lamentamos el inconveniente.",
+            "confirmado": True,
+        })
+        assert resp.status_code == 502
+        assert "discord" in resp.json().get("detail", "").lower() or "token" in resp.json().get("detail", "").lower()
+
+
+def test_complaint_publish_response_exitoso_y_persistencia_sqlite(client):
+    """
+    (Spec 012 - RF-03) POST /api/v1/content-workflow/complaints/publish-response
+    Valida envío de respuesta a Discord con reply, persistencia en respuestas_quejas_discord y avance a 'atendido'.
+    """
+    _insertar_interaccion_spec012(
+        interaccion_id=704,
+        canal="#soporte",
+        channel_id="458",
+        message_id="1004",
+        etapa_flujo="en_redaccion",
+    )
+    with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "token_valido"}), \
+         patch.object(puente_motor_ia, "_enviar_reply_discord", create=True,
+                      return_value={"discord_message_id": "disc_msg_999", "channel_id": "458"}):
+        payload = {
+            "interaccion_id": 704,
+            "respuesta": "Hola Charlie, el equipo técnico ya está atendiendo el problema de acceso.",
+            "confirmado": True,
+        }
+        resp = client.post("/api/v1/content-workflow/complaints/publish-response", json=payload)
+        assert resp.status_code == 200, f"Error al publicar: {resp.status_code} - {resp.text}"
+        data = resp.json()
+        assert data["estado"] == "publicado"
+        assert data["interaccion_id"] == 704
+        assert data["discord_message_id"] == "disc_msg_999"
+        assert data["channel_id"] == "458"
+
+        # Validar persistencia en SQLite
+        with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+            row = conn.execute(
+                "SELECT interaccion_id, canal_id, discord_message_id, respuesta FROM respuestas_quejas_discord WHERE interaccion_id = 704"
+            ).fetchone()
+            assert row is not None
+            assert row[0] == 704
+            assert row[1] == "458"
+            assert row[2] == "disc_msg_999"
+            assert row[3] == "Hola Charlie, el equipo técnico ya está atendiendo el problema de acceso."
+
+        # Validar actualización de etapa en la interacción
+        interaccion = puente_motor_ia.obtener_interaccion_puente(704)
+        assert interaccion is not None
+        assert interaccion["etapa_flujo"] == "atendido"
+
+
+# --- Contrato 4: GET /api/v1/content-workflow/complaints/published-responses ---
+
+def test_complaint_published_responses_consulta_tabla_sqlite(client):
+    """
+    (Spec 012 - RF-04) GET /api/v1/content-workflow/complaints/published-responses
+    Valida consulta de IDs de respuestas ya publicadas consultando respuestas_quejas_discord.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS respuestas_quejas_discord (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                interaccion_id INTEGER NOT NULL UNIQUE,
+                canal_id TEXT NOT NULL,
+                discord_message_id TEXT NOT NULL,
+                respuesta TEXT NOT NULL,
+                publicado_en TEXT NOT NULL,
+                autor_respuesta TEXT DEFAULT 'bot'
+            )
+        """)
+        conn.execute("""
+            INSERT INTO respuestas_quejas_discord (interaccion_id, canal_id, discord_message_id, respuesta, publicado_en, autor_respuesta)
+            VALUES (701, '458', 'disc_101', 'Respuesta queja 1', '2026-10-18T12:00:00+00:00', 'bot'),
+                   (703, '458', 'disc_102', 'Respuesta queja 2', '2026-10-18T12:05:00+00:00', 'bot')
+        """)
+        conn.commit()
+
+    resp = client.get("/api/v1/content-workflow/complaints/published-responses")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "interaction_ids" in data
+    assert data["interaction_ids"] == [701, 703]
+
+
+# --- Contrato 5: POST /api/v1/content-workflow/regenerate ---
+
+def test_content_workflow_regenerate_formatos_y_proveedores(client):
+    """
+    (Spec 012 - RF-06) POST /api/v1/content-workflow/regenerate
+    Valida regeneración estructurada para diferentes formatos y proveedores de IA.
+    """
+    with patch.dict(os.environ, {"GROQ_API_KEY": "gsk_test123"}), \
+         patch.object(puente_motor_ia, "_generar_copy_llm", create=True,
+                      return_value={
+                          "formato": "linkedin",
+                          "titulo": "Innovación y Cloud en Educación",
+                          "contenido": "Un análisis práctico sobre el impacto de la nube en la formación profesional.",
+                          "llamada_accion": "¿Cómo integras cloud en tus proyectos? Cuéntanos.",
+                          "hashtags": ["#cloud", "#educacion", "#tech"],
+                      }):
+        payload = {
+            "texto": "Queremos aprender más sobre despliegues en la nube",
+            "canal": "#general",
+            "formato": "linkedin",
+            "tono": "profesional",
+            "proveedor": "Groq (Llama 3.3)",
+        }
+        resp = client.post("/api/v1/content-workflow/regenerate", json=payload)
+        assert resp.status_code == 200, f"Error al regenerar: {resp.status_code} - {resp.text}"
+        data = resp.json()
+        assert data["formato"] == "linkedin"
+        assert data["titulo"] == "Innovación y Cloud en Educación"
+        assert "impacto de la nube" in data["contenido"]
+        assert data["llamada_accion"] == "¿Cómo integras cloud en tus proyectos? Cuéntanos."
+        assert isinstance(data["hashtags"], list)
+        assert len(data["hashtags"]) == 3
+
+
+def test_content_workflow_regenerate_garantia_estricta_limite_280_para_x(client):
+    """
+    (Spec 012 - RF-06) POST /api/v1/content-workflow/regenerate
+    Garantiza estrictamente que para formato 'x' el texto generado nunca supere los 280 caracteres.
+    """
+    # Texto largo de 350 caracteres simulado desde el LLM
+    texto_largo = (
+        "La educación en tecnología no se trata solo de escribir código, sino de entender la arquitectura, "
+        "la infraestructura en la nube y resolver problemas reales de negocio para las empresas modernas. "
+        "Aprende con nosotros en CloudEdTech y lleva tus habilidades al siguiente nivel profesional hoy mismo."
+    )
+    assert len(texto_largo) > 280
+
+    with patch.dict(os.environ, {"GROQ_API_KEY": "gsk_test123"}), \
+         patch.object(puente_motor_ia, "_generar_copy_llm", create=True,
+                      return_value={
+                          "formato": "x",
+                          "titulo": "Formación Tech",
+                          "contenido": texto_largo,
+                          "llamada_accion": "Síguenos.",
+                          "hashtags": ["#tech"],
+                      }):
+        payload = {
+            "texto": "Interés en cursos de arquitectura cloud",
+            "canal": "#general",
+            "formato": "x",
+            "tono": "profesional",
+        }
+        resp = client.post("/api/v1/content-workflow/regenerate", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["formato"] == "x"
+        assert len(data["contenido"]) <= 280, f"El contenido para X excedió 280 caracteres ({len(data['contenido'])})"
+
+
+def test_content_workflow_regenerate_validacion_texto_vacio(client):
+    """
+    (Spec 012 - RF-06) POST /api/v1/content-workflow/regenerate
+    Valida rechazo HTTP 400 o 422 si el texto está vacío o contiene solo espacios.
+    """
+    payload = {
+        "texto": "    ",
+        "canal": "#general",
+        "formato": "linkedin",
+    }
+    resp = client.post("/api/v1/content-workflow/regenerate", json=payload)
+    assert resp.status_code in (400, 422)
+
+
+# --- Contrato 6: POST /api/v1/content-workflow/drafts ---
+
+def test_content_workflow_drafts_persistencia_y_actualizacion_etapa(client):
+    """
+    (Spec 012 - RF-07) POST /api/v1/content-workflow/drafts
+    Valida inserción en contenidos_generados (estado 'pendiente_revision') y avance a 'en_aprobacion'.
+    """
+    _insertar_interaccion_spec012(
+        interaccion_id=705,
+        texto="Mensaje seleccionado para redacción",
+        etapa_flujo="en_redaccion",
+    )
+    payload = {
+        "interaccion_id": 705,
+        "plataforma": "linkedin",
+        "titulo": "Novedades de Cloud Computing",
+        "contenido": "Esta semana la comunidad discutió sobre microservicios y escalabilidad.",
+        "llamada_accion": "¿Cuál es tu arquitectura preferida?",
+        "hashtags": ["#cloud", "#microservicios"],
+        "tono": "profesional",
+    }
+    resp = client.post("/api/v1/content-workflow/drafts", json=payload)
+    assert resp.status_code in (200, 201), f"Error al guardar borrador: {resp.status_code} - {resp.text}"
+    data = resp.json()
+    assert "id" in data and isinstance(data["id"], int) and data["id"] > 0
+    assert data["estado"] == "pendiente_revision"
+    assert "aprobación" in data.get("message", "").lower() or "exitosamente" in data.get("message", "").lower()
+
+    # Validar persistencia en SQLite contenidos_generados
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM contenidos_generados WHERE id = ?", (data["id"],)).fetchone()
+        assert row is not None
+        assert row["interaccion_id"] == 705
+        assert row["formato"] == "linkedin"
+        assert row["titulo"] == "Novedades de Cloud Computing"
+        assert row["contenido"] == "Esta semana la comunidad discutió sobre microservicios y escalabilidad."
+        assert row["estado"] == "pendiente_revision"
+
+    # Validar actualización de etapa en la interacción vinculada
+    interaccion = puente_motor_ia.obtener_interaccion_puente(705)
+    assert interaccion is not None
+    assert interaccion["etapa_flujo"] == "en_aprobacion"
+
+
+def test_content_workflow_drafts_validacion_campos_requeridos(client):
+    """
+    (Spec 012 - RF-07) POST /api/v1/content-workflow/drafts
+    Valida rechazo HTTP 400 o 422 si falta contenido o plataforma requerida.
+    """
+    payload_sin_contenido = {
+        "interaccion_id": 705,
+        "plataforma": "linkedin",
+        "titulo": "Título de prueba",
+        "contenido": "",
+    }
+    resp = client.post("/api/v1/content-workflow/drafts", json=payload_sin_contenido)
+    assert resp.status_code in (400, 422)

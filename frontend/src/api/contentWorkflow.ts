@@ -24,6 +24,7 @@ export interface RegenerateContentRequest {
   canal: string
   formato: ContentPlatform
   tono?: string
+  proveedor?: string
 }
 
 export interface RegenerateContentResponse {
@@ -95,16 +96,18 @@ export async function createContentDraft(
 
 export async function generateComplaintResponse(
   interaccionId: number,
-): Promise<{ respuesta: string }> {
+  proveedor?: string,
+): Promise<{ respuesta: string; proveedor_usado?: string }> {
   return (await apiRequest(
     '/api/v1/content-workflow/complaints/generate-response',
     {
       method: 'POST',
       body: JSON.stringify({
         interaccion_id: interaccionId,
+        ...(proveedor ? { proveedor } : {}),
       }),
     },
-  )) as { respuesta: string }
+  )) as { respuesta: string; proveedor_usado?: string }
 }
 
 
@@ -157,13 +160,14 @@ export interface ComplaintPublishPreview {
   author: string
   original_content: string
   ready: boolean
+  detail?: string
 }
 
 export async function getComplaintPublishPreview(
   interaccionId: number,
 ): Promise<ComplaintPublishPreview> {
   if (!Number.isSafeInteger(interaccionId) || interaccionId <= 0) {
-    throw new Error('La interacci?n seleccionada no es v?lida.')
+    throw new Error('La interacción seleccionada no es válida.')
   }
 
   const data = (await apiRequest(
@@ -173,12 +177,13 @@ export async function getComplaintPublishPreview(
     },
   )) as ComplaintPublishPreview
 
+  if (!data || data.interaccion_id !== interaccionId) {
+    throw new Error('No se pudo verificar el destino de Discord.')
+  }
+
   if (
-    data.interaccion_id !== interaccionId ||
-    !data.ready ||
-    !data.channel_id ||
-    !data.channel_name ||
-    !data.source_message_id
+    data.ready &&
+    (!data.channel_id || !data.channel_name || !data.source_message_id)
   ) {
     throw new Error('No se pudo verificar el destino de Discord.')
   }
