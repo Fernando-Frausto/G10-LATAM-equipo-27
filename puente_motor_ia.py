@@ -3434,7 +3434,7 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
         return _cache_canales_discord
 
     canales = [
-        {"id": "webhook", "name": "Canal oficial de #notificaciones (Predeterminado)"},
+        {"id": "webhook", "name": "#notificaciones (Predeterminado)"},
     ]
     token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
     if token:
@@ -3469,11 +3469,20 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
     if len(canales) == 1:
         canales.extend([
             {"id": "1550016804418621452", "name": "#general"},
-            {"id": "1551309281041715230", "name": "#chat-egresados"},
-            {"id": "1551309330198953994", "name": "#oportunidades-laborales"},
             {"id": "1551309664397033513", "name": "#faq"},
             {"id": "1559244209884504245", "name": "#pqrs"},
+            {"id": "1551309281041715230", "name": "#chat-egresados"},
+            {"id": "1551309330198953994", "name": "#oportunidades-laborales"},
         ])
+
+    # Ordenar los canales secundarios estrictamente segun la preferencia del usuario:
+    orden_preferido = ["general", "faq", "pqrs", "chat-egresados", "oportunidades-laborales"]
+    resto = [c for c in canales[1:] if "anuncios" not in c.get("name", "").lower()]
+    resto.sort(key=lambda c: (
+        0 if c.get("name", "").lstrip("#").lower() in orden_preferido else 1,
+        orden_preferido.index(c.get("name", "").lstrip("#").lower()) if c.get("name", "").lstrip("#").lower() in orden_preferido else c.get("name", "").lower()
+    ))
+    canales = [canales[0]] + resto
 
     _cache_canales_discord = canales
     _timestamp_canales_discord = ahora
@@ -3630,7 +3639,7 @@ async def publish_announcement_v1(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="El contenido supera el límite de 2,000 caracteres de Discord.")
 
     channel_id = str(p.get("channel_id") or p.get("canal_id") or p.get("channel") or "").strip()
-    canal_publicado_nombre = "#anuncios"
+    canal_publicado_nombre = "Canal oficial de #notificaciones"
 
     bot_token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
     webhook_url = (os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or "").strip()
@@ -3653,6 +3662,10 @@ async def publish_announcement_v1(payload: dict = Body(...)):
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 canal_publicado_nombre = f"Canal ID {channel_id}"
+                for c in _obtener_canales_discord_disponibles():
+                    if c.get("id") == channel_id:
+                        canal_publicado_nombre = c.get("name", canal_publicado_nombre)
+                        break
         except urllib.error.HTTPError as e:
             raise HTTPException(status_code=502, detail=f"Discord rechazó el mensaje en el canal {channel_id} (error {e.code}): {e.read().decode(errors='ignore')}")
         except Exception as e:

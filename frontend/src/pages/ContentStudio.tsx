@@ -13,7 +13,7 @@ import {
   Upload,
 } from 'lucide-react'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 
 import {
@@ -397,18 +397,57 @@ function ContentStudio() {
     }
   }, [targetInteractionId, workflowMessages, selectedMessageId])
 
-  const availableDiscordChannels = (
-    announcementStatus?.channels && announcementStatus.channels.length > 0
-      ? announcementStatus.channels
-      : [
-          { id: 'webhook', name: 'Canal oficial de #notificaciones (Predeterminado)' },
-          { id: '1550016804418621452', name: '#general' },
-          { id: '1551309281041715230', name: '#chat-egresados' },
-          { id: '1551309330198953994', name: '#oportunidades-laborales' },
-          { id: '1551309664397033513', name: '#faq' },
-          { id: '1559244209884504245', name: '#pqrs' },
-        ]
-  ).filter((ch) => !ch.name.toLowerCase().includes('anuncios'))
+  const PREFERRED_ANNOUNCEMENT_CHANNELS_ORDER = useMemo(
+    () => [
+      'general',
+      'faq',
+      'pqrs',
+      'chat-egresados',
+      'oportunidades-laborales',
+    ],
+    [],
+  )
+
+  const availableDiscordChannels = useMemo<Array<{ id: string; name: string }>>(() => {
+    const rawList: Array<{ id: string; name: string }> = (
+      announcementStatus?.channels && announcementStatus.channels.length > 0
+        ? announcementStatus.channels
+        : [
+            { id: 'webhook', name: '#notificaciones (Predeterminado)' },
+            { id: '1550016804418621452', name: '#general' },
+            { id: '1551309664397033513', name: '#faq' },
+            { id: '1559244209884504245', name: '#pqrs' },
+            { id: '1551309281041715230', name: '#chat-egresados' },
+            { id: '1551309330198953994', name: '#oportunidades-laborales' },
+          ]
+    ).filter((ch) => !ch.name.toLowerCase().includes('anuncios'))
+
+    const rawNotif =
+      rawList.find(
+        (c) => c.id === 'webhook' || c.name.toLowerCase().includes('notificaciones'),
+      )
+    const notifOption = {
+      id: rawNotif?.id || 'webhook',
+      name: '#notificaciones (Predeterminado)',
+    }
+
+    const otherChannels = rawList.filter(
+      (c) => c.id !== notifOption.id && !c.name.toLowerCase().includes('notificaciones'),
+    )
+
+    otherChannels.sort((a, b) => {
+      const cleanA = a.name.replace(/^#/, '').toLowerCase().trim()
+      const cleanB = b.name.replace(/^#/, '').toLowerCase().trim()
+      const indexA = PREFERRED_ANNOUNCEMENT_CHANNELS_ORDER.indexOf(cleanA)
+      const indexB = PREFERRED_ANNOUNCEMENT_CHANNELS_ORDER.indexOf(cleanB)
+      if (indexA !== -1 && indexB !== -1) return indexA - indexB
+      if (indexA !== -1) return -1
+      if (indexB !== -1) return 1
+      return cleanA.localeCompare(cleanB)
+    })
+
+    return [notifOption, ...otherChannels]
+  }, [announcementStatus, PREFERRED_ANNOUNCEMENT_CHANNELS_ORDER])
 
   const selectedTargetChannelName =
     availableDiscordChannels.find((c) => c.id === selectedDiscordChannel)?.name ||
