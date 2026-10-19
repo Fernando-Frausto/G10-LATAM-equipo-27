@@ -386,8 +386,9 @@ function Analytics() {
                                                     ? 'bg-rose-50 text-rose-600'
                                                     : 'bg-emerald-50 text-emerald-600'
                                             }`}
+                                            title="Frecuencia relativa sobre el total de emojis detectados en la comunidad"
                                         >
-                                            {item.trend}
+                                            {item.trend.includes('%') ? `${item.trend} del total` : `${item.trend}% del total`}
                                         </span>
                                     </div>
 

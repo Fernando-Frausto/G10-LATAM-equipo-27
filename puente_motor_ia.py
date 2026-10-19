@@ -996,6 +996,14 @@ def obtener_modelo_gemma() -> str:
     )
 
 
+def obtener_modelo_groq() -> str:
+    """Resuelve el modelo configurado para Groq con fallback automático a openai/gpt-oss-120b si no está configurado o si tiene el valor incompatible llama-3.3-70b-versatile."""
+    m = (os.getenv("GROQ_MODEL") or "").strip()
+    if not m or m == "llama-3.3-70b-versatile":
+        return "openai/gpt-oss-120b"
+    return m
+
+
 def sincronizar_discord(*args, **kwargs):
     """Delega la extracción de Discord en armar_json_bot_python de la raíz (con autodetección de canales)."""
     return _bot_raiz
@@ -2264,7 +2272,7 @@ async def listar_modelos_ia_v1():
     groq_api_key = (os.getenv("GROQ_API_KEY") or "").strip()
     gemini_api_key = (os.getenv("GEMINI_API_KEY") or "").strip() or (os.getenv("GOOGLE_API_KEY") or "").strip()
 
-    groq_model = (os.getenv("GROQ_MODEL") or "").strip() or "llama-3.3-70b-versatile"
+    groq_model = obtener_modelo_groq()
     gemma_model = obtener_modelo_gemma()
     gemini_model = obtener_modelo_gemini()
 
@@ -3358,6 +3366,7 @@ def community_analytics_enriquecido():
             conteo_emojis[emo] = conteo_emojis.get(emo, 0) + 1
             sentimientos_emoji.setdefault(emo, []).append(sent_std)
 
+    total_emojis_conteo = sum(conteo_emojis.values())
     emojis_list = []
     for emo, cnt in sorted(conteo_emojis.items(), key=lambda x: x[1], reverse=True):
         info_cat = CATALOGO_EMOJIS_PREDETERMINADO.get(emo) or CATALOGO_EMOJIS_PREDETERMINADO.get(emo.replace("\ufe0f", ""))
@@ -3382,13 +3391,17 @@ def community_analytics_enriquecido():
                 lbl = "Optimismo"
                 desc = "Optimismo / Aprobación"
 
+        pct = round((cnt / total_emojis_conteo) * 100) if total_emojis_conteo > 0 else 0
+        trend_val = f"{pct}%"
+
         emojis_list.append({
             "emoji": emo,
             "count": cnt,
             "sentiment": sent,
             "label": lbl,
             "description": desc,
-            "trend": "0%",
+            "trend": trend_val,
+            "percentage": pct,
         })
 
     return {
@@ -3466,6 +3479,33 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
     return canales
 
 
+def _crear_runnable_anuncio(llm_base):
+    """Envuelve el LLM base para interceptar y contextualizar creativamente borradores breves o palabras clave (ej. 'perro') dentro de las directivas de marca."""
+    from langchain_core.runnables import RunnableLambda
+    import re
+
+    def _adaptar_y_ejecutar(prompt_val):
+        texto_prompt = prompt_val.to_string() if hasattr(prompt_val, "to_string") else str(prompt_val)
+        m = re.search(r"<borrador>\s*(.*?)\s*</borrador>", texto_prompt, re.DOTALL)
+        if m:
+            b_texto = m.group(1).strip()
+            if len(b_texto) < 250 or ("\n" not in b_texto and len(b_texto) < 400):
+                enriquecido = (
+                    f"{b_texto}\n\n"
+                    f"[DIRECTIVA PARA EL COPYWRITER]:\n"
+                    f"El usuario o creador solicita que el anuncio gire obligatoriamente en torno al tema o término \"{b_texto}\". "
+                    f"Si el término es cotidiano, animal o analógico (como 'perro', mascotas, café, deportes, música), "
+                    f"utilízalo como una analogía de aprendizaje, metáfora de consistencia, dinámica de la comunidad o proyecto práctico de IA "
+                    f"(ej. clasificador de imágenes, visión artificial, bots) aplicado a CloudEDTech. "
+                    f"NO ignores el término ni lo reemplaces por un anuncio genérico sin relación."
+                )
+                nuevo_prompt = texto_prompt[:m.start(1)] + enriquecido + texto_prompt[m.end(1):]
+                return llm_base.invoke(nuevo_prompt)
+        return llm_base.invoke(prompt_val)
+
+    return RunnableLambda(_adaptar_y_ejecutar)
+
+
 def _crear_llm_para_anuncio(proveedor_input: str):
     """Crea la instancia de LLM según el proveedor seleccionado para la redacción de anuncios."""
     modulo, nombre_legible = _normalizar_proveedor_ia(proveedor_input)
@@ -3474,22 +3514,25 @@ def _crear_llm_para_anuncio(proveedor_input: str):
         groq_key = (os.getenv("GROQ_API_KEY") or "").strip()
         if not groq_key:
             raise HTTPException(status_code=502, detail=f"El proveedor {nombre_legible} carece de GROQ_API_KEY en .env")
-        model = (os.getenv("GROQ_MODEL") or "").strip() or "llama-3.3-70b-versatile"
-        return ChatGroq(model=model, temperature=0.4, groq_api_key=groq_key), nombre_legible
+        model = obtener_modelo_groq()
+        llm_base = ChatGroq(model=model, temperature=0.4, groq_api_key=groq_key)
+        return _crear_runnable_anuncio(llm_base), nombre_legible
     elif modulo == "cerebro_ia_gemma_4":
         from langchain_google_genai import ChatGoogleGenerativeAI
         google_key = (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
         if not google_key:
             raise HTTPException(status_code=502, detail=f"El proveedor {nombre_legible} carece de GOOGLE_API_KEY en .env")
         model = obtener_modelo_gemma()
-        return ChatGoogleGenerativeAI(model=model, temperature=0.4, google_api_key=google_key), nombre_legible
+        llm_base = ChatGoogleGenerativeAI(model=model, temperature=0.4, google_api_key=google_key)
+        return _crear_runnable_anuncio(llm_base), nombre_legible
     elif modulo == "cerebro_ia_gemini_flash":
         from langchain_google_genai import ChatGoogleGenerativeAI
         google_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
         if not google_key:
             raise HTTPException(status_code=502, detail=f"El proveedor {nombre_legible} carece de GEMINI_API_KEY en .env")
         model = obtener_modelo_gemini()
-        return ChatGoogleGenerativeAI(model=model, temperature=0.4, google_api_key=google_key), nombre_legible
+        llm_base = ChatGoogleGenerativeAI(model=model, temperature=0.4, google_api_key=google_key)
+        return _crear_runnable_anuncio(llm_base), nombre_legible
     raise ValueError(f"Proveedor no soportado: {proveedor_input}")
 
 

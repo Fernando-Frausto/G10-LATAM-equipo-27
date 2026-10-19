@@ -163,7 +163,7 @@ function ContentStudio() {
   const [announcementStatusLoading, setAnnouncementStatusLoading] =
     useState(true)
   const [selectedAnnouncementModel, setSelectedAnnouncementModel] =
-    useState<string>('groq')
+    useState<string>('gemini')
   const [selectedDiscordChannel, setSelectedDiscordChannel] =
     useState<string>('webhook')
   const [draftText, setDraftText] = useState('')
@@ -1063,9 +1063,9 @@ function ContentStudio() {
                   onChange={(e) => setSelectedAnnouncementModel(e.target.value)}
                   className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 outline-none transition focus:border-indigo-400"
                 >
-                  <option value="groq">Groq (Llama 3.3)</option>
-                  <option value="gemma">Google Gemma 4</option>
                   <option value="gemini">Google Gemini Flash Lite</option>
+                  <option value="groq">Groq (Cerebro IA)</option>
+                  <option value="gemma">Google Gemma 4</option>
                 </select>
 
                 <span
