@@ -134,7 +134,7 @@ function Messages() {
     const [dateTo, setDateTo] = useState<string>('')
     const [onlyPending, setOnlyPending] = useState<boolean>(true)
     const [isEvaluatingBatch, setIsEvaluatingBatch] = useState<boolean>(false)
-    const [batchEvalMessage, setBatchEvalMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const [batchEvalMessage, setBatchEvalMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
     const [isSyncingDiscord, setIsSyncingDiscord] = useState<boolean>(false)
     const [syncFeedbackMessage, setSyncFeedbackMessage] = useState<{
         type: 'success' | 'error' | 'warning'
@@ -504,7 +504,14 @@ function Messages() {
         if (evaluatingMessageId !== null) return
 
         setEvaluatingMessageId(message.interactionId)
-        setSyncFeedbackMessage(null)
+        if (selectedAiBrain.toLowerCase().includes('gemma')) {
+            setSyncFeedbackMessage({
+                type: 'warning',
+                text: `⏳ Evaluando mensaje con Google Gemma 4... Este modelo denso toma entre 30 y 45 segundos. Por favor espera sin cerrar la ventana.`,
+            })
+        } else {
+            setSyncFeedbackMessage(null)
+        }
         try {
             const res = await evaluateSingleMessage(message.interactionId, selectedAiBrain)
             await loadMessages()
@@ -521,9 +528,13 @@ function Messages() {
             }
         } catch (error) {
             console.error('Error al evaluar mensaje con IA:', error)
+            const rawMsg = error instanceof Error ? error.message : 'Error al evaluar el mensaje con IA.'
+            const isFetchErr = rawMsg.includes('Failed to fetch')
             setSyncFeedbackMessage({
                 type: 'error',
-                text: error instanceof Error ? `❌ ${error.message}` : '❌ Error al evaluar el mensaje con IA.',
+                text: isFetchErr
+                    ? `❌ Error de conexión (Failed to fetch): No se pudo comunicar con el backend local (${API_BASE_URL}). Si estás viendo esto en Netlify, accede desde http://localhost:5173/messages y confirma que el backend esté ejecutándose en la terminal.`
+                    : `❌ ${rawMsg}`,
             })
         } finally {
             setEvaluatingMessageId(null)
@@ -663,7 +674,14 @@ function Messages() {
         }
 
         setIsEvaluatingBatch(true)
-        setBatchEvalMessage(null)
+        if (selectedAiBrain.toLowerCase().includes('gemma')) {
+            setBatchEvalMessage({
+                type: 'warning',
+                text: '⏳ Evaluando lote con Google Gemma 4... Este modelo denso toma ~30-45s por mensaje. Por favor espera a que finalice.',
+            })
+        } else {
+            setBatchEvalMessage(null)
+        }
 
         try {
             const payload: {
@@ -701,9 +719,13 @@ function Messages() {
 
             await loadMessages()
         } catch (error) {
+            const rawMsg = error instanceof Error ? error.message : 'Error al evaluar el lote con IA.'
+            const isFetchErr = rawMsg.includes('Failed to fetch')
             setBatchEvalMessage({
                 type: 'error',
-                text: error instanceof Error ? error.message : 'Error al evaluar el lote con IA.',
+                text: isFetchErr
+                    ? `Error de conexión (Failed to fetch): No se pudo comunicar con el backend local (${API_BASE_URL}). Si estás en Netlify, accede desde http://localhost:5173/messages y confirma que el backend esté ejecutándose en la terminal.`
+                    : rawMsg,
             })
         } finally {
             setIsEvaluatingBatch(false)
@@ -1018,6 +1040,8 @@ function Messages() {
                         className={`mb-4 flex items-center justify-between rounded-xl border px-4 py-3 text-xs font-medium ${
                             batchEvalMessage.type === 'success'
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                : batchEvalMessage.type === 'warning'
+                                ? 'border-amber-200 bg-amber-50 text-amber-800'
                                 : 'border-rose-200 bg-rose-50 text-rose-700'
                         }`}
                     >
@@ -1049,6 +1073,11 @@ function Messages() {
                                 </option>
                             ))}
                         </select>
+                        {selectedAiBrain.toLowerCase().includes('gemma') && (
+                            <p className="mt-1 text-[11px] font-medium text-amber-700">
+                                ⚠️ Google Gemma 4 es un modelo denso (31B) y puede demorar entre 30 y 45s. Para respuesta inmediata usa Groq.
+                            </p>
+                        )}
                     </div>
 
                     {/* Fecha Desde */}

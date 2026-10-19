@@ -2,21 +2,21 @@
   "aprobados": [],
   "descartados": [
     {
-      "id_mensaje": 96,
-      "autor": "isseigremory7244",
-      "canal_origen": "#chat-egresados",
-      "comunidad": "Discord_Grupo_ONE_G10",
-      "fecha_envio": null,
-      "fecha_extraccion": null,
-      "semana": null,
-      "modelo_ia": "Groq (Llama 3.3)",
-      "texto_original": "¡Qué gran noticia colega! Muchas felicidades. Demuestra que el esfuerzo en este hackathon rinde frutos reales en el mundo laboral. 👏",
+      "id_mensaje": 1,
+      "autor": "Tania",
+      "canal_origen": "general",
+      "comunidad": "Discord",
+      "fecha_envio": "2026-10-09T19:21:54+00:00",
+      "fecha_extraccion": "2026-10-09T19:21:54+00:00",
+      "semana": "2026-W40",
+      "modelo_ia": "Google Gemma 4",
+      "texto_original": "Probando conexion con Supabase!",
       "kpis": {
-        "relevancia": 60,
-        "sentimiento": "Positivo",
-        "temas_clave": "#hackathon, #éxito",
-        "segmento": "Egresados",
-        "razonamiento": "El mensaje celebra un logro y reconoce el valor del hackathon, aportando ánimo pero sin contenido profundo."
+        "relevancia": 30,
+        "sentimiento": "Neutral",
+        "temas_clave": "#Supabase #Conexion",
+        "segmento": "Desarrolladores",
+        "razonamiento": "El mensaje es una prueba técnica simple sin profundidad ni aporte de valor a la comunidad."
       },
       "estado_revision": "rechazado"
     }

@@ -258,14 +258,24 @@ export async function evaluateSingleMessage(
     interactionId: number,
     proveedor?: string
 ): Promise<EvaluateSingleMessageResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/ai/evaluate-message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ interaction_id: interactionId, proveedor }),
-    })
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `Error al evaluar mensaje (${response.status})`)
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/ai/evaluate-message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ interaction_id: interactionId, proveedor }),
+        })
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}))
+            throw new Error(errorData.detail || `Error al evaluar mensaje (${response.status})`)
+        }
+        return response.json()
+    } catch (error: any) {
+        if (error?.message?.includes('Failed to fetch') || error?.name === 'TypeError') {
+            throw new Error(
+                `No se pudo conectar con el servidor (${API_BASE_URL}). Asegúrate de acceder desde http://localhost:5173/messages y que el backend esté activo en la terminal.`
+            )
+        }
+        throw error
     }
-    return response.json()
 }
+
