@@ -2508,7 +2508,6 @@ CANALES_OFICIALES_DISCORD_ESPERADOS = [
     {"channel": "#general", "name": "general"},
     {"channel": "#faq", "name": "faq"},
     {"channel": "#pqrs", "name": "pqrs"},
-    {"channel": "#notificaciones", "name": "notificaciones"},
     {"channel": "#chat-egresados", "name": "chat-egresados"},
     {"channel": "#oportunidades-laborales", "name": "oportunidades-laborales"},
 ]
@@ -2519,7 +2518,7 @@ def test_channel_participation_endpoint_estructura_y_calculo(client):
     Spec 014 - RF-03, RF-06:
     Verifica 'GET /api/community/channel-participation' y su alias 'GET /api/v1/community/channels-participation':
     - Retorno HTTP 200 con { channels: [...], total_messages: int }.
-    - Contiene exactamente los 6 canales oficiales en orden canónico estricto.
+    - Contiene exactamente los 5 canales oficiales en orden canónico estricto.
     - Cada elemento contiene 'channel', 'name', 'count', 'percentage'.
     - Porcentajes float con 1 decimal y suma de porcentajes igual a 100.0% cuando total_messages > 0.
     """
@@ -2533,7 +2532,6 @@ def test_channel_participation_endpoint_estructura_y_calculo(client):
                 (902, 'hash_902', 'Discord', 'Semana_01', 'user2', '#general', 'mensaje', 'Otro en general', '2026-10-18T10:05:00+00:00'),
                 (903, 'hash_903', 'Discord', 'Semana_01', 'user3', '#faq', 'mensaje', 'Duda en faq', '2026-10-18T10:10:00+00:00'),
                 (904, 'hash_904', 'Discord', 'Semana_01', 'user4', '#pqrs', 'mensaje', 'Reclamo pqrs', '2026-10-18T10:15:00+00:00'),
-                (905, 'hash_905', 'Discord', 'Semana_01', 'user5', '#notificaciones', 'mensaje', 'Aviso notificaciones', '2026-10-18T10:20:00+00:00'),
                 (906, 'hash_906', 'Discord', 'Semana_01', 'user6', '#chat-egresados', 'mensaje', 'Egresados chat', '2026-10-18T10:25:00+00:00'),
                 (907, 'hash_907', 'Discord', 'Semana_01', 'user7', '#oportunidades-laborales', 'mensaje', 'Vacante laboral', '2026-10-18T10:30:00+00:00')
                 """
@@ -2548,8 +2546,8 @@ def test_channel_participation_endpoint_estructura_y_calculo(client):
 
             assert "total_messages" in data, f"Falta 'total_messages' en respuesta de {endpoint}"
             assert "channels" in data, f"Falta 'channels' en respuesta de {endpoint}"
-            assert data["total_messages"] == 7
-            assert len(data["channels"]) == 6, f"Se esperaban exactamente 6 canales, recibidos {len(data['channels'])}"
+            assert data["total_messages"] == 6
+            assert len(data["channels"]) == 5, f"Se esperaban exactamente 5 canales, recibidos {len(data['channels'])}"
 
             canales_obtenidos = [item["channel"] for item in data["channels"]]
             canales_esperados = [c["channel"] for c in CANALES_OFICIALES_DISCORD_ESPERADOS]
@@ -2569,7 +2567,7 @@ def test_channel_participation_endpoint_estructura_y_calculo(client):
                 conteo_total += canal_info["count"]
                 suma_porcentajes += canal_info["percentage"]
 
-            assert conteo_total == data["total_messages"] == 7
+            assert conteo_total == data["total_messages"] == 6
             # Con total_messages > 0 la suma de porcentajes debe ser exactamente 100.0%
             assert round(suma_porcentajes, 1) == 100.0, f"La suma de porcentajes no es 100.0%: {suma_porcentajes}"
 
@@ -2579,7 +2577,7 @@ def test_channel_participation_proteccion_division_cero_sin_mensajes(client):
     Spec 014 - RF-03, RF-06:
     Verifica que ante base de datos o corpus vacío retorne 200 OK con:
     - total_messages: 0
-    - Exactamente los 6 canales con count=0 y percentage=0.0
+    - Exactamente los 5 canales con count=0 y percentage=0.0
     - Sin excepción de división por cero (ZeroDivisionError).
     """
     with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"interacciones": [], "kpis": []}):
@@ -2596,7 +2594,7 @@ def test_channel_participation_proteccion_division_cero_sin_mensajes(client):
 
             assert data.get("total_messages") == 0
             assert isinstance(data.get("channels"), list)
-            assert len(data["channels"]) == 6
+            assert len(data["channels"]) == 5
 
             canales_esperados = [c["channel"] for c in CANALES_OFICIALES_DISCORD_ESPERADOS]
             assert [c["channel"] for c in data["channels"]] == canales_esperados
@@ -2612,7 +2610,7 @@ def test_channel_participation_exclusion_bots_y_mapeo_sinonimos(client):
     Verifica que:
     1. Se excluyan categóricamente mensajes de cuentas bots o webhooks.
     2. Mensajes de canales sinónimos antiguos ('preguntas', 'dudas') se acumulen deterministamente en '#faq'.
-    3. Mensajes con canal 'anuncios' se acumulen en '#notificaciones'.
+    3. Mensajes con canal 'pqr' se acumulen en '#pqrs'.
     4. El conteo total y porcentajes ignoren los bots y mapeen los sinónimos correctamente.
     """
     with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"interacciones": [], "kpis": []}):
@@ -2625,7 +2623,7 @@ def test_channel_participation_exclusion_bots_y_mapeo_sinonimos(client):
                 (910, 'h910', 'Discord', 'Semana_01', 'humano1', '#general', 'mensaje', 'Hola comunidad', '2026-10-18T12:00:00+00:00'),
                 (911, 'h911', 'Discord', 'Semana_01', 'humano2', 'preguntas', 'mensaje', 'Tengo una pregunta', '2026-10-18T12:01:00+00:00'),
                 (912, 'h912', 'Discord', 'Semana_01', 'humano3', '#dudas', 'mensaje', 'Tengo una duda', '2026-10-18T12:02:00+00:00'),
-                (913, 'h913', 'Discord', 'Semana_01', 'humano4', 'anuncios', 'mensaje', 'Anuncio importante', '2026-10-18T12:03:00+00:00'),
+                (913, 'h913', 'Discord', 'Semana_01', 'humano4', 'pqr', 'mensaje', 'Reclamo o sugerencia', '2026-10-18T12:03:00+00:00'),
                 -- Mensajes de bots y webhooks que deben ser estrictamente excluidos
                 (914, 'h914', 'Discord', 'Semana_01', 'Spidey Boy#0000', '#general', 'bot', 'Webhook alert', '2026-10-18T12:04:00+00:00'),
                 (915, 'h915', 'Discord', 'Semana_01', 'Webhook#0000', '#faq', 'webhook', 'Deploy alert', '2026-10-18T12:05:00+00:00'),
@@ -2652,13 +2650,11 @@ def test_channel_participation_exclusion_bots_y_mapeo_sinonimos(client):
         assert canales_dict["#general"]["count"] == 1
         assert canales_dict["#general"]["percentage"] == 25.0
 
-        # 'anuncios' mapeado a '#notificaciones' tiene 1 mensaje (25.0%)
-        assert canales_dict["#notificaciones"]["count"] == 1
-        assert canales_dict["#notificaciones"]["percentage"] == 25.0
+        # 'pqr' mapeado a '#pqrs' tiene 1 mensaje (25.0%)
+        assert canales_dict["#pqrs"]["count"] == 1
+        assert canales_dict["#pqrs"]["percentage"] == 25.0
 
         # Los demás canales deben tener 0 conteo y 0.0%
-        assert canales_dict["#pqrs"]["count"] == 0
-        assert canales_dict["#pqrs"]["percentage"] == 0.0
         assert canales_dict["#chat-egresados"]["count"] == 0
         assert canales_dict["#chat-egresados"]["percentage"] == 0.0
         assert canales_dict["#oportunidades-laborales"]["count"] == 0

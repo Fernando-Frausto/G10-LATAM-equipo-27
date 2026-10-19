@@ -8,7 +8,6 @@ const CANONICAL_CHANNELS = [
   '#general',
   '#faq',
   '#pqrs',
-  '#notificaciones',
   '#chat-egresados',
   '#oportunidades-laborales',
 ]
@@ -18,7 +17,6 @@ function ChannelParticipation() {
     { channel: '#general', name: 'general', count: 0, percentage: 0.0 },
     { channel: '#faq', name: 'faq', count: 0, percentage: 0.0 },
     { channel: '#pqrs', name: 'pqrs', count: 0, percentage: 0.0 },
-    { channel: '#notificaciones', name: 'notificaciones', count: 0, percentage: 0.0 },
     { channel: '#chat-egresados', name: 'chat-egresados', count: 0, percentage: 0.0 },
     { channel: '#oportunidades-laborales', name: 'oportunidades-laborales', count: 0, percentage: 0.0 },
   ])
@@ -63,7 +61,7 @@ function ChannelParticipation() {
           Participación por canal
         </h3>
         <p className="mt-0.5 text-xs text-slate-500">
-          Distribución de mensajes registrados en los seis canales de Discord
+          Distribución de mensajes registrados en los cinco canales de Discord
         </p>
       </div>
 

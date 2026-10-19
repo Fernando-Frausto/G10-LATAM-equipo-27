@@ -3738,7 +3738,6 @@ CANALES_OFICIALES_DISCORD = [
     {"channel": "#general", "name": "general"},
     {"channel": "#faq", "name": "faq"},
     {"channel": "#pqrs", "name": "pqrs"},
-    {"channel": "#notificaciones", "name": "notificaciones"},
     {"channel": "#chat-egresados", "name": "chat-egresados"},
     {"channel": "#oportunidades-laborales", "name": "oportunidades-laborales"},
 ]
