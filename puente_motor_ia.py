@@ -726,6 +726,9 @@ def listar_interacciones_puente(
     for it in res:
         if not it.get("author_id") and it.get("autor"):
             it["author_id"] = str(it["autor"])
+        c_raw = str(it.get("canal") or "").lstrip("#").strip().lower()
+        if c_raw in ("preguntas", "dudas"):
+            it["canal"] = "#faq"
     return res
 
 

@@ -224,6 +224,12 @@ function Messages() {
                     negative: 'Negativo',
                 }[analysis.sentiment]
 
+                const rawChannel = (message.channel_name || '').replace(/^#/, '').trim()
+                const normalizedChannel =
+                    rawChannel.toLowerCase() === 'preguntas' || rawChannel.toLowerCase() === 'dudas'
+                        ? 'faq'
+                        : rawChannel || 'general'
+
                 return {
                     id: message.message_id,
                     interactionId: message.interaction_id,
@@ -231,7 +237,7 @@ function Messages() {
                     initials,
                     author,
                     guild: message.guild_name || 'Discord',
-                    channel: message.channel_name,
+                    channel: normalizedChannel,
                     time: createdAt.toLocaleString('es-CO'),
                     rawDate: createdAt,
                     message: message.content,
@@ -274,10 +280,16 @@ function Messages() {
             new Set(
                 messageItems
                     .map((message) => (message.channel || '').replace(/^#/, '').trim())
-                    .filter((ch) => ch && !/^\d+$/.test(ch) && ch.toLowerCase() !== 'anuncios')
+                    .filter(
+                        (ch) =>
+                            ch &&
+                            !/^\d+$/.test(ch) &&
+                            !['preguntas', 'dudas', 'anuncios'].includes(ch.toLowerCase())
+                    )
             )
         )
         const allChannels = Array.from(new Set([...PREFERRED_CHANNELS_ORDER, ...detected]))
+            .filter((ch) => !['preguntas', 'dudas', 'anuncios'].includes(ch.toLowerCase()))
 
         return allChannels.sort((a, b) => {
             const cleanA = a.toLowerCase()
