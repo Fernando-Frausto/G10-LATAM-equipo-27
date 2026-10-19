@@ -258,17 +258,38 @@ function Messages() {
         [apiData.messages]
     )
 
-    const channels = useMemo(
-        () =>
-            Array.from(
-                new Set(
-                    messageItems
-                        .map((message) => message.channel)
-                        .filter(Boolean)
-                )
-            ).sort(),
-        [messageItems]
+    const PREFERRED_CHANNELS_ORDER = useMemo(
+        () => [
+            'general',
+            'faq',
+            'pqrs',
+            'chat-egresados',
+            'oportunidades-laborales',
+        ],
+        []
     )
+
+    const channels = useMemo(() => {
+        const detected = Array.from(
+            new Set(
+                messageItems
+                    .map((message) => (message.channel || '').replace(/^#/, '').trim())
+                    .filter((ch) => ch && !/^\d+$/.test(ch) && ch.toLowerCase() !== 'anuncios')
+            )
+        )
+        const allChannels = Array.from(new Set([...PREFERRED_CHANNELS_ORDER, ...detected]))
+
+        return allChannels.sort((a, b) => {
+            const cleanA = a.toLowerCase()
+            const cleanB = b.toLowerCase()
+            const indexA = PREFERRED_CHANNELS_ORDER.indexOf(cleanA)
+            const indexB = PREFERRED_CHANNELS_ORDER.indexOf(cleanB)
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB
+            if (indexA !== -1) return -1
+            if (indexB !== -1) return 1
+            return cleanA.localeCompare(cleanB)
+        })
+    }, [messageItems, PREFERRED_CHANNELS_ORDER])
 
     const analyzedCount = useMemo(
         () => messageItems.filter((message) => message.isAnalyzed).length,
@@ -402,7 +423,9 @@ function Messages() {
 
         const matchesChannel =
             channelFilter === 'all' ||
-            message.channel === channelFilter
+            message.channel === channelFilter ||
+            (message.channel || '').replace(/^#/, '').toLowerCase() ===
+                channelFilter.replace(/^#/, '').toLowerCase()
 
         const matchesSentiment =
             sentimentFilter === 'all' ||
