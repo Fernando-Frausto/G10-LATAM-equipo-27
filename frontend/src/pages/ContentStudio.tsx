@@ -162,6 +162,10 @@ function ContentStudio() {
     useState<AnnouncementWebhookStatus | null>(null)
   const [announcementStatusLoading, setAnnouncementStatusLoading] =
     useState(true)
+  const [selectedAnnouncementModel, setSelectedAnnouncementModel] =
+    useState<string>('groq')
+  const [selectedDiscordChannel, setSelectedDiscordChannel] =
+    useState<string>('webhook')
   const [draftText, setDraftText] = useState('')
   const [isGeneratingAnnouncement, setIsGeneratingAnnouncement] =
     useState(false)
@@ -183,6 +187,12 @@ function ContentStudio() {
       .then((status) => {
         if (isMounted) {
           setAnnouncementStatus(status)
+          if (status.channels && status.channels.length > 0) {
+            const defaultChan = status.channels.find((c) => c.id !== 'webhook') || status.channels[0]
+            if (defaultChan) {
+              setSelectedDiscordChannel(defaultChan.id)
+            }
+          }
         }
       })
       .catch((err) => {
@@ -387,12 +397,29 @@ function ContentStudio() {
     }
   }, [targetInteractionId, workflowMessages, selectedMessageId])
 
+  const availableDiscordChannels =
+    announcementStatus?.channels && announcementStatus.channels.length > 0
+      ? announcementStatus.channels
+      : [
+          { id: '1559244522842488942', name: '#notificaciones' },
+          { id: '1550016804418621452', name: '#general' },
+          { id: '1551309281041715230', name: '#chat-egresados' },
+          { id: '1551309330198953994', name: '#oportunidades-laborales' },
+          { id: '1551309664397033513', name: '#faq' },
+          { id: '1559244209884504245', name: '#pqrs' },
+          { id: 'webhook', name: 'Canal predeterminado del Webhook (#anuncios / #general)' },
+        ]
+
+  const selectedTargetChannelName =
+    availableDiscordChannels.find((c) => c.id === selectedDiscordChannel)?.name ||
+    '#anuncios'
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     if (!file.name.endsWith('.txt') && !file.name.endsWith('.md')) {
-      setAnnouncementGenerateError('Solo se admiten archivos .txt o .md')
+      setAnnouncementPublishError('Solo se admiten archivos .txt o .md')
       return
     }
 
@@ -400,12 +427,13 @@ function ContentStudio() {
     reader.onload = (event) => {
       const text = event.target?.result
       if (typeof text === 'string') {
-        setDraftText(text)
-        setAnnouncementGenerateError('')
+        setFinalAnnouncement(text)
+        setAnnouncementPublishError('')
+        setAnnouncementPublishSuccess('')
       }
     }
     reader.onerror = () => {
-      setAnnouncementGenerateError('Error al leer el archivo seleccionado.')
+      setAnnouncementPublishError('Error al leer el archivo seleccionado.')
     }
     reader.readAsText(file, 'utf-8')
     e.target.value = ''
@@ -419,7 +447,7 @@ function ContentStudio() {
     setAnnouncementGenerateError('')
 
     try {
-      const result = await generateAnnouncement(borrador)
+      const result = await generateAnnouncement(borrador, selectedAnnouncementModel)
       setFinalAnnouncement(result.anuncio_generado)
     } catch (error) {
       setAnnouncementGenerateError(
@@ -442,13 +470,13 @@ function ContentStudio() {
     setAnnouncementPublishSuccess('')
 
     try {
-      const res = await publishAnnouncement(content, true)
+      const res = await publishAnnouncement(content, true, selectedDiscordChannel)
       setShowConfirmModal(false)
+      const targetLabel = res.canal_destino || selectedTargetChannelName
       setAnnouncementPublishSuccess(
-        `✓ Anuncio publicado exitosamente en #${announcementStatus.channel_hint || 'anuncios'}. (ID #${res.id_contenido ?? 'auditado'}, ${res.caracteres} caracteres).`,
+        `✓ Anuncio publicado exitosamente en ${targetLabel}. (ID #${res.id_contenido ?? 'auditado'}, ${res.caracteres} caracteres).`,
       )
       setFinalAnnouncement('')
-      setDraftText('')
     } catch (error) {
       setAnnouncementPublishError(
         error instanceof Error
@@ -1018,22 +1046,36 @@ function ContentStudio() {
         )}
 
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Carga de Borrador y Generación */}
+          {/* Descripción del anuncio para generar con IA */}
           <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50/50 p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <label
                 htmlFor="announcement-draft"
                 className="text-xs font-bold uppercase tracking-wide text-slate-700"
               >
-                Borrador del anuncio
+                Descripción del anuncio para generar con IA
               </label>
-              <span
-                className={`text-xs font-medium ${
-                  draftText.length > 10000 ? 'font-bold text-rose-600' : 'text-slate-500'
-                }`}
-              >
-                {draftText.length.toLocaleString()} / 10,000 caracteres
-              </span>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-slate-500">IA:</span>
+                <select
+                  value={selectedAnnouncementModel}
+                  onChange={(e) => setSelectedAnnouncementModel(e.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 outline-none transition focus:border-indigo-400"
+                >
+                  <option value="groq">Groq (Llama 3.3)</option>
+                  <option value="gemma">Google Gemma 4</option>
+                  <option value="gemini">Google Gemini Flash Lite</option>
+                </select>
+
+                <span
+                  className={`text-xs font-medium ${
+                    draftText.length > 10000 ? 'font-bold text-rose-600' : 'text-slate-500'
+                  }`}
+                >
+                  {draftText.length.toLocaleString()} / 10,000
+                </span>
+              </div>
             </div>
 
             <textarea
@@ -1043,14 +1085,14 @@ function ContentStudio() {
                 setDraftText(e.target.value)
                 setAnnouncementGenerateError('')
               }}
-              placeholder="Escribe aquí el borrador de anuncio o carga un archivo .txt/.md..."
+              placeholder="Escribe aquí los puntos clave, fecha, temática o instrucciones para el anuncio. La IA generará automáticamente el texto del anuncio en el editor final siguiendo el manual de marca CloudEdTech..."
               rows={8}
-              className="mt-2.5 w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white p-3.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+              className="mt-2.5 w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white p-3.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
             />
 
             {draftText.length > 10000 && (
               <p className="mt-1.5 text-xs font-medium text-rose-600">
-                El borrador excede el límite máximo de 10,000 caracteres permitidos.
+                La descripción excede el límite máximo de 10,000 caracteres permitidos.
               </p>
             )}
 
@@ -1064,23 +1106,7 @@ function ContentStudio() {
             )}
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/60 pt-3">
-              <div className="flex items-center gap-2">
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept=".txt,.md"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  <Upload size={14} />
-                  Cargar archivo .txt / .md
-                </button>
-
+              <div>
                 {draftText && (
                   <button
                     type="button"
@@ -1090,7 +1116,7 @@ function ContentStudio() {
                     }}
                     className="text-xs text-slate-400 transition hover:text-slate-600"
                   >
-                    Limpiar
+                    Limpiar descripción
                   </button>
                 )}
               </div>
@@ -1156,7 +1182,7 @@ function ContentStudio() {
                 setAnnouncementPublishError('')
                 setAnnouncementPublishSuccess('')
               }}
-              placeholder="El anuncio generado aparecerá aquí para revisión final, o puedes redactarlo directamente..."
+              placeholder="El anuncio generado aparecerá aquí para revisión final, o puedes redactarlo / cargar un archivo .txt/.md directamente..."
               rows={8}
               className="mt-2.5 w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white p-3.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
             />
@@ -1178,34 +1204,74 @@ function ContentStudio() {
             </div>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/60 pt-3">
-              <div className="text-xs text-slate-500">
-                {finalAnnouncement.length > 2000 ? (
-                  <span className="font-semibold text-rose-600">
-                    Reduce {finalAnnouncement.length - 2000} caracteres para cumplir con Discord
-                  </span>
-                ) : !announcementStatus?.configured ? (
-                  <span className="text-amber-700">
-                    Publicación deshabilitada (webhook ausente)
-                  </span>
-                ) : (
-                  <span>Listo para publicar en Discord</span>
+              {/* Botón de carga de archivo movido aquí al editor final */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".txt,.md"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <Upload size={14} />
+                  Cargar archivo .txt / .md
+                </button>
+
+                {finalAnnouncement && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFinalAnnouncement('')
+                      setAnnouncementPublishError('')
+                      setAnnouncementPublishSuccess('')
+                    }}
+                    className="text-xs text-slate-400 transition hover:text-slate-600"
+                  >
+                    Limpiar
+                  </button>
                 )}
               </div>
 
-              <button
-                type="button"
-                disabled={
-                  !finalAnnouncement.trim() ||
-                  finalAnnouncement.length > 2000 ||
-                  !announcementStatus?.configured ||
-                  isPublishingAnnouncement
-                }
-                onClick={() => setShowConfirmModal(true)}
-                className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
-              >
-                <Send size={14} />
-                Publicar anuncio en Discord
-              </button>
+              {/* Selector de Canal y Botón Publicar */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <label htmlFor="announcement-channel" className="text-[11px] font-semibold text-slate-500">
+                    Canal:
+                  </label>
+                  <select
+                    id="announcement-channel"
+                    value={selectedDiscordChannel}
+                    onChange={(e) => setSelectedDiscordChannel(e.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-400"
+                  >
+                    {availableDiscordChannels.map((ch) => (
+                      <option key={ch.id} value={ch.id}>
+                        {ch.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={
+                    !finalAnnouncement.trim() ||
+                    finalAnnouncement.length > 2000 ||
+                    !announcementStatus?.configured ||
+                    isPublishingAnnouncement
+                  }
+                  onClick={() => setShowConfirmModal(true)}
+                  className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+                >
+                  <Send size={14} />
+                  Publicar anuncio en Discord
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2152,9 +2218,9 @@ function ContentStudio() {
                 <p className="mt-1 text-xs text-slate-500">
                   El comunicado se despachará al canal oficial{' '}
                   <strong className="text-indigo-600">
-                    #{announcementStatus?.channel_hint || 'anuncios'}
+                    {selectedTargetChannelName}
                   </strong>{' '}
-                  mediante el webhook configurado.
+                  de Discord.
                 </p>
               </div>
 

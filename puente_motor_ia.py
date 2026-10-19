@@ -3409,27 +3409,116 @@ def community_analytics_enriquecido():
 # Endpoints de Anuncios Oficiales con Webhook Discord (Spec 013 - RF-06 a RF-08)
 # ==============================================================================
 
+_cache_canales_discord = None
+_timestamp_canales_discord = 0
+
+
+def _obtener_canales_discord_disponibles() -> list[dict]:
+    """Obtiene los canales de texto de Discord usando el bot o devuelve los canales conocidos."""
+    global _cache_canales_discord, _timestamp_canales_discord
+    ahora = time.time()
+    if _cache_canales_discord is not None and (ahora - _timestamp_canales_discord) < 60:
+        return _cache_canales_discord
+
+    canales = [
+        {"id": "webhook", "name": "Canal predeterminado del Webhook (#anuncios / #general)"},
+    ]
+    token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
+    if token:
+        try:
+            import urllib.request
+            import json
+            req_guilds = urllib.request.Request(
+                "https://discord.com/api/v10/users/@me/guilds",
+                headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
+            )
+            with urllib.request.urlopen(req_guilds, timeout=4) as resp:
+                guilds = json.loads(resp.read().decode("utf-8"))
+            for g in guilds:
+                gid = g.get("id")
+                req_ch = urllib.request.Request(
+                    f"https://discord.com/api/v10/guilds/{gid}/channels",
+                    headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
+                )
+                with urllib.request.urlopen(req_ch, timeout=4) as r_ch:
+                    g_channels = json.loads(r_ch.read().decode("utf-8"))
+                    for c in g_channels:
+                        if c.get("type") == 0:
+                            c_id = str(c.get("id"))
+                            c_name = f"#{c.get('name')}"
+                            if not any(item["id"] == c_id for item in canales):
+                                canales.append({"id": c_id, "name": c_name})
+        except Exception:
+            pass
+
+    if len(canales) == 1:
+        canales.extend([
+            {"id": "1559244522842488942", "name": "#notificaciones"},
+            {"id": "1550016804418621452", "name": "#general"},
+            {"id": "1551309281041715230", "name": "#chat-egresados"},
+            {"id": "1551309330198953994", "name": "#oportunidades-laborales"},
+            {"id": "1551309664397033513", "name": "#faq"},
+            {"id": "1559244209884504245", "name": "#pqrs"},
+        ])
+
+    _cache_canales_discord = canales
+    _timestamp_canales_discord = ahora
+    return canales
+
+
+def _crear_llm_para_anuncio(proveedor_input: str):
+    """Crea la instancia de LLM según el proveedor seleccionado para la redacción de anuncios."""
+    modulo, nombre_legible = _normalizar_proveedor_ia(proveedor_input)
+    if modulo == "cerebro_ia":
+        from langchain_groq import ChatGroq
+        groq_key = (os.getenv("GROQ_API_KEY") or "").strip()
+        if not groq_key:
+            raise HTTPException(status_code=502, detail=f"El proveedor {nombre_legible} carece de GROQ_API_KEY en .env")
+        model = (os.getenv("GROQ_MODEL") or "").strip() or "llama-3.3-70b-versatile"
+        return ChatGroq(model=model, temperature=0.4, groq_api_key=groq_key), nombre_legible
+    elif modulo == "cerebro_ia_gemma_4":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        google_key = (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
+        if not google_key:
+            raise HTTPException(status_code=502, detail=f"El proveedor {nombre_legible} carece de GOOGLE_API_KEY en .env")
+        model = obtener_modelo_gemma()
+        return ChatGoogleGenerativeAI(model=model, temperature=0.4, google_api_key=google_key), nombre_legible
+    elif modulo == "cerebro_ia_gemini_flash":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        google_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+        if not google_key:
+            raise HTTPException(status_code=502, detail=f"El proveedor {nombre_legible} carece de GEMINI_API_KEY en .env")
+        model = obtener_modelo_gemini()
+        return ChatGoogleGenerativeAI(model=model, temperature=0.4, google_api_key=google_key), nombre_legible
+    raise ValueError(f"Proveedor no soportado: {proveedor_input}")
+
+
 @app.get("/api/v1/content-workflow/announcements/status")
 @app.get("/api/v1/content-workflow/announcements/status/")
 async def get_announcements_status_v1():
-    """Consulta y reporta la disponibilidad del webhook oficial de anuncios de Discord."""
+    """Consulta y reporta la disponibilidad del webhook y canales de Discord."""
     webhook_url = (os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or "").strip()
+    bot_token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
     configured = bool(webhook_url)
+    channels = _obtener_canales_discord_disponibles()
     return {
         "configured": configured,
+        "webhook_configured": bool(webhook_url),
+        "bot_configured": bool(bot_token),
         "max_length": 2000,
         "max_characters_limit": 2000,
         "recommended_max_length": 1500,
         "max_characters_recommended": 1500,
         "channel_hint": "anuncios",
-        "warning": None if configured else "Variable de entorno DISCORD_WEBHOOK_ANUNCIOS no configurada",
+        "channels": channels,
+        "warning": None if configured else "Variable de entorno DISCORD_WEBHOOK_ANUNCIOS no configurada en el servidor",
     }
 
 
 @app.post("/api/v1/content-workflow/announcements/generate")
 @app.post("/api/v1/content-workflow/announcements/generate/")
 async def generate_announcement_v1(payload: dict = Body(...)):
-    """Valida el borrador y delega la redacción con voz de marca a anuncios_discord.generar_anuncio."""
+    """Valida la descripción y delega la redacción con voz de marca a anuncios_discord.generar_anuncio usando el proveedor de IA elegido."""
     p = payload or {}
     borrador = p.get("borrador")
     if borrador is None:
@@ -3439,15 +3528,32 @@ async def generate_announcement_v1(payload: dict = Body(...)):
     borrador = str(borrador or "")
 
     if not borrador.strip():
-        raise HTTPException(status_code=400, detail="El borrador no puede estar vacío.")
+        raise HTTPException(status_code=400, detail="La descripción o borrador del anuncio no puede estar vacío.")
     if len(borrador) > 10000:
-        raise HTTPException(status_code=400, detail="El borrador supera el límite permitido de 10,000 caracteres.")
+        raise HTTPException(status_code=400, detail="La descripción supera el límite permitido de 10,000 caracteres.")
 
+    proveedor_raw = p.get("proveedor") or p.get("provider") or "groq"
+    try:
+        llm, nombre_proveedor = _crear_llm_para_anuncio(proveedor_raw)
+    except HTTPException:
+        raise
+    except Exception:
+        llm, nombre_proveedor = None, "Predeterminado"
+
+    loop = asyncio.get_running_loop()
     try:
         import anuncios_discord
-        anuncio_generado = anuncios_discord.generar_anuncio(borrador)
+        fn_invocar = (lambda: anuncios_discord.generar_anuncio(borrador, llm=llm)) if llm is not None else (lambda: anuncios_discord.generar_anuncio(borrador))
+        anuncio_generado = await asyncio.wait_for(
+            loop.run_in_executor(None, fn_invocar),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail=f"Tiempo de espera agotado al generar con {nombre_proveedor}. Prueba con Groq para respuesta ultrarrápida.")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error al generar anuncio con IA: {e}")
+        raise HTTPException(status_code=502, detail=f"Error al generar anuncio con {nombre_proveedor}: {e}")
 
     return {
         "anuncio_generado": anuncio_generado,
@@ -3456,14 +3562,15 @@ async def generate_announcement_v1(payload: dict = Body(...)):
         "caracteres": len(anuncio_generado),
         "longitud": len(anuncio_generado),
         "borrador_original": borrador,
-        "modelo_usado": "Google Gemma 4 / Cerebro IA",
+        "modelo_usado": nombre_proveedor,
+        "proveedor": nombre_proveedor,
     }
 
 
 @app.post("/api/v1/content-workflow/announcements/publish")
 @app.post("/api/v1/content-workflow/announcements/publish/")
 async def publish_announcement_v1(payload: dict = Body(...)):
-    """Despacha el anuncio por webhook a Discord y audita la publicación en SQLite contenidos_generados."""
+    """Despacha el anuncio por canal oficial de Discord o webhook, y audita la publicación en SQLite contenidos_generados."""
     p = payload or {}
     confirmado = p.get("confirmar") is True or p.get("confirmado") is True
     if not confirmado:
@@ -3475,21 +3582,50 @@ async def publish_announcement_v1(payload: dict = Body(...)):
     if len(contenido) > 2000:
         raise HTTPException(status_code=400, detail="El contenido supera el límite de 2,000 caracteres de Discord.")
 
-    webhook_url = (os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or "").strip()
-    if not webhook_url:
-        raise HTTPException(
-            status_code=503,
-            detail="Variable de entorno DISCORD_WEBHOOK_ANUNCIOS no configurada en el servidor.",
-        )
+    channel_id = str(p.get("channel_id") or p.get("canal_id") or p.get("channel") or "").strip()
+    canal_publicado_nombre = "#anuncios"
 
-    try:
-        import anuncios_discord
-        anuncios_discord.publicar_en_discord(contenido)
-    except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Fallo al publicar anuncio en Discord vía webhook: {e}",
+    bot_token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
+    webhook_url = (os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or "").strip()
+
+    if channel_id and channel_id.isdigit() and bot_token:
+        # Publicar directamente en el canal de texto seleccionado mediante la API del Bot
+        import urllib.request
+        import json
+        req = urllib.request.Request(
+            f"https://discord.com/api/v10/channels/{channel_id}/messages",
+            data=json.dumps({"content": contenido, "allowed_mentions": {"parse": []}}).encode("utf-8"),
+            headers={
+                "Authorization": f"Bot {bot_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "CommunityLab/1.0",
+            },
+            method="POST",
         )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                canal_publicado_nombre = f"Canal ID {channel_id}"
+        except urllib.error.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Discord rechazó el mensaje en el canal {channel_id} (error {e.code}): {e.read().decode(errors='ignore')}")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Error al enviar mensaje al canal {channel_id}: {e}")
+    else:
+        # Despacho por webhook estándar
+        if not webhook_url:
+            raise HTTPException(
+                status_code=503,
+                detail="Variable de entorno DISCORD_WEBHOOK_ANUNCIOS no configurada en el servidor.",
+            )
+        try:
+            import anuncios_discord
+            anuncios_discord.publicar_en_discord(contenido)
+            canal_publicado_nombre = "Canal Webhook Oficial"
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Fallo al publicar anuncio en Discord vía webhook: {e}",
+            )
 
     _asegurar_esquema_sqlite()
     now_iso = a_utc_iso(datetime.now(timezone.utc))
@@ -3525,7 +3661,8 @@ async def publish_announcement_v1(payload: dict = Body(...)):
         "id_contenido": last_id,
         "fecha_publicacion": now_iso,
         "caracteres": len(contenido),
-        "mensaje": "Anuncio publicado en Discord con éxito y registrado en auditoría.",
+        "canal_destino": canal_publicado_nombre,
+        "mensaje": f"Anuncio publicado en Discord con éxito ({canal_publicado_nombre}) y registrado en auditoría.",
     }
 
 

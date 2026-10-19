@@ -222,6 +222,7 @@ export interface AnnouncementWebhookStatus {
   max_characters_recommended: number
   max_characters_limit: number
   warning: string | null
+  channels?: Array<{ id: string; name: string }>
 }
 
 export interface AnnouncementGenerateResponse {
@@ -236,6 +237,8 @@ export interface AnnouncementPublishResponse {
   id_contenido: number | null
   fecha_publicacion: string
   caracteres: number
+  canal_destino?: string
+  mensaje?: string
 }
 
 export async function getAnnouncementWebhookStatus(): Promise<AnnouncementWebhookStatus> {
@@ -246,19 +249,21 @@ export async function getAnnouncementWebhookStatus(): Promise<AnnouncementWebhoo
 
 export async function generateAnnouncement(
   borrador: string,
+  proveedor?: string,
 ): Promise<AnnouncementGenerateResponse> {
   return (await apiRequest('/api/v1/content-workflow/announcements/generate', {
     method: 'POST',
-    body: JSON.stringify({ borrador }),
+    body: JSON.stringify({ borrador, proveedor }),
   })) as AnnouncementGenerateResponse
 }
 
 export async function publishAnnouncement(
   contenido: string,
   confirmado: boolean = true,
+  channel_id?: string,
 ): Promise<AnnouncementPublishResponse> {
   return (await apiRequest('/api/v1/content-workflow/announcements/publish', {
     method: 'POST',
-    body: JSON.stringify({ contenido, confirmado }),
+    body: JSON.stringify({ contenido, confirmado, channel_id }),
   })) as AnnouncementPublishResponse
 }
