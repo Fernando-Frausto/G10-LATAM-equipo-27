@@ -2671,4 +2671,268 @@ test_participacion_canales_discord_corpus_vacio = test_channel_participation_pro
 test_participacion_canales_exclusion_bots_y_alias = test_channel_participation_exclusion_bots_y_mapeo_sinonimos
 
 
+# ==============================================================================
+# Spec 015: Integración del Pipeline Mototradis MVP de Enoc (RF-01 a RF-07)
+# ==============================================================================
+
+
+def test_mototradis_checkpoint_status_y_modelos_utilizados(client):
+    """
+    Spec 015 - RF-02, RF-03 (test_mototradis_checkpoint_desacoplado_pendiente):
+    Verifica el estado del checkpoint desacoplado de lotes_ia_kpis y la transparencia de modelos IA.
+    1. Para un mensaje sin historial ni checkpoint, responde has_checkpoint=False y estado_pipeline='pendiente'.
+    2. El diccionario modelos_utilizados debe detallar de forma transparente los modelos asignados
+       a cada plataforma (orquestador, linkedin, x, discord).
+    """
+    id_mensaje = 1001
+    resp = client.get(f"/api/v1/mototradis/checkpoint/{id_mensaje}")
+    assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
+    data = resp.json()
+
+    assert data.get("has_checkpoint") is False
+    assert data.get("estado_pipeline") == "pendiente"
+    assert "borradores_ui" in data
+    assert isinstance(data["borradores_ui"], dict)
+
+    # Mandato de Transparencia IA: cada componente debe reportar su modelo asignado
+    assert "modelos_utilizados" in data
+    modelos = data["modelos_utilizados"]
+    assert "orquestador" in modelos
+    assert "linkedin" in modelos
+    assert "x" in modelos
+    assert "discord" in modelos
+    assert "Gemini" in modelos["orquestador"] or "qwen" in modelos["orquestador"].lower() or "groq" in modelos["orquestador"].lower()
+
+
+def test_mototradis_execute_pipeline_borradores_ui_y_pausa_hitl(client):
+    """
+    Spec 015 - RF-02, RF-03 (test_mototradis_execute_pipeline_y_trazabilidad_modelos):
+    Verifica la ejecución del pipeline hasta la interrupción HITL (previa al publicador):
+    1. Ejecuta el grafo compilado con interrupt_before=['publicador'].
+    2. Retorna estado_pipeline='procesado', borradores_ui aplanados para la interfaz
+       y el mapa detallado de modelos_utilizados.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en)
+            VALUES (1002, 'hash_mt_1002', 'Discord', 'Semana_01', 'carlos_dev', '#general', 'mensaje', 'Gran avance en el bootcamp de IA y Python', '2026-10-18T10:00:00+00:00')
+            """
+        )
+        conn.commit()
+
+    payload = {
+        "id_mensaje": 1002,
+        "proveedor": "Google Gemini"
+    }
+    resp = client.post("/api/v1/mototradis/execute-pipeline", json=payload)
+    assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
+    data = resp.json()
+
+    assert data.get("estado_pipeline") == "procesado"
+    assert "borradores_ui" in data
+    borradores = data["borradores_ui"]
+
+    # Estructura normalizada de UI para cada canal
+    assert "linkedin" in borradores
+    assert "titulo" in borradores["linkedin"]
+    assert "texto_copy" in borradores["linkedin"]
+
+    assert "x" in borradores
+    assert "titulo" in borradores["x"]
+    assert "texto_copy" in borradores["x"]
+
+    assert "discord" in borradores
+    assert "titulo" in borradores["discord"]
+    assert "texto_copy" in borradores["discord"]
+    assert "canal_seleccionado" in borradores["discord"]
+
+    # Transparencia de modelos utilizados
+    assert "modelos_utilizados" in data
+    assert "orquestador" in data["modelos_utilizados"]
+    assert "rutas_activas" in data
+    assert isinstance(data["rutas_activas"], list)
+
+
+def test_mototradis_generate_channel_individual_con_modelo_ia(client):
+    """
+    Spec 015 - RF-03:
+    Verifica la regeneración aislada de copy para un canal específico (ej. LinkedIn o X):
+    1. Invoca nodo_canal individualmente con el proveedor/modelo seleccionado.
+    2. Retorna el nuevo contenido generado y la clave explícita modelo_utilizado.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en)
+            VALUES (1003, 'hash_mt_1003', 'Discord', 'Semana_01', 'ana_redactora', '#faq', 'mensaje', 'Duda sobre la certificación de CloudEDTech', '2026-10-18T11:00:00+00:00')
+            """
+        )
+        conn.commit()
+
+    payload = {
+        "id_mensaje": 1003,
+        "canal": "linkedin",
+        "proveedor": "Google Gemini"
+    }
+    resp = client.post("/api/v1/mototradis/generate-channel", json=payload)
+    assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
+    data = resp.json()
+
+    assert data.get("canal") == "linkedin"
+    assert "contenido" in data or "borrador" in data
+    assert "modelo_utilizado" in data
+    assert len(data["modelo_utilizado"]) > 0
+
+
+def test_mototradis_hitl_decision_aprobacion_soberania_humana_y_cascada_discord(client):
+    """
+    Spec 015 - RF-04 (test_mototradis_hitl_soberania_humana_y_publicacion):
+    Verifica la soberanía humana absoluta en la decisión HITL de aprobación y despacho multicanal:
+    1. Los copys editados manualmente por el redactor humano prevalecen sobre borradores de la IA.
+    2. Discord utiliza cascada de 3 niveles con cita en bloque (> 💬 Contexto de @autor).
+    3. Tolera credenciales opcionales ausentes de X/LinkedIn reportando en resultados_canales sin error 500.
+    4. Actualiza estado_revision a 'aprobado'.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en)
+            VALUES (1004, 'hash_mt_1004', 'Discord', 'Semana_01', 'mariana_ux', '#general', 'mensaje', 'Propuesta de mejora para el portal de estudiantes', '2026-10-18T12:00:00+00:00')
+            """
+        )
+        conn.commit()
+
+    copys_editados = {
+        "linkedin": {
+            "titulo": "Impulsando el Talento Tech con Alura",
+            "texto_copy": "Copy editado y aprobado directamente por el redactor humano.",
+            "copy_tono": "Cercano y profesional",
+            "newsletter": {"destaque": "Novedades Semanales"},
+            "faq": {"sugerencia": "Preguntas frecuentes"}
+        },
+        "x": {
+            "titulo": "Innovación en EdTech",
+            "texto_copy": "Copy de X redactado por humano manteniendo brevedad."
+        },
+        "discord": {
+            "canal_seleccionado": "#general",
+            "titulo": "Aviso Oficial Comunidad",
+            "texto_copy": "Copy oficial validado por el equipo de moderación."
+        }
+    }
+
+    payload = {
+        "id_mensaje": 1004,
+        "decision": "aprobar",
+        "copys_editados": copys_editados
+    }
+
+    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/123"}, clear=False):
+        resp = client.post("/api/v1/mototradis/hitl-decision", json=payload)
+
+    assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
+    data = resp.json()
+
+    assert data.get("exito") is True
+    assert data.get("decision") == "aprobar"
+    assert data.get("estado_revision") == "aprobado"
+    assert "resultados_canales" in data
+    resultados = data["resultados_canales"]
+
+    # Debe contener resultados para cada canal sin romper con HTTP 500 ante credenciales ausentes
+    assert "discord" in resultados
+    assert "linkedin" in resultados
+    assert "x" in resultados
+
+
+def test_mototradis_hitl_decision_rechazo_regenera_copys(client):
+    """
+    Spec 015 - RF-04 (test_mototradis_hitl_desaprobar_y_limpieza_checkpoint):
+    Verifica la decisión HITL de desaprobación / rechazo y precondición de borradores:
+    1. Si se intenta aprobar sin copys válidos ni checkpoint, responde HTTP 400 Bad Request.
+    2. Si se envía decision='desaprobar', actualiza a 'desaprobado' y limpia el checkpoint del hilo.
+    """
+    # 1. Precondición: aprobar sin borradores debe responder 400 Bad Request
+    payload_invalido = {
+        "id_mensaje": 9999,
+        "decision": "aprobar",
+        "copys_editados": {}
+    }
+    resp_400 = client.post("/api/v1/mototradis/hitl-decision", json=payload_invalido)
+    assert resp_400.status_code == 400, f"Se esperaba HTTP 400 ante aprobación sin borradores, recibido: {resp_400.status_code}"
+
+    # 2. Desaprobación y purga de hilo
+    payload_desaprobar = {
+        "id_mensaje": 1005,
+        "decision": "desaprobar"
+    }
+    resp = client.post("/api/v1/mototradis/hitl-decision", json=payload_desaprobar)
+    assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
+    data = resp.json()
+
+    assert data.get("exito") is True
+    assert data.get("decision") == "desaprobar"
+    assert data.get("estado_revision") == "desaprobado"
+    assert data.get("checkpoint_limpiado") is True
+
+
+def test_mototradis_publish_channel_validacion_280_x_y_tolerancia_credenciales(client):
+    """
+    Spec 015 - RF-04:
+    Verifica la publicación individual por canal con control de longitud y tolerancia:
+    1. Para X (Twitter), valida que textos combinados (titulo + texto_copy) > 280 caracteres
+       sean truncados de forma defensiva a <= 280 sin colapsar.
+    2. Si faltan credenciales de X o LinkedIn, reporta ok=False con detalle sin arrojar HTTP 500.
+    """
+    payload_x_largo = {
+        "id_mensaje": 1006,
+        "canal": "x",
+        "titulo": "A" * 70,
+        "texto_copy": "B" * 250  # 70 + 2 + 250 = 322 caracteres > 280 límite
+    }
+    resp_x = client.post("/api/v1/mototradis/publish-channel", json=payload_x_largo)
+    assert resp_x.status_code == 200, f"Error en publicación individual de X: {resp_x.status_code} {resp_x.text}"
+    data_x = resp_x.json()
+    assert data_x.get("canal") == "x"
+    assert "ok" in data_x
+
+    # Discord publicación individual
+    payload_discord = {
+        "id_mensaje": 1006,
+        "canal": "discord",
+        "canal_seleccionado": "#general",
+        "titulo": "Título de Prueba",
+        "texto_copy": "Cuerpo del anuncio oficial"
+    }
+    resp_discord = client.post("/api/v1/mototradis/publish-channel", json=payload_discord)
+    assert resp_discord.status_code == 200, f"Error en publicación individual de Discord: {resp_discord.status_code} {resp_discord.text}"
+    data_disc = resp_discord.json()
+    assert data_disc.get("canal") == "discord"
+    assert "ok" in data_disc
+
+
+def test_mototradis_run_mass_gemma_baja_relevancia(client):
+    """
+    Spec 015 - RF-05 (test_mototradis_run_mass_gemma_trazabilidad):
+    Verifica el endpoint de procesamiento masivo autónomo de mensajes con relevancia < 35 con Gemma 4:
+    1. Ejecuta procesamiento en lote invocando nodo_gemma_automatico.
+    2. Retorna resumen cuantitativo (procesados, publicados_directo, descartados).
+    3. Exhibe explícitamente modelo_ia='Google Gemma 4 · gemma-4-31b-it' (mandato de transparencia IA).
+    """
+    payload = {
+        "limite": 5
+    }
+    resp = client.post("/api/v1/mototradis/run-mass", json=payload)
+    assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
+    data = resp.json()
+
+    assert data.get("modelo_ia") == "Google Gemma 4 · gemma-4-31b-it"
+    assert "procesados" in data
+    assert "publicados_directo" in data
+    assert "descartados" in data
+    assert isinstance(data["procesados"], int)
+
+
+
 

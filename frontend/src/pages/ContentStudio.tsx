@@ -2,8 +2,12 @@ import {
   AlertTriangle,
   BriefcaseBusiness,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Copy,
+  Cpu,
   FileText,
+  Layers,
   Megaphone,
   MessageCircle,
   Pencil,
@@ -11,6 +15,7 @@ import {
   Send,
   Sparkles,
   Upload,
+  XCircle,
 } from 'lucide-react'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -18,18 +23,27 @@ import { useLocation, useSearchParams } from 'react-router-dom'
 
 import {
   createContentDraft,
+  executeMototradisPipeline,
   generateAnnouncement,
   generateComplaintResponse,
+  generateMototradisChannelCopy,
   getAnnouncementWebhookStatus,
   getComplaintPublishPreview,
+  getMototradisCheckpoint,
   getPublishedComplaintIds,
   publishAnnouncement,
   publishComplaintResponse,
+  publishMototradisChannel,
   regenerateContent,
+  runMototradisMassProcess,
+  submitMototradisHitlDecision,
 } from '../api/contentWorkflow'
 import type {
   AnnouncementWebhookStatus,
   ComplaintPublishPreview,
+  MototradisCheckpointState,
+  MototradisMassResult,
+  MototradisModelosUtilizados,
 } from '../api/contentWorkflow'
 import { getCommunityLiveSummary } from '../api/communityLive'
 import { updateMessageWorkflow } from '../api/messageWorkflow'
@@ -931,6 +945,364 @@ function ContentStudio() {
     }
   }
 
+  // Estados de Pipeline Mototradis (Orquestador LangGraph MVP de Enoc)
+  const [pipelineData, setPipelineData] = useState<MototradisCheckpointState | null>(null)
+  const [pipelineLoading, setPipelineLoading] = useState(false)
+  const [pipelineExecuting, setPipelineExecuting] = useState(false)
+  const [pipelineActionMessage, setPipelineActionMessage] = useState('')
+  const [pipelineActionError, setPipelineActionError] = useState('')
+
+  // Campos específicos de redacción enriquecida por canal
+  const [linkedinTitle, setLinkedinTitle] = useState('')
+  const [linkedinCopyTono, setLinkedinCopyTono] = useState('')
+  const [linkedinNewsletter, setLinkedinNewsletter] = useState<{ destaque?: string; resumen?: string } | null>(null)
+  const [linkedinFaq, setLinkedinFaq] = useState<{ sugerencia?: string; respuesta?: string } | null>(null)
+  const [showLinkedinExtras, setShowLinkedinExtras] = useState(false)
+
+  const [xTitle, setXTitle] = useState('')
+  const [discordTitle, setDiscordTitle] = useState('')
+  const [discordSelectedChannel, setDiscordSelectedChannel] = useState('general')
+
+  // Publicación individual por canal
+  const [channelPublishing, setChannelPublishing] = useState<Record<string, boolean>>({})
+  const [channelPublishResult, setChannelPublishResult] = useState<Record<string, { ok: boolean; detalle: string }>>({})
+
+  // Procesamiento masivo con Gemma 4
+  const [massProcessing, setMassProcessing] = useState(false)
+  const [massResult, setMassResult] = useState<MototradisMassResult | null>(null)
+  const [massLimit, setMassLimit] = useState(10)
+  const [massError, setMassError] = useState('')
+
+  // Modelos de IA utilizados reportados reactivamente
+  const modelosUtilizados: MototradisModelosUtilizados = useMemo(() => {
+    return {
+      orquestador: pipelineData?.modelos_utilizados?.orquestador || 'Google Gemini · gemini-2.5-flash',
+      linkedin: pipelineData?.modelos_utilizados?.linkedin || 'Google Gemini · gemini-2.5-flash-lite',
+      x: pipelineData?.modelos_utilizados?.x || 'Groq · qwen/qwen-2.5-32b',
+      discord: pipelineData?.modelos_utilizados?.discord || 'Groq · llama-3.3-70b-versatile',
+      pqrs: pipelineData?.modelos_utilizados?.pqrs || 'Google Gemini · gemini-2.5-flash-lite',
+      masivo: pipelineData?.modelos_utilizados?.masivo || 'Google Gemma 4 · gemma-4-31b-it',
+    }
+  }, [pipelineData])
+
+  // Carga reactiva del Checkpoint de Mototradis al seleccionar un mensaje
+  useEffect(() => {
+    if (!selectedMessageId) {
+      setPipelineData(null)
+      return
+    }
+
+    let isMounted = true
+    setPipelineLoading(true)
+    setPipelineActionMessage('')
+    setPipelineActionError('')
+
+    getMototradisCheckpoint(selectedMessageId)
+      .then((checkpoint) => {
+        if (!isMounted) return
+        setPipelineData(checkpoint)
+
+        if (checkpoint.has_checkpoint && checkpoint.borradores_ui) {
+          const bui = checkpoint.borradores_ui
+
+          let liText = ''
+          if (typeof bui.linkedin === 'string') {
+            liText = bui.linkedin
+          } else if (bui.linkedin && typeof bui.linkedin === 'object') {
+            liText = bui.linkedin.texto_copy || ''
+            if (bui.linkedin.titulo) setLinkedinTitle(bui.linkedin.titulo)
+            if (bui.linkedin.copy_tono) setLinkedinCopyTono(bui.linkedin.copy_tono)
+            if (bui.linkedin.newsletter) setLinkedinNewsletter(bui.linkedin.newsletter)
+            if (bui.linkedin.faq) setLinkedinFaq(bui.linkedin.faq)
+          }
+
+          let xText = ''
+          if (typeof bui.x === 'string') {
+            xText = bui.x
+          } else if (bui.x && typeof bui.x === 'object') {
+            xText = bui.x.texto_copy || ''
+            if (bui.x.titulo) setXTitle(bui.x.titulo)
+          }
+
+          let discordText = ''
+          if (typeof bui.discord === 'string') {
+            discordText = bui.discord
+          } else if (bui.discord && typeof bui.discord === 'object') {
+            discordText = bui.discord.texto_copy || ''
+            if (bui.discord.titulo) setDiscordTitle(bui.discord.titulo)
+            if (bui.discord.canal_seleccionado) setDiscordSelectedChannel(bui.discord.canal_seleccionado)
+          }
+
+          setDrafts((prev) => ({
+            linkedin: {
+              ...prev.linkedin,
+              interactionId: selectedMessageId,
+              content: liText || prev.linkedin.content,
+            },
+            x: {
+              ...prev.x,
+              interactionId: selectedMessageId,
+              content: xText || prev.x.content,
+            },
+            discord: {
+              ...prev.discord,
+              interactionId: selectedMessageId,
+              content: discordText || prev.discord.content,
+            },
+          }))
+        }
+      })
+      .catch((err) => {
+        console.warn('No se pudo cargar checkpoint de Mototradis:', err)
+      })
+      .finally(() => {
+        if (isMounted) setPipelineLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [selectedMessageId])
+
+  // Ejecución del pipeline LangGraph de Mototradis
+  const handleExecuteMototradisPipeline = async () => {
+    if (!selectedMessageId) return
+    setPipelineExecuting(true)
+    setPipelineActionMessage('')
+    setPipelineActionError('')
+
+    try {
+      const res = await executeMototradisPipeline(selectedMessageId, 'auto')
+      setPipelineData(res)
+
+      if (res.borradores_ui) {
+        const bui = res.borradores_ui
+        let liText = typeof bui.linkedin === 'string' ? bui.linkedin : bui.linkedin?.texto_copy || ''
+        let xText = typeof bui.x === 'string' ? bui.x : bui.x?.texto_copy || ''
+        let discordText = typeof bui.discord === 'string' ? bui.discord : bui.discord?.texto_copy || ''
+
+        if (bui.linkedin && typeof bui.linkedin === 'object') {
+          if (bui.linkedin.titulo) setLinkedinTitle(bui.linkedin.titulo)
+          if (bui.linkedin.copy_tono) setLinkedinCopyTono(bui.linkedin.copy_tono)
+          if (bui.linkedin.newsletter) setLinkedinNewsletter(bui.linkedin.newsletter)
+          if (bui.linkedin.faq) setLinkedinFaq(bui.linkedin.faq)
+        }
+        if (bui.x && typeof bui.x === 'object') {
+          if (bui.x.titulo) setXTitle(bui.x.titulo)
+        }
+        if (bui.discord && typeof bui.discord === 'object') {
+          if (bui.discord.titulo) setDiscordTitle(bui.discord.titulo)
+          if (bui.discord.canal_seleccionado) {
+            setDiscordSelectedChannel(bui.discord.canal_seleccionado)
+          }
+        }
+
+        setDrafts((prev) => ({
+          linkedin: {
+            ...prev.linkedin,
+            interactionId: selectedMessageId,
+            content: liText || prev.linkedin.content,
+          },
+          x: {
+            ...prev.x,
+            interactionId: selectedMessageId,
+            content: xText || prev.x.content,
+          },
+          discord: {
+            ...prev.discord,
+            interactionId: selectedMessageId,
+            content: discordText || prev.discord.content,
+          },
+        }))
+      }
+
+      setPipelineActionMessage(
+        `✓ Pipeline ejecutado exitosamente con orquestador LangGraph (${res.modelos_utilizados?.orquestador || 'Gemini'}). Borradores generados para canales activos.`
+      )
+    } catch (error) {
+      setPipelineActionError(
+        error instanceof Error ? error.message : 'Error al ejecutar pipeline de redacción.'
+      )
+    } finally {
+      setPipelineExecuting(false)
+    }
+  }
+
+  // Regeneración individual de canal con IA
+  const handleRegenerateChannelCopy = async (canal: 'linkedin' | 'x' | 'discord') => {
+    if (!selectedMessageId) return
+    setDrafts((prev) => ({
+      ...prev,
+      [canal]: { ...prev[canal], regenerating: true, error: '' },
+    }))
+
+    try {
+      const res = await generateMototradisChannelCopy(selectedMessageId, canal)
+      const bui = res.borradores_ui || {}
+      const canalData = bui[canal] || res.borrador || {}
+      const nuevoTexto =
+        typeof canalData === 'string'
+          ? canalData
+          : canalData.texto_copy || res.contenido || ''
+
+      if (canal === 'linkedin' && typeof canalData === 'object') {
+        if (canalData.titulo) setLinkedinTitle(canalData.titulo)
+        if (canalData.copy_tono) setLinkedinCopyTono(canalData.copy_tono)
+        if (canalData.newsletter) setLinkedinNewsletter(canalData.newsletter)
+        if (canalData.faq) setLinkedinFaq(canalData.faq)
+      } else if (canal === 'x' && typeof canalData === 'object') {
+        if (canalData.titulo) setXTitle(canalData.titulo)
+      } else if (canal === 'discord' && typeof canalData === 'object') {
+        if (canalData.titulo) setDiscordTitle(canalData.titulo)
+        if (canalData.canal_seleccionado) {
+          setDiscordSelectedChannel(canalData.canal_seleccionado)
+        }
+      }
+
+      setDrafts((prev) => ({
+        ...prev,
+        [canal]: {
+          ...prev[canal],
+          content: nuevoTexto || prev[canal].content,
+          regenerating: false,
+          error: '',
+        },
+      }))
+      setPipelineActionMessage(`✓ Copy de ${canal.toUpperCase()} regenerado con ${res.modelo_utilizado}.`)
+    } catch (err) {
+      console.warn(`Fallback a regeneración estándar para ${canal}:`, err)
+      await handleRegenerate(canal)
+    } finally {
+      setDrafts((prev) => ({
+        ...prev,
+        [canal]: { ...prev[canal], regenerating: false },
+      }))
+    }
+  }
+
+  // Publicación individual por canal
+  const handlePublishChannelIndividual = async (canal: 'linkedin' | 'x' | 'discord') => {
+    if (!selectedMessageId) return
+    const draft = drafts[canal]
+    const texto = draft.content.trim()
+    if (!texto) return
+
+    setChannelPublishing((prev) => ({ ...prev, [canal]: true }))
+    setPipelineActionMessage('')
+    setPipelineActionError('')
+
+    try {
+      const titulo =
+        canal === 'linkedin' ? linkedinTitle : canal === 'x' ? xTitle : discordTitle
+      const canalDestino = canal === 'discord' ? discordSelectedChannel : undefined
+
+      const res = await publishMototradisChannel(
+        selectedMessageId,
+        canal,
+        texto,
+        canalDestino,
+        titulo
+      )
+      setChannelPublishResult((prev) => ({
+        ...prev,
+        [canal]: { ok: res.ok, detalle: res.detalle },
+      }))
+
+      if (res.ok) {
+        setDrafts((prev) => ({
+          ...prev,
+          [canal]: { ...prev[canal], submitted: true },
+        }))
+        setPipelineActionMessage(`✓ Publicación en ${canal.toUpperCase()} exitosa: ${res.detalle}`)
+      } else {
+        setPipelineActionError(`Error al publicar en ${canal.toUpperCase()}: ${res.detalle}`)
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Error al publicar canal'
+      setPipelineActionError(`Error al publicar en ${canal.toUpperCase()}: ${msg}`)
+    } finally {
+      setChannelPublishing((prev) => ({ ...prev, [canal]: false }))
+    }
+  }
+
+  // Decisión global HITL (Human-in-the-Loop)
+  const handleSubmitHitlDecision = async (aprobado: boolean) => {
+    if (!selectedMessageId) return
+    setPipelineExecuting(true)
+    setPipelineActionMessage('')
+    setPipelineActionError('')
+
+    try {
+      const copysEditados: Record<'linkedin' | 'x' | 'discord', any> = {
+        linkedin: {
+          titulo: linkedinTitle,
+          texto_copy: drafts.linkedin.content,
+          copy_tono: linkedinCopyTono,
+          newsletter: linkedinNewsletter,
+          faq: linkedinFaq,
+        },
+        x: {
+          titulo: xTitle,
+          texto_copy: drafts.x.content,
+        },
+        discord: {
+          titulo: discordTitle,
+          texto_copy: drafts.discord.content,
+          canal_seleccionado: discordSelectedChannel,
+        },
+      }
+
+      const res = await submitMototradisHitlDecision(
+        selectedMessageId,
+        aprobado,
+        aprobado ? copysEditados : undefined,
+        aprobado ? undefined : 'Desaprobado por operador humano'
+      )
+
+      if (aprobado && res.exito) {
+        setPipelineActionMessage(
+          '✓ Lote de copys aprobado y despachado con prevalencia de tus ediciones humanas (HITL).'
+        )
+        setDrafts((prev) => ({
+          linkedin: { ...prev.linkedin, submitted: true },
+          x: { ...prev.x, submitted: true },
+          discord: { ...prev.discord, submitted: true },
+        }))
+      } else {
+        setPipelineActionMessage(
+          `✓ Lote ${res.decision || 'desaprobado'} y checkpoint limpiado correctamente. El hilo queda listo para reintento.`
+        )
+      }
+
+      const updatedCheckpoint = await getMototradisCheckpoint(selectedMessageId)
+      setPipelineData(updatedCheckpoint)
+    } catch (error) {
+      setPipelineActionError(
+        error instanceof Error ? error.message : 'Error al registrar decisión HITL.'
+      )
+    } finally {
+      setPipelineExecuting(false)
+    }
+  }
+
+  // Procesamiento Masivo de baja relevancia con Gemma 4
+  const handleRunMassGemma = async () => {
+    setMassProcessing(true)
+    setMassError('')
+    setMassResult(null)
+
+    try {
+      const res = await runMototradisMassProcess(massLimit)
+      setMassResult(res)
+    } catch (error) {
+      setMassError(
+        error instanceof Error ? error.message : 'Error en el procesamiento masivo con Gemma 4.'
+      )
+    } finally {
+      setMassProcessing(false)
+    }
+  }
+
   const formats: Array<{
     id: ContentFormat
     name: string
@@ -1004,6 +1376,11 @@ function ContentStudio() {
 
                 <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
                   #{announcementStatus?.channel_hint || 'anuncios'}
+                </span>
+
+                <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50/80 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700">
+                  <Cpu size={12} />
+                  🤖 Modelo IA: {selectedAnnouncementModel === 'groq' ? 'Groq · llama-3.3-70b-versatile' : selectedAnnouncementModel === 'gemma' ? 'Google Gemma 4 · gemma-4-31b-it' : 'Google Gemini · gemini-2.5-flash-lite'}
                 </span>
               </div>
 
@@ -1095,7 +1472,7 @@ function ContentStudio() {
                 Descripción del anuncio para generar con IA
               </label>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] font-semibold text-slate-500">IA:</span>
                 <select
                   value={selectedAnnouncementModel}
@@ -1106,6 +1483,10 @@ function ContentStudio() {
                   <option value="groq">Groq (Cerebro IA)</option>
                   <option value="gemma">Google Gemma 4</option>
                 </select>
+
+                <span className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                  🤖 {selectedAnnouncementModel === 'groq' ? 'Groq · llama-3.3-70b-versatile' : selectedAnnouncementModel === 'gemma' ? 'Google Gemma 4 · gemma-4-31b-it' : 'Google Gemini · gemini-2.5-flash-lite'}
+                </span>
 
                 <span
                   className={`text-xs font-medium ${
@@ -1504,48 +1885,80 @@ function ContentStudio() {
         </div>
       </section>
 
-      {/* Selector de formato */}
+      {/* Orquestador LangGraph y Selector de formato */}
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
-              <FileText size={18} />
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600">
+              <Sparkles size={20} />
             </div>
 
             <div>
-              <h3 className="font-bold text-slate-900">
-                Contenido generado
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-slate-900">
+                  Mesa de Trabajo Multicanal (Orquestador LangGraph)
+                </h3>
+
+                <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+                  <Cpu size={12} />
+                  🤖 Orquestador IA: {modelosUtilizados.orquestador}
+                </span>
+
+                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
+                  Estado: {pipelineData?.estado_pipeline || 'listo'}
+                </span>
+
+                {pipelineData?.rutas_activas && (
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
+                    Rutas: {pipelineData.rutas_activas.join(', ')}
+                  </span>
+                )}
+              </div>
 
               <p className="mt-1 text-sm text-slate-500">
-                Revisa y adapta cada formato antes de enviarlo a
-                aprobación
+                Pipeline de redacción adaptativa con soberanía humana (HITL). Revisa, edita o regenera cada canal antes de publicar.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <label
-              htmlFor="workspace-ai-provider"
-              className="text-xs font-semibold text-slate-600"
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="workspace-ai-provider"
+                className="text-xs font-semibold text-slate-600"
+              >
+                Fallback IA:
+              </label>
+              <select
+                id="workspace-ai-provider"
+                value={workspaceAiProvider}
+                disabled={Object.values(drafts).some((d) => d.regenerating)}
+                onChange={(event) => setWorkspaceAiProvider(event.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                {AI_PROVIDERS.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {provider}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              disabled={pipelineExecuting || !selectedWorkflowMessage}
+              onClick={handleExecuteMototradisPipeline}
+              className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition hover:from-indigo-700 hover:to-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Modelo IA:
-            </label>
-            <select
-              id="workspace-ai-provider"
-              value={workspaceAiProvider}
-              disabled={Object.values(drafts).some((d) => d.regenerating)}
-              onChange={(event) => setWorkspaceAiProvider(event.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-            >
-              {AI_PROVIDERS.map((provider) => (
-                <option key={provider} value={provider}>
-                  {provider}
-                </option>
-              ))}
-            </select>
+              <RotateCcw size={14} className={pipelineExecuting ? 'animate-spin' : ''} />
+              {pipelineExecuting ? 'Ejecutando LangGraph...' : '⚡ Ejecutar Pipeline de Redacción (LangGraph)'}
+            </button>
           </div>
         </div>
+
+        {pipelineLoading && (
+          <p className="mt-3 text-xs text-indigo-600">Sincronizando checkpoint del orquestador...</p>
+        )}
 
         <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
           {formats.map((format) => {
@@ -1557,16 +1970,18 @@ function ContentStudio() {
                 key={format.id}
                 type="button"
                 onClick={() => setActiveFormat(format.id)}
-                className={`flex items-center gap-3 rounded-xl border p-4 text-left transition ${selected
-                  ? 'border-orange-300 bg-orange-50'
-                  : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
+                className={`flex items-center gap-3 rounded-xl border p-4 text-left transition ${
+                  selected
+                    ? 'border-orange-300 bg-orange-50'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
               >
                 <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-lg ${selected
-                    ? 'bg-orange-500 text-white'
-                    : 'bg-slate-100 text-slate-600'
-                    }`}
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+                    selected
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
                 >
                   <Icon size={19} />
                 </div>
@@ -1586,227 +2001,714 @@ function ContentStudio() {
         </div>
       </section>
 
-      {/* Tarjetas */}
+      {/* Tarjetas Especializadas Multicanal con Trazabilidad de Modelos de IA */}
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
-        {formats.map((format) => {
-          const Icon = format.icon
-          const draft = drafts[format.id]
+        {/* TARJETA LINKEDIN */}
+        <section
+          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
+            activeFormat === 'linkedin' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+          }`}
+        >
+          <div className="border-b border-slate-100 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <BriefcaseBusiness size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">LinkedIn</h3>
+                  <p className="text-xs text-slate-400">Publicación profesional y networking</p>
+                  <div className="mt-1.5 flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50/80 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                    <Cpu size={12} />
+                    <span>🤖 Modelo IA: {modelosUtilizados.linkedin}</span>
+                  </div>
+                </div>
+              </div>
 
-          return (
-            <section
-              key={format.id}
-              className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${activeFormat === format.id
-                ? 'border-orange-300 ring-2 ring-orange-50'
-                : 'border-slate-200'
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  drafts.linkedin.submitted ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
                 }`}
-            >
-              {/* Cabecera tarjeta */}
-              <div className="border-b border-slate-100 p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
-                      <Icon size={18} />
-                    </div>
+              >
+                {drafts.linkedin.submitted ? 'En aprobación' : 'Borrador'}
+              </span>
+            </div>
+          </div>
 
-                    <div>
-                      <h3 className="font-bold text-slate-900">
-                        {format.name}
-                      </h3>
+          <div className="flex flex-1 flex-col p-5">
+            <label htmlFor="linkedin-title" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Título del Post
+            </label>
+            <input
+              id="linkedin-title"
+              type="text"
+              value={linkedinTitle}
+              disabled={drafts.linkedin.submitted}
+              onChange={(e) => setLinkedinTitle(e.target.value)}
+              placeholder="Ej: Reflexiones sobre nuestra comunidad de aprendizaje..."
+              className="mt-1.5 rounded-lg border border-slate-200 p-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 disabled:bg-slate-50"
+            />
 
-                      <p className="text-xs text-slate-400">
-                        {format.description}
-                      </p>
-                    </div>
+            <label htmlFor="content-linkedin" className="mt-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <Pencil size={13} />
+              Copy persuasivo editable
+            </label>
+            <textarea
+              id="content-linkedin"
+              value={drafts.linkedin.content}
+              disabled={drafts.linkedin.submitted}
+              onFocus={() => setActiveFormat('linkedin')}
+              onChange={(event) => updateContent('linkedin', event.target.value)}
+              placeholder="Copy persuasivo para LinkedIn..."
+              className="mt-1.5 min-h-60 flex-1 resize-y rounded-xl border border-slate-200 p-3.5 text-sm leading-6 text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-50 disabled:bg-slate-50 disabled:text-slate-500"
+            />
+
+            {/* Extras Plegables (Copy tono, Newsletter, FAQ) */}
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <button
+                type="button"
+                onClick={() => setShowLinkedinExtras((prev) => !prev)}
+                className="flex w-full items-center justify-between text-xs font-semibold text-slate-700 hover:text-blue-600"
+              >
+                <span>Formatos adicionales (Newsletter & FAQ)</span>
+                {showLinkedinExtras ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+
+              {showLinkedinExtras && (
+                <div className="mt-3 space-y-3 border-t border-slate-200 pt-3 text-xs">
+                  <div>
+                    <label className="font-semibold text-slate-600">Copy de Tono / Alternativo:</label>
+                    <textarea
+                      value={linkedinCopyTono}
+                      onChange={(e) => setLinkedinCopyTono(e.target.value)}
+                      placeholder="Variación en tono formal o reflexivo..."
+                      rows={2}
+                      className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                    />
                   </div>
 
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${draft.submitted
-                      ? 'bg-green-50 text-green-700'
-                      : 'bg-amber-50 text-amber-700'
-                      }`}
-                  >
-                    {draft.submitted
-                      ? 'En aprobación'
-                      : 'Borrador'}
+                  <div>
+                    <label className="font-semibold text-slate-600">Newsletter (Destaque & Resumen):</label>
+                    <input
+                      type="text"
+                      value={linkedinNewsletter?.destaque || ''}
+                      onChange={(e) =>
+                        setLinkedinNewsletter((prev) => ({ ...prev, destaque: e.target.value }))
+                      }
+                      placeholder="Destaque de Newsletter..."
+                      className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                    />
+                    <textarea
+                      value={linkedinNewsletter?.resumen || ''}
+                      onChange={(e) =>
+                        setLinkedinNewsletter((prev) => ({ ...prev, resumen: e.target.value }))
+                      }
+                      placeholder="Resumen para la entrega semanal..."
+                      rows={2}
+                      className="mt-1.5 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-600">Sugerencia FAQ de la Comunidad:</label>
+                    <input
+                      type="text"
+                      value={linkedinFaq?.sugerencia || ''}
+                      onChange={(e) =>
+                        setLinkedinFaq((prev) => ({ ...prev, sugerencia: e.target.value }))
+                      }
+                      placeholder="Pregunta frecuente sugerida..."
+                      className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                    />
+                    <textarea
+                      value={linkedinFaq?.respuesta || ''}
+                      onChange={(e) =>
+                        setLinkedinFaq((prev) => ({ ...prev, respuesta: e.target.value }))
+                      }
+                      placeholder="Respuesta oficial sugerida..."
+                      rows={2}
+                      className="mt-1.5 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Acciones auxiliares */}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleCopy('linkedin')}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                {copiedFormat === 'linkedin' ? <CheckCircle size={14} /> : <Copy size={14} />}
+                {copiedFormat === 'linkedin' ? 'Copiado' : 'Copiar'}
+              </button>
+
+              <button
+                type="button"
+                disabled={drafts.linkedin.submitted || drafts.linkedin.regenerating}
+                onClick={() => handleRegenerateChannelCopy('linkedin')}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
+              >
+                <RotateCcw size={14} className={drafts.linkedin.regenerating ? 'animate-spin' : ''} />
+                {drafts.linkedin.regenerating ? 'Regenerando...' : 'Regenerar'}
+              </button>
+            </div>
+
+            {/* Publicar individual directo */}
+            <button
+              type="button"
+              disabled={channelPublishing['linkedin'] || !drafts.linkedin.content.trim()}
+              onClick={() => handlePublishChannelIndividual('linkedin')}
+              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200"
+            >
+              <Send size={14} />
+              {channelPublishing['linkedin'] ? 'Publicando...' : 'Publicar en LinkedIn'}
+            </button>
+
+            {/* Guardar en base de datos */}
+            <button
+              type="button"
+              onClick={() => handleSubmit('linkedin')}
+              disabled={drafts.linkedin.submitted || drafts.linkedin.submitting || drafts.linkedin.regenerating}
+              className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                drafts.linkedin.submitted
+                  ? 'cursor-not-allowed bg-green-50 text-green-700'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {drafts.linkedin.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
+              {drafts.linkedin.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
+            </button>
+
+            {drafts.linkedin.savedId && (
+              <p className="mt-2 text-center text-xs font-medium text-green-700">
+                Borrador #{drafts.linkedin.savedId} registrado exitosamente.
+              </p>
+            )}
+
+            {channelPublishResult['linkedin'] && (
+              <p
+                className={`mt-2 text-center text-xs font-medium ${
+                  channelPublishResult['linkedin'].ok ? 'text-green-700' : 'text-rose-600'
+                }`}
+              >
+                {channelPublishResult['linkedin'].detalle}
+              </p>
+            )}
+          </div>
+        </section>
+
+        {/* TARJETA X (TWITTER) */}
+        <section
+          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
+            activeFormat === 'x' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+          }`}
+        >
+          <div className="border-b border-slate-100 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-white">
+                  <MessageCircle size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">X (Twitter)</h3>
+                  <p className="text-xs text-slate-400">Microblogging conciso de alto impacto</p>
+                  <div className="mt-1.5 flex items-center gap-1 rounded-md border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-800">
+                    <Cpu size={12} />
+                    <span>🤖 Modelo IA: {modelosUtilizados.x}</span>
+                  </div>
+                </div>
+              </div>
+
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  drafts.x.submitted ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                }`}
+              >
+                {drafts.x.submitted ? 'En aprobación' : 'Borrador'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-1 flex-col p-5">
+            <label htmlFor="x-title" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Título / Hook del Tweet
+            </label>
+            <input
+              id="x-title"
+              type="text"
+              value={xTitle}
+              disabled={drafts.x.submitted}
+              onChange={(e) => setXTitle(e.target.value)}
+              placeholder="Ej: ¿Sabías esto sobre nuestra comunidad? 👇"
+              className="mt-1.5 rounded-lg border border-slate-200 p-2.5 text-xs font-medium text-slate-800 outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-100 disabled:bg-slate-50"
+            />
+
+            <label htmlFor="content-x" className="mt-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <Pencil size={13} />
+              Tweet editable
+            </label>
+            <textarea
+              id="content-x"
+              value={drafts.x.content}
+              disabled={drafts.x.submitted}
+              onFocus={() => setActiveFormat('x')}
+              onChange={(event) => updateContent('x', event.target.value)}
+              placeholder="Tweet conciso..."
+              className="mt-1.5 min-h-60 flex-1 resize-y rounded-xl border border-slate-200 p-3.5 text-sm leading-6 text-slate-700 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 disabled:bg-slate-50 disabled:text-slate-500"
+            />
+
+            {/* Contador Dinámico de Caracteres Cromático */}
+            {(() => {
+              const fullXContent = (xTitle ? `${xTitle}\n\n` : '') + drafts.x.content
+              const totalChars = [...fullXContent].length
+              const isOverLimit = totalChars > 280
+              const isWarning = totalChars > 210 && totalChars <= 280
+
+              return (
+                <div className="mt-3 flex items-center justify-between rounded-lg border p-2 text-xs transition"
+                  style={{
+                    backgroundColor: isOverLimit ? '#fef2f2' : isWarning ? '#fffbeb' : '#f0fdf4',
+                    borderColor: isOverLimit ? '#fecaca' : isWarning ? '#fde68a' : '#bbf7d0',
+                    color: isOverLimit ? '#b91c1c' : isWarning ? '#b45309' : '#15803d',
+                  }}
+                >
+                  <span className="font-semibold text-[11px]">
+                    {isOverLimit
+                      ? '⚠️ Excede el límite máximo de 280 caracteres'
+                      : isWarning
+                      ? '⚠️ Cerca del límite técnico de X'
+                      : '✓ Longitud óptima para publicación'}
+                  </span>
+                  <span className={`font-mono font-bold ${isOverLimit ? 'text-rose-600' : ''}`}>
+                    {totalChars} / 280
                   </span>
                 </div>
+              )
+            })()}
+
+            {/* Acciones auxiliares */}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleCopy('x')}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                {copiedFormat === 'x' ? <CheckCircle size={14} /> : <Copy size={14} />}
+                {copiedFormat === 'x' ? 'Copiado' : 'Copiar'}
+              </button>
+
+              <button
+                type="button"
+                disabled={drafts.x.submitted || drafts.x.regenerating}
+                onClick={() => handleRegenerateChannelCopy('x')}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
+              >
+                <RotateCcw size={14} className={drafts.x.regenerating ? 'animate-spin' : ''} />
+                {drafts.x.regenerating ? 'Regenerando...' : 'Regenerar'}
+              </button>
+            </div>
+
+            {/* Publicar individual directo */}
+            {(() => {
+              const fullXContent = (xTitle ? `${xTitle}\n\n` : '') + drafts.x.content
+              const isOverLimit = [...fullXContent].length > 280
+              return (
+                <button
+                  type="button"
+                  disabled={
+                    channelPublishing['x'] ||
+                    !drafts.x.content.trim() ||
+                    isOverLimit
+                  }
+                  onClick={() => handlePublishChannelIndividual('x')}
+                  className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-400"
+                >
+                  <Send size={14} />
+                  {channelPublishing['x'] ? 'Publicando...' : 'Publicar en X'}
+                </button>
+              )
+            })()}
+
+            {/* Guardar en base de datos */}
+            <button
+              type="button"
+              onClick={() => handleSubmit('x')}
+              disabled={
+                drafts.x.submitted ||
+                drafts.x.submitting ||
+                drafts.x.regenerating ||
+                [...(xTitle ? `${xTitle}\n\n` : '') + drafts.x.content].length > 280
+              }
+              className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                drafts.x.submitted
+                  ? 'cursor-not-allowed bg-green-50 text-green-700'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {drafts.x.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
+              {drafts.x.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
+            </button>
+
+            {drafts.x.savedId && (
+              <p className="mt-2 text-center text-xs font-medium text-green-700">
+                Borrador #{drafts.x.savedId} registrado exitosamente.
+              </p>
+            )}
+
+            {channelPublishResult['x'] && (
+              <p
+                className={`mt-2 text-center text-xs font-medium ${
+                  channelPublishResult['x'].ok ? 'text-green-700' : 'text-rose-600'
+                }`}
+              >
+                {channelPublishResult['x'].detalle}
+              </p>
+            )}
+          </div>
+        </section>
+
+        {/* TARJETA DISCORD */}
+        <section
+          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
+            activeFormat === 'discord' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+          }`}
+        >
+          <div className="border-b border-slate-100 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                  <MessageCircle size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">Discord</h3>
+                  <p className="text-xs text-slate-400">Publicación en hilos y canales de la comunidad</p>
+                  <div className="mt-1.5 flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                    <Cpu size={12} />
+                    <span>🤖 Modelo IA: {modelosUtilizados.discord}</span>
+                  </div>
+                </div>
               </div>
 
-              {/* Editor */}
-              <div className="flex flex-1 flex-col p-5">
-                <label
-                  htmlFor={`content-${format.id}`}
-                  className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"
-                >
-                  <Pencil size={14} />
-                  Contenido editable
-                </label>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  drafts.discord.submitted ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                }`}
+              >
+                {drafts.discord.submitted ? 'En aprobación' : 'Borrador'}
+              </span>
+            </div>
+          </div>
 
-                <textarea
-                  id={`content-${format.id}`}
-                  value={draft.content}
-                  disabled={draft.submitted}
-                  onFocus={() => setActiveFormat(format.id)}
-                  onChange={(event) =>
-                    updateContent(
-                      format.id,
-                      event.target.value,
-                    )
-                  }
-                  className="mt-3 min-h-72 flex-1 resize-y rounded-xl border border-slate-200 p-4 text-sm leading-6 text-slate-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:bg-slate-50 disabled:text-slate-500"
-                />
-                {format.id === 'x' && (
-                  <p
-                    className={`mt-2 text-right text-xs font-semibold ${
-                      [...draft.content].length > 280
-                        ? 'text-rose-600'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    {[...draft.content].length} / 280 caracteres
+          <div className="flex flex-1 flex-col p-5">
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="discord-channel-select" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Canal de Destino
+              </label>
+              <select
+                id="discord-channel-select"
+                value={discordSelectedChannel}
+                disabled={drafts.discord.submitted}
+                onChange={(e) => setDiscordSelectedChannel(e.target.value)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 outline-none focus:border-indigo-400"
+              >
+                <option value="general">#general</option>
+                <option value="faq">#faq</option>
+                <option value="notificaciones">#notificaciones</option>
+                <option value="pqrs">#pqrs</option>
+                <option value="chat-egresados">#chat-egresados</option>
+                <option value="oportunidades-laborales">#oportunidades-laborales</option>
+              </select>
+            </div>
+
+            <label htmlFor="discord-title" className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Título del Post
+            </label>
+            <input
+              id="discord-title"
+              type="text"
+              value={discordTitle}
+              disabled={drafts.discord.submitted}
+              onChange={(e) => setDiscordTitle(e.target.value)}
+              placeholder="Ej: [Comunidad] Debate abierto..."
+              className="mt-1.5 rounded-lg border border-slate-200 p-2.5 text-xs font-medium text-slate-800 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100 disabled:bg-slate-50"
+            />
+
+            <label htmlFor="content-discord" className="mt-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <Pencil size={13} />
+              Cuerpo del Post
+            </label>
+            <textarea
+              id="content-discord"
+              value={drafts.discord.content}
+              disabled={drafts.discord.submitted}
+              onFocus={() => setActiveFormat('discord')}
+              onChange={(event) => updateContent('discord', event.target.value)}
+              placeholder="Mensaje para la comunidad..."
+              className="mt-1.5 min-h-44 flex-1 resize-y rounded-xl border border-slate-200 p-3.5 text-sm leading-6 text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 disabled:bg-slate-50 disabled:text-slate-500"
+            />
+
+            {/* Vista previa visual en vivo de la Cita en Bloque */}
+            <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+              <span className="text-[11px] font-bold text-indigo-800 uppercase tracking-wide">
+                Vista previa de cita contextual (Discord Blockquote):
+              </span>
+              <div className="mt-1.5 rounded-lg border-l-4 border-indigo-500 bg-white p-2.5 text-xs text-slate-700 shadow-2xs">
+                <p className="font-semibold text-indigo-600">
+                  💬 Contexto de @{selectedWorkflowMessage?.author || 'autor'}:
+                </p>
+                <blockquote className="mt-1 line-clamp-2 italic text-slate-600">
+                  "{selectedWorkflowMessage?.content || 'Selecciona un mensaje de la bandeja...'}"
+                </blockquote>
+              </div>
+            </div>
+
+            {/* Archivos adjuntos de Discord */}
+            {discordFiles.length > 0 && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-700">
+                    {discordFiles.length} archivo(s) adjunto(s)
                   </p>
-                )}
-                {format.id === 'discord' && discordFiles.length > 0 && (
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-800">
-                          Archivos adjuntos
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {discordFiles.length} archivo(s) del mensaje original
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setShowDiscordFiles((current) => !current)
-                        }
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        {showDiscordFiles ? 'Ocultar archivos' : 'Ver archivos'}
-                      </button>
-                    </div>
-
-                    {showDiscordFiles && (
-                      <div className="mt-3 space-y-2">
-                        {discordFiles.map((file) => (
-                          <div
-                            key={file.id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="break-all text-xs font-semibold text-slate-700">
-                                {file.filename}
-                              </p>
-                              <p className="mt-0.5 text-xs text-slate-400">
-                                {file.content_type || 'Archivo'} · {formatDiscordFileSize(file.size)}
-                              </p>
-                            </div>
-
-                            <a
-                              href={file.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-600 transition hover:bg-orange-50"
-                            >
-                              Abrir / descargar
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Acciones auxiliares */}
-                <div className="mt-4 grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => handleCopy(format.id)}
-                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                    onClick={() => setShowDiscordFiles((curr) => !curr)}
+                    className="text-xs font-semibold text-indigo-600 hover:underline"
                   >
-                    {copiedFormat === format.id ? (
-                      <CheckCircle size={15} />
-                    ) : (
-                      <Copy size={15} />
-                    )}
-
-                    {copiedFormat === format.id
-                      ? 'Copiado'
-                      : 'Copiar'}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={draft.submitted || draft.submitting || draft.regenerating || Boolean(draft.savedId)}
-                    onClick={() =>
-                      handleRegenerate(format.id)
-                    }
-                    className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                  >
-                    <RotateCcw size={15} className={draft.regenerating ? 'animate-spin' : ''} />
-                    {draft.regenerating ? 'Regenerando...' : 'Regenerar'}
+                    {showDiscordFiles ? 'Ocultar' : 'Ver'}
                   </button>
                 </div>
 
-                {/* Guardar y registrar contenido */}
-                <button
-                  type="button"
-                  onClick={() => handleSubmit(format.id)}
-                  disabled={draft.submitted || draft.submitting || draft.regenerating || (format.id === 'x' && [...draft.content].length > 280)}
-                  className={`mt-3 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition ${draft.submitted
-                    ? 'cursor-not-allowed bg-green-50 text-green-700'
-                    : 'bg-orange-500 text-white hover:bg-orange-600'
-                    }`}
-                >
-                  {draft.submitted ? (
-                    <CheckCircle size={16} />
-                  ) : (
-                    <Send size={16} />
-                  )}
-
-                  {draft.submitted
-                    ? 'Guardado en la plataforma'
-                    : draft.submitting
-                      ? 'Guardando...'
-                      : draft.savedId
-                        ? 'Reintentar guardado'
-                        : 'Guardar y registrar contenido'}
-                </button>
-
-                {draft.savedId && (
-                  <p className="mt-2 text-center text-xs font-medium text-green-700">
-                    Contenido #{draft.savedId} registrado exitosamente. Listo para copiar y publicar.
-                  </p>
-                )}
-
-                {draft.error && (
-                  <p role="alert" className="mt-2 text-center text-xs text-red-600">
-                    {draft.error}
-                  </p>
-                )}
-
-                {format.id === 'discord' && (
-                  <p className="mt-3 text-center text-xs leading-5 text-slate-400">
-                    La publicación en Discord estará disponible
-                    únicamente después de su aprobación. Este contenido
-                    incluye {discordFiles.length} archivo(s) adjunto(s).
-                  </p>
-                )}
-
-                {format.id !== 'discord' && (
-                  <p className="mt-3 text-center text-xs leading-5 text-slate-400">
-                    Una vez aprobado, el contenido podrá copiarse
-                    para su publicación externa.
-                  </p>
+                {showDiscordFiles && (
+                  <div className="mt-2 space-y-1.5">
+                    {discordFiles.map((file) => (
+                      <div
+                        key={file.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-slate-700">{file.filename}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {file.content_type || 'Archivo'} · {formatDiscordFileSize(file.size)}
+                          </p>
+                        </div>
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 text-orange-600 hover:underline"
+                        >
+                          Descargar
+                        </a>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-            </section>
-          )
-        })}
+            )}
+
+            {/* Acciones auxiliares */}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleCopy('discord')}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                {copiedFormat === 'discord' ? <CheckCircle size={14} /> : <Copy size={14} />}
+                {copiedFormat === 'discord' ? 'Copiado' : 'Copiar'}
+              </button>
+
+              <button
+                type="button"
+                disabled={drafts.discord.submitted || drafts.discord.regenerating}
+                onClick={() => handleRegenerateChannelCopy('discord')}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
+              >
+                <RotateCcw size={14} className={drafts.discord.regenerating ? 'animate-spin' : ''} />
+                {drafts.discord.regenerating ? 'Regenerando...' : 'Regenerar'}
+              </button>
+            </div>
+
+            {/* Publicar individual directo */}
+            <button
+              type="button"
+              disabled={channelPublishing['discord'] || !drafts.discord.content.trim()}
+              onClick={() => handlePublishChannelIndividual('discord')}
+              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
+            >
+              <Send size={14} />
+              {channelPublishing['discord'] ? 'Publicando...' : 'Publicar en Discord'}
+            </button>
+
+            {/* Guardar en base de datos */}
+            <button
+              type="button"
+              onClick={() => handleSubmit('discord')}
+              disabled={drafts.discord.submitted || drafts.discord.submitting || drafts.discord.regenerating}
+              className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                drafts.discord.submitted
+                  ? 'cursor-not-allowed bg-green-50 text-green-700'
+                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {drafts.discord.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
+              {drafts.discord.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
+            </button>
+
+            {drafts.discord.savedId && (
+              <p className="mt-2 text-center text-xs font-medium text-green-700">
+                Borrador #{drafts.discord.savedId} registrado exitosamente.
+              </p>
+            )}
+
+            {channelPublishResult['discord'] && (
+              <p
+                className={`mt-2 text-center text-xs font-medium ${
+                  channelPublishResult['discord'].ok ? 'text-green-700' : 'text-rose-600'
+                }`}
+              >
+                {channelPublishResult['discord'].detalle}
+              </p>
+            )}
+          </div>
+        </section>
       </div>
+
+      {/* Barra de Decisión Global HITL (Human-in-the-Loop) */}
+      <section className="mt-6 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-purple-50/60 p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h4 className="font-bold text-slate-900">
+                Decisión Humana Global HITL (Human-in-the-Loop)
+              </h4>
+              <span className="rounded-full bg-indigo-100 px-3 py-0.5 text-xs font-bold text-indigo-800">
+                Revisión: {pipelineData?.estado_revision || 'pendiente_hitl'}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Soberanía humana completa: Tus modificaciones manuales en los títulos y copys tienen prevalencia estricta sobre las sugerencias de la IA.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={pipelineExecuting || !selectedWorkflowMessage}
+              onClick={() => handleSubmitHitlDecision(false)}
+              className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-bold text-rose-600 shadow-xs transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <XCircle size={15} />
+              Desaprobar y limpiar hilo (Regenerar)
+            </button>
+
+            <button
+              type="button"
+              disabled={pipelineExecuting || !selectedWorkflowMessage}
+              onClick={() => handleSubmitHitlDecision(true)}
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <CheckCircle size={15} />
+              Aprobar y publicar en canales (HITL)
+            </button>
+          </div>
+        </div>
+
+        {pipelineActionMessage && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">
+            <CheckCircle size={16} className="shrink-0 text-emerald-600" />
+            <span>{pipelineActionMessage}</span>
+          </div>
+        )}
+
+        {pipelineActionError && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
+            <AlertTriangle size={16} className="shrink-0 text-rose-600" />
+            <span>{pipelineActionError}</span>
+          </div>
+        )}
+      </section>
+
+      {/* Procesamiento Masivo con Gemma 4 para Baja Relevancia (< 35) */}
+      <section className="mt-6 rounded-2xl border border-purple-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600">
+              <Layers size={20} />
+            </div>
+
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-slate-900">
+                  Procesamiento Masivo de Baja Relevancia (&lt; 35)
+                </h3>
+
+                <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-xs font-semibold text-purple-700">
+                  <Cpu size={12} />
+                  🤖 Modelo IA: {modelosUtilizados.masivo}
+                </span>
+              </div>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Filtra y despacha en bloque interacciones con relevancia menor a 35 mediante Google Gemma 4 con directivas concisas, liberando la mesa de trabajo principal.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <label htmlFor="mass-limit-input" className="text-xs font-semibold text-slate-600">
+              Límite:
+            </label>
+            <input
+              id="mass-limit-input"
+              type="number"
+              min={1}
+              max={50}
+              value={massLimit}
+              onChange={(e) => setMassLimit(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs font-bold text-slate-700 outline-none focus:border-purple-400"
+            />
+            <button
+              type="button"
+              disabled={massProcessing}
+              onClick={handleRunMassGemma}
+              className="flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
+            >
+              <RotateCcw size={14} className={massProcessing ? 'animate-spin' : ''} />
+              {massProcessing ? 'Procesando con Gemma 4...' : '⚡ Procesar cola (< 35) con Gemma 4'}
+            </button>
+          </div>
+        </div>
+
+        {massError && (
+          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">
+            {massError}
+          </div>
+        )}
+
+        {massResult && (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3 text-center">
+              <span className="text-[10px] font-bold uppercase text-purple-600">Estado</span>
+              <p className="mt-1 text-sm font-bold text-slate-800">{massResult.status}</p>
+            </div>
+            <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3 text-center">
+              <span className="text-[10px] font-bold uppercase text-purple-600">Procesados</span>
+              <p className="mt-1 text-sm font-bold text-purple-900">{massResult.procesados}</p>
+            </div>
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 text-center">
+              <span className="text-[10px] font-bold uppercase text-emerald-600">Publicados Directo</span>
+              <p className="mt-1 text-sm font-bold text-emerald-700">{massResult.publicados_directo}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+              <span className="text-[10px] font-bold uppercase text-slate-500">Descartados</span>
+              <p className="mt-1 text-sm font-bold text-slate-700">{massResult.descartados}</p>
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* Quejas, reclamos y soporte crítico */}
       <section className="mt-6 rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
@@ -1967,7 +2869,7 @@ function ContentStudio() {
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <label
                   htmlFor="complaint-ai-provider"
                   className="text-xs font-semibold text-slate-600"
@@ -1987,6 +2889,11 @@ function ContentStudio() {
                     </option>
                   ))}
                 </select>
+
+                <span className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                  <Cpu size={12} />
+                  🤖 Modelo IA activo: {complaintAiProvider}
+                </span>
               </div>
 
               <button

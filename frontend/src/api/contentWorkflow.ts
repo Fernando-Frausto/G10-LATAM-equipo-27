@@ -267,3 +267,197 @@ export async function publishAnnouncement(
     body: JSON.stringify({ contenido, confirmado, channel_id }),
   })) as AnnouncementPublishResponse
 }
+
+
+// ==============================================================================
+// Spec 015: Integración del Pipeline Mototradis MVP de Enoc (Frontend API Client)
+// ==============================================================================
+
+export type AIProviderOption =
+  | 'auto'
+  | 'Google Gemini'
+  | 'Groq'
+  | 'Google Gemma 4'
+  | 'Groq (Llama 3.3)'
+  | 'Google Gemini Flash Lite'
+  | string
+
+export interface MototradisModelosUtilizados {
+  orquestador: string
+  linkedin: string
+  x: string
+  discord: string
+  pqrs?: string
+  masivo?: string
+  [key: string]: string | undefined
+}
+
+export interface MototradisChannelDraft {
+  titulo?: string
+  texto_copy?: string
+  copy_tono?: string
+  newsletter?: { destaque?: string; resumen?: string; [key: string]: any }
+  faq?: { sugerencia?: string; respuesta?: string; [key: string]: any }
+  canal_seleccionado?: string
+  [key: string]: any
+}
+
+export interface MototradisBorradoresUI {
+  linkedin?: string | MototradisChannelDraft
+  x?: string | MototradisChannelDraft
+  discord?: string | MototradisChannelDraft
+  [key: string]: any
+}
+
+export interface MototradisCheckpointState {
+  thread_id?: string
+  id_mensaje: number
+  interaccion_id?: number
+  has_checkpoint: boolean
+  estado_pipeline: string
+  estado_revision?: string
+  rutas_activas?: string[]
+  borradores_ui: MototradisBorradoresUI
+  intentos_generacion?: number
+  modelos_utilizados: MototradisModelosUtilizados
+  resultados_canales?: Record<string, any>
+  updated_at?: string | null
+  copys_generados?: Record<string, any>
+}
+
+export type MototradisCheckpointResponse = MototradisCheckpointState
+export type MototradisExecuteResponse = MototradisCheckpointState
+
+export interface MototradisHitlDecisionResponse {
+  exito: boolean
+  decision: string
+  estado_revision?: string
+  estado_pipeline?: string
+  checkpoint_limpiado?: boolean
+  id_mensaje: number
+  resultados_canales?: Record<
+    string,
+    { ok: boolean; detalle: string; estado_canal?: string; [key: string]: any }
+  >
+}
+
+export type MototradisHitlResponse = MototradisHitlDecisionResponse
+
+export interface MototradisMassResult {
+  status: string
+  modelo_ia: string
+  procesados: number
+  publicados_directo: number
+  descartados: number
+  limite?: number
+}
+
+export type MototradisRunMassResponse = MototradisMassResult
+
+export async function getMototradisCheckpoint(
+  idMensaje: number,
+): Promise<MototradisCheckpointState> {
+  return (await apiRequest(
+    `/api/v1/content-workflow/checkpoint/${idMensaje}`,
+    {
+      method: 'GET',
+    },
+  )) as MototradisCheckpointState
+}
+
+export async function executeMototradisPipeline(
+  idMensaje: number,
+  proveedor?: AIProviderOption,
+): Promise<MototradisCheckpointState> {
+  return (await apiRequest('/api/v1/content-workflow/execute-pipeline', {
+    method: 'POST',
+    body: JSON.stringify({
+      id_mensaje: idMensaje,
+      interaccion_id: idMensaje,
+      proveedor,
+    }),
+  })) as MototradisCheckpointState
+}
+
+export async function generateMototradisChannelCopy(
+  idMensaje: number,
+  canal: 'linkedin' | 'x' | 'discord',
+  proveedor?: AIProviderOption,
+): Promise<{
+  id_mensaje: number
+  canal: string
+  contenido: any
+  borrador: any
+  borradores_ui: MototradisBorradoresUI
+  modelo_utilizado: string
+}> {
+  return (await apiRequest('/api/v1/content-workflow/generate-channel', {
+    method: 'POST',
+    body: JSON.stringify({
+      id_mensaje: idMensaje,
+      interaccion_id: idMensaje,
+      canal,
+      proveedor,
+    }),
+  })) as {
+    id_mensaje: number
+    canal: string
+    contenido: any
+    borrador: any
+    borradores_ui: MototradisBorradoresUI
+    modelo_utilizado: string
+  }
+}
+
+export const generateMototradisChannel = generateMototradisChannelCopy
+
+export async function publishMototradisChannel(
+  idMensaje: number,
+  canal: 'linkedin' | 'x' | 'discord',
+  texto: string,
+  canalSeleccionado?: string,
+  titulo?: string,
+): Promise<{ canal: string; ok: boolean; detalle: string; estado_canal: string }> {
+  return (await apiRequest('/api/v1/content-workflow/publish-channel', {
+    method: 'POST',
+    body: JSON.stringify({
+      id_mensaje: idMensaje,
+      interaccion_id: idMensaje,
+      canal,
+      texto_copy: texto,
+      titulo: titulo ?? '',
+      canal_seleccionado: canalSeleccionado,
+    }),
+  })) as { canal: string; ok: boolean; detalle: string; estado_canal: string }
+}
+
+export async function submitMototradisHitlDecision(
+  idMensaje: number,
+  aprobado: boolean,
+  copysEditados?: Partial<Record<'linkedin' | 'x' | 'discord', any>>,
+  motivoRechazo?: string,
+): Promise<MototradisHitlDecisionResponse> {
+  return (await apiRequest('/api/v1/content-workflow/hitl-decision', {
+    method: 'POST',
+    body: JSON.stringify({
+      id_mensaje: idMensaje,
+      interaccion_id: idMensaje,
+      decision: aprobado ? 'aprobar' : 'desaprobar',
+      aprobado,
+      copys_editados: copysEditados,
+      motivo_rechazo: motivoRechazo,
+    }),
+  })) as MototradisHitlDecisionResponse
+}
+
+export async function runMototradisMassProcess(
+  limite: number = 10,
+): Promise<MototradisMassResult> {
+  return (await apiRequest('/api/v1/content-workflow/run-mass', {
+    method: 'POST',
+    body: JSON.stringify({ limite }),
+  })) as MototradisMassResult
+}
+
+export const runMototradisMassGemma = runMototradisMassProcess
+
