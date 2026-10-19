@@ -3434,7 +3434,7 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
         return _cache_canales_discord
 
     canales = [
-        {"id": "webhook", "name": "Canal predeterminado del Webhook (#anuncios / #general)"},
+        {"id": "webhook", "name": "Canal oficial de #anuncios (Predeterminado)"},
     ]
     token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
     if token:

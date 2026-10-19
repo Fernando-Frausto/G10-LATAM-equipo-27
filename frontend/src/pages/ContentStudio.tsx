@@ -188,7 +188,7 @@ function ContentStudio() {
         if (isMounted) {
           setAnnouncementStatus(status)
           if (status.channels && status.channels.length > 0) {
-            const defaultChan = status.channels.find((c) => c.id !== 'webhook') || status.channels[0]
+            const defaultChan = status.channels.find((c) => c.id === 'webhook') || status.channels[0]
             if (defaultChan) {
               setSelectedDiscordChannel(defaultChan.id)
             }
@@ -401,13 +401,13 @@ function ContentStudio() {
     announcementStatus?.channels && announcementStatus.channels.length > 0
       ? announcementStatus.channels
       : [
-          { id: '1559244522842488942', name: '#notificaciones' },
+          { id: 'webhook', name: 'Canal oficial de #anuncios (Predeterminado)' },
           { id: '1550016804418621452', name: '#general' },
+          { id: '1559244522842488942', name: '#notificaciones' },
           { id: '1551309281041715230', name: '#chat-egresados' },
           { id: '1551309330198953994', name: '#oportunidades-laborales' },
           { id: '1551309664397033513', name: '#faq' },
           { id: '1559244209884504245', name: '#pqrs' },
-          { id: 'webhook', name: 'Canal predeterminado del Webhook (#anuncios / #general)' },
         ]
 
   const selectedTargetChannelName =
