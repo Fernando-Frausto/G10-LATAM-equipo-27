@@ -3977,26 +3977,50 @@ def _formatear_borradores_ui(copys: dict) -> dict:
             return val
         return {}
 
-    post_lk = _to_dict(copys.get("linkedin") or {})
-    post_x = _to_dict(copys.get("x") or {})
-    post_disc = _to_dict(copys.get("discord") or copys.get("reclamos") or {})
+    raw_lk = _to_dict(copys.get("linkedin") or {})
+    act_lk = _to_dict(raw_lk.get("activos_distribucion_generados") or {})
+    p_lk = _to_dict(act_lk.get("post_linkedin") or raw_lk.get("post_linkedin") or raw_lk)
+    dest_nl = _to_dict(act_lk.get("destaque_newsletter_semanal") or raw_lk.get("destaque_newsletter_semanal") or {})
+    sug_faq = _to_dict(act_lk.get("sugerencia_contenido_faq") or raw_lk.get("sugerencia_contenido_faq") or {})
+
+    raw_x = _to_dict(copys.get("x") or {})
+    act_x = _to_dict(raw_x.get("activos_distribucion_generados") or {})
+    p_x = _to_dict(act_x.get("post_postx") or raw_x.get("post_postx") or raw_x)
+
+    raw_disc = _to_dict(copys.get("discord") or copys.get("reclamos") or {})
+    act_disc = _to_dict(raw_disc.get("activos_distribucion_generados") or {})
+    p_disc = _to_dict(
+        act_disc.get("post_discord")
+        or act_disc.get("post_discord_faq")
+        or act_disc.get("post_discord_notificaciones")
+        or act_disc.get("post_discord_pqrs")
+        or raw_disc.get("post_discord")
+        or raw_disc
+    )
+    canal_sel = act_disc.get("canal_seleccionado") or raw_disc.get("canal_seleccionado") or "#general"
 
     return {
         "linkedin": {
-            "titulo": post_lk.get("titulo") or "",
-            "texto_copy": post_lk.get("texto_copy") or "",
-            "copy_tono": post_lk.get("copy_tono") or "",
-            "newsletter": post_lk.get("newsletter") or {},
-            "faq": post_lk.get("faq") or {},
+            "titulo": p_lk.get("titulo") or "",
+            "texto_copy": p_lk.get("texto_copy") or "",
+            "copy_tono": p_lk.get("copy_tono") or "",
+            "newsletter": {
+                "destaque": dest_nl.get("titular") or dest_nl.get("destaque") or "",
+                "resumen": dest_nl.get("resumen") or "",
+            },
+            "faq": {
+                "sugerencia": sug_faq.get("tema") or sug_faq.get("sugerencia") or "",
+                "respuesta": sug_faq.get("origen") or sug_faq.get("respuesta") or "",
+            },
         },
         "x": {
-            "titulo": post_x.get("titulo") or "",
-            "texto_copy": post_x.get("texto_copy") or "",
+            "titulo": p_x.get("titulo") or "",
+            "texto_copy": p_x.get("texto_copy") or "",
         },
         "discord": {
-            "canal_seleccionado": post_disc.get("canal_seleccionado") or "#general",
-            "titulo": post_disc.get("titulo") or "",
-            "texto_copy": post_disc.get("texto_copy") or "",
+            "canal_seleccionado": canal_sel,
+            "titulo": p_disc.get("titulo") or "",
+            "texto_copy": p_disc.get("texto_copy") or "",
         },
     }
 
