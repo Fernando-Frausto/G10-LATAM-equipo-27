@@ -57,6 +57,7 @@ type WorkflowMessagesResponse = {
       topic: string
       sentiment: string
       relevance: number
+      curation_status?: string
     }
   }>
 }
@@ -143,7 +144,10 @@ function ContentStudio() {
         const messages = data.messages
           .filter(
             (item) =>
-              item.analysis.workflow_stage === 'en_redaccion',
+              (item.analysis.workflow_stage === 'en_redaccion' ||
+                item.analysis.workflow_stage === 'en_analisis') &&
+              item.analysis.relevance >= 70 &&
+              item.analysis.curation_status !== 'discarded',
           )
           .map((item) => ({
             interactionId: item.message.interaction_id,
@@ -157,6 +161,7 @@ function ContentStudio() {
             sentiment: item.analysis.sentiment,
             relevance: item.analysis.relevance,
           }))
+          .sort((a, b) => b.interactionId - a.interactionId)
 
         if (!controller.signal.aborted) {
           setWorkflowMessages(messages)
@@ -635,94 +640,6 @@ function ContentStudio() {
 
   return (
     <div>
-      {/* BANDEJA PERSISTENTE DE REDACCION */}
-      <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">
-              Bandeja de mensajes en Redaccion
-            </h3>
-            <p className="mt-1 text-xs text-slate-500">
-              Interacciones recibidas desde Analisis.
-            </p>
-          </div>
-          <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-600">
-            {workflowMessages.length} en redaccion
-          </span>
-        </div>
-
-        {workflowLoading && (
-          <p className="text-sm text-slate-500">
-            Cargando mensajes...
-          </p>
-        )}
-
-        {workflowError && (
-          <p role="alert" className="text-sm text-rose-600">
-            {workflowError}
-          </p>
-        )}
-
-        {!workflowLoading &&
-          !workflowError &&
-          workflowMessages.length === 0 && (
-            <p className="text-sm text-slate-500">
-              No hay mensajes pendientes de redaccion.
-            </p>
-          )}
-
-        {workflowMessages.length > 0 && (
-          <div className="grid gap-3 md:grid-cols-2">
-            {workflowMessages.map((item) => (
-              <button
-                key={item.interactionId}
-                type="button"
-                onClick={() => setSelectedWorkflowId(item.interactionId)}
-                className={`rounded-xl border p-4 text-left transition ${
-                  selectedWorkflowId === item.interactionId
-                    ? 'border-orange-400 bg-orange-50'
-                    : 'border-slate-200 hover:border-orange-200'
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-slate-800">
-                    {item.author}
-                  </span>
-                  <span className="text-[11px] text-slate-500">
-                    #{item.channel}
-                  </span>
-                </div>
-                <p className="mt-2 line-clamp-3 text-xs text-slate-600">
-                  {item.content}
-                </p>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {selectedWorkflowMessage && (
-          <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50/50 p-4">
-            <p className="text-xs font-bold text-orange-700">
-              Mensaje seleccionado para redaccion
-            </p>
-            <p className="mt-2 text-sm text-slate-700">
-              {selectedWorkflowMessage.content}
-            </p>
-            <p className="mt-2 text-xs text-slate-500">
-              Tema: {selectedWorkflowMessage.topic} |
-              Relevancia: {selectedWorkflowMessage.relevance}/100
-            </p>
-            <button
-              type="button"
-              onClick={() => prepareWorkflowContent()}
-              className="mt-4 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-orange-600"
-            >
-              Preparar contenido en el editor
-            </button>
-          </div>
-        )}
-      </section>
-
       {/* Encabezado */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -808,10 +725,103 @@ function ContentStudio() {
             {selectedWorkflowMessage?.topic ?? 'Selecciona una interacción'}
           </h4>
 
-          <p className="mt-3 text-sm leading-7 text-slate-600">
-            {selectedWorkflowMessage?.content ?? 'Selecciona un mensaje de la cola para redactar.'}
-          </p>
+          <div className="mt-3 rounded-r-xl border-l-4 border-orange-500 bg-white/90 p-4 shadow-xs">
+            <p className="text-sm italic leading-relaxed text-slate-700">
+              "{selectedWorkflowMessage?.content ?? 'Selecciona una conversación de la bandeja para comenzar a redactar sus copys.'}"
+            </p>
+          </div>
         </div>
+      </section>
+
+      {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h3 className="font-bold text-slate-900">
+                Bandeja de mensajes en Redacción
+              </h3>
+              <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-0.5 text-xs font-bold text-orange-600">
+                {workflowMessages.length} listos para copy
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Interacciones de la comunidad analizadas por la IA con alta relevancia. Haz clic en cualquiera para cargarla en la mesa de trabajo.
+            </p>
+          </div>
+        </div>
+
+        {workflowLoading && (
+          <p className="py-4 text-xs text-slate-500">Cargando mensajes disponibles...</p>
+        )}
+
+        {workflowError && (
+          <p role="alert" className="py-4 text-xs text-rose-600">
+            {workflowError}
+          </p>
+        )}
+
+        {!workflowLoading && !workflowError && workflowMessages.length === 0 && (
+          <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center">
+            <p className="text-xs text-slate-500">
+              No hay mensajes pendientes de redacción en este momento.
+            </p>
+          </div>
+        )}
+
+        {!workflowLoading && !workflowError && workflowMessages.length > 0 && (
+          <div className="flex gap-3 overflow-x-auto pb-3 pt-1 scrollbar-thin">
+            {workflowMessages.map((item) => {
+              const isActive = selectedWorkflowId === item.interactionId
+
+              return (
+                <button
+                  key={item.interactionId}
+                  type="button"
+                  onClick={() => {
+                    setSelectedWorkflowId(item.interactionId)
+                    prepareWorkflowContent(item)
+                  }}
+                  className={`min-w-[280px] max-w-[320px] shrink-0 rounded-xl border p-4 text-left transition ${
+                    isActive
+                      ? 'border-orange-500 bg-orange-50/70 shadow-sm ring-1 ring-orange-400'
+                      : 'border-slate-200 bg-white hover:border-orange-300 hover:bg-slate-50/60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-bold text-slate-900">
+                      @{item.author}
+                    </span>
+                    <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">
+                      {item.relevance}% rel.
+                    </span>
+                  </div>
+
+                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
+                    <span className="font-medium text-indigo-600">#{item.channel}</span>
+                    <span>•</span>
+                    <span className="truncate text-slate-600">{item.topic}</span>
+                  </div>
+
+                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                    "{item.content}"
+                  </p>
+
+                  <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
+                    <span
+                      className={`font-semibold ${
+                        isActive ? 'text-orange-600' : 'text-slate-400'
+                      }`}
+                    >
+                      {isActive ? '● En mesa de trabajo' : 'Click para cargar'}
+                    </span>
+                    <span className="text-[10px] text-slate-400">ID #{item.interactionId}</span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </section>
 
       {/* Selector de formato */}
@@ -1570,94 +1580,6 @@ function ContentStudio() {
           </section>
         </div>
       )}
-
-      {/* Cola de mensajes reales en espera */}
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h3 className="font-bold text-slate-900">
-              Cola de Mensajes en Espera
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Interacciones reales procesadas por Ingesta y Análisis.
-            </p>
-          </div>
-          <span className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
-            {workflowMessages.length} pendientes
-          </span>
-        </div>
-
-        {workflowLoading && (
-          <p className="mt-5 text-sm text-slate-500">Cargando mensajes...</p>
-        )}
-
-        {workflowError && (
-          <p className="mt-5 text-sm text-red-600">{workflowError}</p>
-        )}
-
-        {!workflowLoading && !workflowError && workflowMessages.length === 0 && (
-          <p className="mt-5 text-sm text-slate-500">
-            No hay mensajes pendientes de redacción.
-          </p>
-        )}
-
-        {!workflowLoading && !workflowError && workflowMessages.length > 0 && (
-          <div className="mt-5 overflow-x-auto">
-            <table className="w-full min-w-[850px] text-left">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase text-slate-400">
-                  <th className="px-3 py-3">Autor y canal</th>
-                  <th className="px-3 py-3">Contenido</th>
-                  <th className="px-3 py-3">Tema</th>
-                  <th className="px-3 py-3">Sentimiento</th>
-                  <th className="px-3 py-3">Estado</th>
-                  <th className="px-3 py-3 text-right">Acción</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {workflowMessages.map((message) => {
-                  const isActive = selectedWorkflowId === message.interactionId
-
-                  return (
-                    <tr key={message.interactionId} className="text-sm">
-                      <td className="px-3 py-4">
-                        <p className="font-semibold text-slate-800">{message.author}</p>
-                        <p className="text-xs text-indigo-500">#{message.channel}</p>
-                      </td>
-                      <td className="max-w-sm px-3 py-4 text-slate-600">
-                        {message.content}
-                      </td>
-                      <td className="px-3 py-4">
-                        <p>{message.topic}</p>
-                        <p className="text-xs text-slate-400">
-                          Relevancia {message.relevance}%
-                        </p>
-                      </td>
-                      <td className="px-3 py-4">{message.sentiment}</td>
-                      <td className="px-3 py-4">
-                        {isActive ? 'En redacción' : 'En espera'}
-                      </td>
-                      <td className="px-3 py-4 text-right">
-                        <button
-                          type="button"
-                          disabled={isActive}
-                          onClick={() => {
-                            setSelectedWorkflowId(message.interactionId)
-                            prepareWorkflowContent(message)
-                          }}
-                          className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-orange-50 disabled:opacity-50"
-                        >
-                          {isActive ? 'Seleccionado' : 'Usar para redactar'}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
 
       {/* Flujo */}
       <section className="mt-6 rounded-2xl border border-orange-100 bg-orange-50/50 p-5">
