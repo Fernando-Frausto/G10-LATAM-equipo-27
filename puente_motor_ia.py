@@ -3963,10 +3963,30 @@ def resolver_modelo_canal(canal: str, proveedor: str | None = None) -> str:
     return MODELOS_UTILIZADOS_CATALOGO.get(c_norm, "Google Gemini · gemini-3.5-flash-lite")
 
 
-def _formatear_borradores_ui(copys: dict) -> dict:
+MENSAJES_OMISION_ORQUESTADOR = {
+    "linkedin": {
+        "titulo": "Canal omitido por el orquestador",
+        "texto_copy": "El orquestador omitió LinkedIn (la interacción es una consulta técnica informal, no un hito corporativo). Pulsa 'Regenerar' si deseas crear un post para esta red.",
+        "copy_tono": "Omitido por el orquestador",
+        "newsletter": {"destaque": "", "resumen": ""},
+        "faq": {"sugerencia": "", "respuesta": ""},
+    },
+    "x": {
+        "titulo": "Canal omitido por el orquestador",
+        "texto_copy": "El orquestador no priorizó X para esta interacción. Pulsa 'Regenerar' si deseas crear un tweet para esta red.",
+    },
+    "discord": {
+        "canal_seleccionado": "#general",
+        "titulo": "Canal omitido por el orquestador",
+        "texto_copy": "El orquestador no priorizó Discord para esta interacción. Pulsa 'Regenerar' si deseas redactar un mensaje para este canal.",
+    },
+}
+
+
+def _formatear_borradores_ui(copys: dict, rutas_activas: list[str] | None = None) -> dict:
     """Normaliza y aplana copys estructurados (Pydantic o dict) al esquema uniforme de interfaz."""
     if not isinstance(copys, dict):
-        return {}
+        copys = {}
 
     def _to_dict(val):
         if hasattr(val, "model_dump"):
@@ -3999,7 +4019,7 @@ def _formatear_borradores_ui(copys: dict) -> dict:
     )
     canal_sel = act_disc.get("canal_seleccionado") or raw_disc.get("canal_seleccionado") or "#general"
 
-    return {
+    resultado = {
         "linkedin": {
             "titulo": p_lk.get("titulo") or "",
             "texto_copy": p_lk.get("texto_copy") or "",
@@ -4023,6 +4043,14 @@ def _formatear_borradores_ui(copys: dict) -> dict:
             "texto_copy": p_disc.get("texto_copy") or "",
         },
     }
+
+    if rutas_activas is not None:
+        for canal in ("linkedin", "x", "discord"):
+            tiene_texto_real = bool((resultado[canal].get("texto_copy") or "").strip())
+            if not tiene_texto_real and (canal not in rutas_activas):
+                resultado[canal] = dict(MENSAJES_OMISION_ORQUESTADOR[canal])
+
+    return resultado
 
 
 def _generar_copys_defensivos(interaccion: dict, rutas_activas: list[str]) -> dict:
@@ -4073,9 +4101,12 @@ def _guardar_borradores_sqlite(id_mensaje: int, borradores_ui: dict, copys_gener
             b = borradores_ui.get(plat)
             if not b or not b.get("texto_copy"):
                 continue
+            texto_copy = b.get("texto_copy") or ""
+            if "El orquestador omitió" in texto_copy or "El orquestador no priorizó" in texto_copy:
+                continue
             cid = id_mensaje * 100 + (1 if plat == "linkedin" else 2 if plat == "x" else 3)
             titulo = b.get("titulo") or f"Publicación {plat} - {autor}"
-            contenido = b.get("texto_copy") or ""
+            contenido = texto_copy
             conn.execute("""
                 INSERT INTO contenidos_generados (
                     id, interaccion_id, formato, titulo, contenido, llamada_accion,
@@ -4178,7 +4209,8 @@ def api_mototradis_checkpoint(id_mensaje: int):
         }
 
     copys = values.get("copys_generados") or {}
-    borradores_ui = _formatear_borradores_ui(copys)
+    rutas_activas = values.get("rutas_activas") or list(copys.keys())
+    borradores_ui = _formatear_borradores_ui(copys, rutas_activas=rutas_activas)
     return {
         "id_mensaje": id_mensaje,
         "interaccion_id": id_mensaje,
@@ -4256,53 +4288,12 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
             import logging
             logging.getLogger("puente_motor_ia").warning(f"Inferencia viva requirió fallback defensivo: {exc}")
 
-    # Generación complementaria de los canales no activados por el orquestador
-    # para que la mesa de trabajo siempre ofrezca propuestas en todas las tarjetas
-    for canal_c in ("linkedin", "x", "discord"):
-        if canal_c not in copys_generados or not copys_generados[canal_c]:
-            try:
-                from src import nodes as mototradis_nodes
-                state_c = {
-                    "id_mensaje": id_msg,
-                    "mensaje_id": id_msg,
-                    "autor": interaccion.get("autor") or "comunidad",
-                    "semana": interaccion.get("periodo_referencia") or "Semana_01",
-                    "fecha_envio": interaccion.get("enviado_en") or a_utc_iso(datetime.now(timezone.utc)),
-                    "fecha_extraccion": a_utc_iso(datetime.now(timezone.utc)),
-                    "canal_origen": interaccion.get("canal") or "#general",
-                    "json_precurado": {
-                        "relevancia": int(float(interaccion.get("relevancia") or 85)),
-                        "sentimiento": interaccion.get("sentimiento") or "positivo",
-                        "texto_original": interaccion.get("texto") or "",
-                        "autor": interaccion.get("autor") or "comunidad",
-                        "canal_origen": interaccion.get("canal") or "#general",
-                    },
-                    "copys_generados": dict(copys_generados),
-                }
-                if canal_c == "linkedin":
-                    res_c = mototradis_nodes.nodo_linkedin(state_c)
-                elif canal_c == "x":
-                    res_c = mototradis_nodes.nodo_x(state_c)
-                elif canal_c == "discord":
-                    res_c = mototradis_nodes.nodo_discord(state_c)
-                else:
-                    res_c = {}
-                copy_c = res_c.get("copys_generados", {}).get(canal_c)
-                if copy_c:
-                    copys_generados[canal_c] = copy_c
-            except Exception as e_c:
-                import logging
-                logging.getLogger("puente_motor_ia").warning(f"Generación complementaria de {canal_c}: {e_c}")
-
-    if not copys_generados or not any(k in copys_generados for k in ("linkedin", "x", "discord")):
+    # Respetar estrictamente la decisión del orquestador de Enoc (rutas_activas).
+    # Si la inferencia no generó copys para las rutas activas dictadas por el orquestador,
+    # activar generador defensivo de rescate para esas rutas activas
+    if not copys_generados or not any(k in copys_generados for k in rutas_activas):
         fallbacks_usados = list(rutas_activas)
         copys_generados = _generar_copys_defensivos(interaccion, rutas_activas)
-    else:
-        for r in ("linkedin", "x", "discord"):
-            if r not in copys_generados or not copys_generados[r]:
-                fallbacks_usados.append(r)
-                def_copys = _generar_copys_defensivos(interaccion, [r])
-                copys_generados[r] = def_copys.get(r) or {}
 
     # Actualizar estado en grafo y checkpointer
     if grafo:
@@ -4317,7 +4308,7 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
         except Exception:
             pass
 
-    borradores_ui = _formatear_borradores_ui(copys_generados)
+    borradores_ui = _formatear_borradores_ui(copys_generados, rutas_activas=rutas_activas)
     _guardar_borradores_sqlite(id_msg, borradores_ui, copys_generados)
 
     # Actualizar estado de curaduría en SQLite
@@ -4440,9 +4431,14 @@ def api_mototradis_generate_channel(req: MototradisGenerateChannelRequest):
 
     if grafo:
         try:
+            st = grafo.get_state(thread_config)
+            r_act = list(st.values.get("rutas_activas") or []) if (st and st.values) else []
+            if canal not in r_act:
+                r_act.append(canal)
             grafo.update_state(thread_config, {
                 "id_mensaje": id_msg,
                 "mensaje_id": id_msg,
+                "rutas_activas": r_act,
                 "copys_generados": copys_acumulados
             })
         except Exception:

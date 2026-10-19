@@ -130,6 +130,16 @@ function buildDefaultDrafts(
   }
 }
 
+function isOmittedByOrchestrator(text?: string): boolean {
+  if (!text) return false
+  const t = text.trim()
+  return (
+    t.startsWith('El orquestador omitió') ||
+    t.startsWith('El orquestador no priorizó') ||
+    t.startsWith('ℹ️ El orquestador')
+  )
+}
+
 function ContentStudio() {
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -2085,10 +2095,18 @@ function ContentStudio() {
 
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  drafts.linkedin.submitted ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                  drafts.linkedin.submitted
+                    ? 'bg-green-50 text-green-700'
+                    : isOmittedByOrchestrator(drafts.linkedin.content)
+                    ? 'border border-amber-200 bg-amber-50 text-amber-800'
+                    : 'bg-amber-50 text-amber-700'
                 }`}
               >
-                {drafts.linkedin.submitted ? 'En aprobación' : 'Borrador'}
+                {drafts.linkedin.submitted
+                  ? 'En aprobación'
+                  : isOmittedByOrchestrator(drafts.linkedin.content)
+                  ? 'Omitido por orquestador'
+                  : 'Borrador'}
               </span>
             </div>
           </div>
@@ -2118,8 +2136,30 @@ function ContentStudio() {
               onFocus={() => setActiveFormat('linkedin')}
               onChange={(event) => updateContent('linkedin', event.target.value)}
               placeholder="Copy persuasivo para LinkedIn..."
-              className="mt-1.5 min-h-60 flex-1 resize-y rounded-xl border border-slate-200 p-3.5 text-sm leading-6 text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-50 disabled:bg-slate-50 disabled:text-slate-500"
+              className={`mt-1.5 min-h-60 flex-1 resize-y rounded-xl border p-3.5 text-sm leading-6 outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+                isOmittedByOrchestrator(drafts.linkedin.content)
+                  ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                  : 'border-slate-200 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-50'
+              }`}
             />
+
+            {isOmittedByOrchestrator(drafts.linkedin.content) && (
+              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles size={14} className="shrink-0 text-amber-600" />
+                  <span>¿Deseas redactar copy para LinkedIn de todos modos?</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={drafts.linkedin.regenerating}
+                  onClick={() => handleRegenerateChannelCopy('linkedin')}
+                  className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
+                >
+                  <RotateCcw size={12} className={drafts.linkedin.regenerating ? 'animate-spin' : ''} />
+                  {drafts.linkedin.regenerating ? 'Generando...' : 'Regenerar con IA'}
+                </button>
+              </div>
+            )}
 
             {/* Extras Plegables (Copy tono, Newsletter, FAQ) */}
             <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
@@ -2217,7 +2257,16 @@ function ContentStudio() {
             {/* Publicar individual directo */}
             <button
               type="button"
-              disabled={channelPublishing['linkedin'] || !drafts.linkedin.content.trim()}
+              disabled={
+                channelPublishing['linkedin'] ||
+                !drafts.linkedin.content.trim() ||
+                isOmittedByOrchestrator(drafts.linkedin.content)
+              }
+              title={
+                isOmittedByOrchestrator(drafts.linkedin.content)
+                  ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
+                  : undefined
+              }
               onClick={() => handlePublishChannelIndividual('linkedin')}
               className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200"
             >
@@ -2229,7 +2278,12 @@ function ContentStudio() {
             <button
               type="button"
               onClick={() => handleSubmit('linkedin')}
-              disabled={drafts.linkedin.submitted || drafts.linkedin.submitting || drafts.linkedin.regenerating}
+              disabled={
+                drafts.linkedin.submitted ||
+                drafts.linkedin.submitting ||
+                drafts.linkedin.regenerating ||
+                isOmittedByOrchestrator(drafts.linkedin.content)
+              }
               className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
                 drafts.linkedin.submitted
                   ? 'cursor-not-allowed bg-green-50 text-green-700'
@@ -2282,10 +2336,18 @@ function ContentStudio() {
 
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  drafts.x.submitted ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                  drafts.x.submitted
+                    ? 'bg-green-50 text-green-700'
+                    : isOmittedByOrchestrator(drafts.x.content)
+                    ? 'border border-amber-200 bg-amber-50 text-amber-800'
+                    : 'bg-amber-50 text-amber-700'
                 }`}
               >
-                {drafts.x.submitted ? 'En aprobación' : 'Borrador'}
+                {drafts.x.submitted
+                  ? 'En aprobación'
+                  : isOmittedByOrchestrator(drafts.x.content)
+                  ? 'Omitido por orquestador'
+                  : 'Borrador'}
               </span>
             </div>
           </div>
@@ -2315,8 +2377,30 @@ function ContentStudio() {
               onFocus={() => setActiveFormat('x')}
               onChange={(event) => updateContent('x', event.target.value)}
               placeholder="Tweet conciso..."
-              className="mt-1.5 min-h-60 flex-1 resize-y rounded-xl border border-slate-200 p-3.5 text-sm leading-6 text-slate-700 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 disabled:bg-slate-50 disabled:text-slate-500"
+              className={`mt-1.5 min-h-60 flex-1 resize-y rounded-xl border p-3.5 text-sm leading-6 outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+                isOmittedByOrchestrator(drafts.x.content)
+                  ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                  : 'border-slate-200 text-slate-700 focus:border-slate-500 focus:ring-2 focus:ring-slate-100'
+              }`}
             />
+
+            {isOmittedByOrchestrator(drafts.x.content) && (
+              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles size={14} className="shrink-0 text-amber-600" />
+                  <span>¿Deseas redactar tweet para X de todos modos?</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={drafts.x.regenerating}
+                  onClick={() => handleRegenerateChannelCopy('x')}
+                  className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
+                >
+                  <RotateCcw size={12} className={drafts.x.regenerating ? 'animate-spin' : ''} />
+                  {drafts.x.regenerating ? 'Generando...' : 'Regenerar con IA'}
+                </button>
+              </div>
+            )}
 
             {/* Contador Dinámico de Caracteres Cromático */}
             {(() => {
@@ -2379,7 +2463,13 @@ function ContentStudio() {
                   disabled={
                     channelPublishing['x'] ||
                     !drafts.x.content.trim() ||
-                    isOverLimit
+                    isOverLimit ||
+                    isOmittedByOrchestrator(drafts.x.content)
+                  }
+                  title={
+                    isOmittedByOrchestrator(drafts.x.content)
+                      ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
+                      : undefined
                   }
                   onClick={() => handlePublishChannelIndividual('x')}
                   className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-400"
@@ -2398,7 +2488,8 @@ function ContentStudio() {
                 drafts.x.submitted ||
                 drafts.x.submitting ||
                 drafts.x.regenerating ||
-                [...(xTitle ? `${xTitle}\n\n` : '') + drafts.x.content].length > 280
+                [...(xTitle ? `${xTitle}\n\n` : '') + drafts.x.content].length > 280 ||
+                isOmittedByOrchestrator(drafts.x.content)
               }
               className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
                 drafts.x.submitted
@@ -2452,10 +2543,18 @@ function ContentStudio() {
 
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  drafts.discord.submitted ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                  drafts.discord.submitted
+                    ? 'bg-green-50 text-green-700'
+                    : isOmittedByOrchestrator(drafts.discord.content)
+                    ? 'border border-amber-200 bg-amber-50 text-amber-800'
+                    : 'bg-amber-50 text-amber-700'
                 }`}
               >
-                {drafts.discord.submitted ? 'En aprobación' : 'Borrador'}
+                {drafts.discord.submitted
+                  ? 'En aprobación'
+                  : isOmittedByOrchestrator(drafts.discord.content)
+                  ? 'Omitido por orquestador'
+                  : 'Borrador'}
               </span>
             </div>
           </div>
@@ -2505,8 +2604,30 @@ function ContentStudio() {
               onFocus={() => setActiveFormat('discord')}
               onChange={(event) => updateContent('discord', event.target.value)}
               placeholder="Mensaje para la comunidad..."
-              className="mt-1.5 min-h-44 flex-1 resize-y rounded-xl border border-slate-200 p-3.5 text-sm leading-6 text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 disabled:bg-slate-50 disabled:text-slate-500"
+              className={`mt-1.5 min-h-44 flex-1 resize-y rounded-xl border p-3.5 text-sm leading-6 outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+                isOmittedByOrchestrator(drafts.discord.content)
+                  ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                  : 'border-slate-200 text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50'
+              }`}
             />
+
+            {isOmittedByOrchestrator(drafts.discord.content) && (
+              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles size={14} className="shrink-0 text-amber-600" />
+                  <span>¿Deseas redactar mensaje para Discord de todos modos?</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={drafts.discord.regenerating}
+                  onClick={() => handleRegenerateChannelCopy('discord')}
+                  className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
+                >
+                  <RotateCcw size={12} className={drafts.discord.regenerating ? 'animate-spin' : ''} />
+                  {drafts.discord.regenerating ? 'Generando...' : 'Regenerar con IA'}
+                </button>
+              </div>
+            )}
 
             {/* Vista previa visual en vivo de la Cita en Bloque */}
             <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
@@ -2592,7 +2713,16 @@ function ContentStudio() {
             {/* Publicar individual directo */}
             <button
               type="button"
-              disabled={channelPublishing['discord'] || !drafts.discord.content.trim()}
+              disabled={
+                channelPublishing['discord'] ||
+                !drafts.discord.content.trim() ||
+                isOmittedByOrchestrator(drafts.discord.content)
+              }
+              title={
+                isOmittedByOrchestrator(drafts.discord.content)
+                  ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
+                  : undefined
+              }
               onClick={() => handlePublishChannelIndividual('discord')}
               className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
             >
@@ -2604,7 +2734,12 @@ function ContentStudio() {
             <button
               type="button"
               onClick={() => handleSubmit('discord')}
-              disabled={drafts.discord.submitted || drafts.discord.submitting || drafts.discord.regenerating}
+              disabled={
+                drafts.discord.submitted ||
+                drafts.discord.submitting ||
+                drafts.discord.regenerating ||
+                isOmittedByOrchestrator(drafts.discord.content)
+              }
               className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
                 drafts.discord.submitted
                   ? 'cursor-not-allowed bg-green-50 text-green-700'
