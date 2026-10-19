@@ -3589,10 +3589,13 @@ async def generate_announcement_v1(payload: dict = Body(...)):
         fn_invocar = (lambda: anuncios_discord.generar_anuncio(borrador, llm=llm)) if llm is not None else (lambda: anuncios_discord.generar_anuncio(borrador))
         anuncio_generado = await asyncio.wait_for(
             loop.run_in_executor(None, fn_invocar),
-            timeout=30.0,
+            timeout=120.0,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail=f"Tiempo de espera agotado al generar con {nombre_proveedor}. Prueba con Groq para respuesta ultrarrápida.")
+        raise HTTPException(
+            status_code=504,
+            detail=f"Tiempo de espera agotado al generar con {nombre_proveedor} (superó los 120 segundos). Para una respuesta inmediata en 1-2 segundos, puedes elegir Google Gemini Flash Lite o Groq.",
+        )
     except HTTPException:
         raise
     except Exception as e:

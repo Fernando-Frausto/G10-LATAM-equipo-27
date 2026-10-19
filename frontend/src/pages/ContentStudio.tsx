@@ -1078,6 +1078,15 @@ function ContentStudio() {
               </div>
             </div>
 
+            {selectedAnnouncementModel === 'gemma' && (
+              <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-[11px] text-amber-800">
+                <span className="text-base shrink-0">⏳</span>
+                <span>
+                  <strong>Google Gemma 4 (31B)</strong> es un modelo denso de alta precisión; puede tardar entre <strong>30 y 60 segundos</strong>. Si deseas respuesta inmediata en 1-2 segundos, selecciona <strong>Google Gemini Flash Lite</strong> o <strong>Groq</strong>.
+                </span>
+              </div>
+            )}
+
             <textarea
               id="announcement-draft"
               value={draftText}
@@ -1102,6 +1111,26 @@ function ContentStudio() {
                 className="mt-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"
               >
                 {announcementGenerateError}
+              </div>
+            )}
+
+            {isGeneratingAnnouncement && (
+              <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-indigo-200 bg-indigo-50/90 p-3 text-xs text-indigo-950 shadow-xs">
+                <RotateCcw size={15} className="mt-0.5 shrink-0 animate-spin text-indigo-600" />
+                <div>
+                  <p className="font-bold text-indigo-900">
+                    {selectedAnnouncementModel === 'gemma'
+                      ? 'Generando anuncio con Google Gemma 4...'
+                      : selectedAnnouncementModel === 'groq'
+                      ? 'Generando anuncio con Groq...'
+                      : 'Generando anuncio con Google Gemini...'}
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-indigo-700">
+                    {selectedAnnouncementModel === 'gemma'
+                      ? 'Gemma 4 puede demorar entre 30 y 60 segundos por su arquitectura de 31B parámetros. Para redacción instantánea en 1-2s, puedes elegir Gemini Flash o Groq.'
+                      : 'Redactando el anuncio con las directivas del manual de marca CloudEdTech y formato optimizado para Discord.'}
+                  </p>
+                </div>
               </div>
             )}
 
