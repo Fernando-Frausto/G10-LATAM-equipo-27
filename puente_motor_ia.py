@@ -1137,6 +1137,31 @@ def _generar_respuesta_queja_ia(texto: str, canal: str, modulo: str, nombre_legi
     return {"respuesta": str(res)}
 
 
+MAPEO_CANALES_DISCORD = {
+    "faq": "1551309664397033513",
+    "general": "1550016804418621452",
+    "chat-egresados": "1551309281041715230",
+    "oportunidades-laborales": "1551309330198953994",
+    "pqrs": "1559244209884504245",
+    "notificaciones": "1559244522842488942",
+    "preguntas": "1551309664397033513",
+}
+
+
+def _resolver_canal_discord(interaccion: dict) -> tuple[str, str]:
+    """Resuelve (channel_id, channel_name) asegurando paridad con canales oficiales de Discord."""
+    raw_channel_id = str(interaccion.get("channel_id") or "").strip()
+    raw_canal = str(interaccion.get("canal") or "pqrs").strip()
+    channel_name = raw_canal.lstrip("#").lower()
+
+    if not raw_channel_id or raw_channel_id == "0":
+        channel_id = MAPEO_CANALES_DISCORD.get(channel_name) or os.getenv("DISCORD_CHANNEL_PQRS") or "1559244209884504245"
+    else:
+        channel_id = raw_channel_id
+
+    return channel_id, channel_name
+
+
 async def _verificar_mensaje_discord(channel_id: str, message_id: str, token: str) -> bool:
     if not channel_id or not message_id or not token:
         return False
@@ -1167,11 +1192,12 @@ async def _enviar_reply_discord(channel_id: str, source_message_id: str, respues
         "content": respuesta,
         "allowed_mentions": {"parse": []},
     }
-    if source_message_id:
+    # Solo agregar message_reference si es un snowflake de Discord real (>= 17 dígitos)
+    if source_message_id and source_message_id.isdigit() and len(source_message_id) >= 17:
         payload_body["message_reference"] = {
             "message_id": source_message_id,
             "channel_id": channel_id,
-            "fail_if_not_exists": True,
+            "fail_if_not_exists": False,
         }
 
     req = urllib.request.Request(
@@ -1262,9 +1288,7 @@ async def vista_previa_publicacion_queja_v1(interaccion_id: int):
     if not interaccion:
         raise HTTPException(status_code=404, detail="La interacción solicitada no existe.")
 
-    channel_id = str(interaccion.get("channel_id") or "")
-    raw_canal = str(interaccion.get("canal") or "desconocido")
-    channel_name = raw_canal.lstrip("#")
+    channel_id, channel_name = _resolver_canal_discord(interaccion)
     source_message_id = str(interaccion.get("message_id") or "")
     author = str(interaccion.get("autor") or "Desconocido")
     original_content = str(interaccion.get("texto") or "")
@@ -1283,21 +1307,23 @@ async def vista_previa_publicacion_queja_v1(interaccion_id: int):
             "detail": "Bot de Discord no configurado en el servidor",
         }
 
+    # Si la interacción venía con channel_id explícito en la base de datos, validar existencia estricta
     fn_verificar = getattr(sys.modules[__name__], "_verificar_mensaje_discord", _verificar_mensaje_discord)
-    try:
-        if inspect.iscoroutinefunction(fn_verificar):
-            existe = await fn_verificar(channel_id, source_message_id, token)
-        else:
-            existe = fn_verificar(channel_id, source_message_id, token)
-    except Exception as e:
-        if "notfound" in type(e).__name__.lower():
+    if interaccion.get("channel_id") and source_message_id:
+        try:
+            if inspect.iscoroutinefunction(fn_verificar):
+                existe = await fn_verificar(channel_id, source_message_id, token)
+            else:
+                existe = fn_verificar(channel_id, source_message_id, token)
+        except Exception as e:
+            if "notfound" in type(e).__name__.lower():
+                raise HTTPException(status_code=404, detail="El mensaje original ya no existe en Discord")
+            existe = False
+
+        if not existe:
             raise HTTPException(status_code=404, detail="El mensaje original ya no existe en Discord")
-        existe = False
 
-    if not existe:
-        raise HTTPException(status_code=404, detail="El mensaje original ya no existe en Discord")
-
-    guild_id = os.getenv("DISCORD_GUILD_ID", "")
+    guild_id = os.getenv("DISCORD_GUILD_ID", "1550016802891898890")
     return {
         "interaccion_id": interaccion_id,
         "guild_id": guild_id,
@@ -1337,7 +1363,7 @@ async def publicar_respuesta_queja_v1(payload: dict = Body(...)):
     if not interaccion:
         raise HTTPException(status_code=404, detail="La interacción solicitada no existe.")
 
-    channel_id = str(interaccion.get("channel_id") or "")
+    channel_id, channel_name = _resolver_canal_discord(interaccion)
     source_message_id = str(interaccion.get("message_id") or "")
 
     fn_enviar = getattr(sys.modules[__name__], "_enviar_reply_discord", _enviar_reply_discord)

@@ -1863,6 +1863,30 @@ def test_complaint_publish_preview_con_token_y_destino_valido_retorna_ready_true
         assert data["original_content"] == "Error crítico al enviar tarea final"
 
 
+def test_complaint_publish_preview_sin_channel_id_resuelve_canal_oficial_y_ready_true(client):
+    """
+    (Spec 012 - RF-02) Valida que interacciones históricas/semilla sin channel_id
+    resuelvan automáticamente el canal oficial (ej. #faq -> 1551309664397033513) y retornen ready: True.
+    """
+    _insertar_interaccion_spec012(
+        interaccion_id=705,
+        texto="Consulta crítica en el canal de preguntas frecuentes",
+        canal="#faq",
+        channel_id="",
+        message_id="705",
+        autor="maria",
+    )
+    with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "bot_token_123"}, clear=False):
+        resp = client.get("/api/v1/content-workflow/complaints/705/publish-preview")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["interaccion_id"] == 705
+        assert data["ready"] is True
+        assert data["channel_id"] == "1551309664397033513"
+        assert data["channel_name"] == "faq"
+        assert data["author"] == "maria"
+
+
 def test_complaint_publish_preview_rechazos_404(client):
     """
     (Spec 012 - RF-02) GET /api/v1/content-workflow/complaints/{id}/publish-preview
