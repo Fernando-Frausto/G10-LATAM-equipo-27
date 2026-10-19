@@ -1301,18 +1301,18 @@ function ContentStudio() {
       const copysEditados: Record<'linkedin' | 'x' | 'discord', any> = {
         linkedin: {
           titulo: linkedinTitle,
-          texto_copy: drafts.linkedin.content,
+          texto_copy: isOmittedByOrchestrator(drafts.linkedin.content) ? '' : drafts.linkedin.content,
           copy_tono: linkedinCopyTono,
           newsletter: linkedinNewsletter,
           faq: linkedinFaq,
         },
         x: {
           titulo: xTitle,
-          texto_copy: drafts.x.content,
+          texto_copy: isOmittedByOrchestrator(drafts.x.content) ? '' : drafts.x.content,
         },
         discord: {
           titulo: discordTitle,
-          texto_copy: drafts.discord.content,
+          texto_copy: isOmittedByOrchestrator(drafts.discord.content) ? '' : drafts.discord.content,
           canal_seleccionado: discordSelectedChannel,
         },
       }
@@ -1325,13 +1325,27 @@ function ContentStudio() {
       )
 
       if (aprobado && res.exito) {
-        setPipelineActionMessage(
-          '✓ Lote de copys aprobado y despachado con prevalencia de tus ediciones humanas (HITL).'
-        )
+        const resCanales = res.resultados_canales || {}
+        const enviados: string[] = []
+        const omitidos: string[] = []
+
+        Object.entries(resCanales).forEach(([ch, val]: [string, any]) => {
+          if (val?.estado_canal === 'enviado') {
+            enviados.push(ch.toUpperCase())
+          } else if (val?.estado_canal === 'omitido' || val?.estado_canal === 'omitido_sin_credenciales') {
+            omitidos.push(ch.toUpperCase())
+          }
+        })
+
+        const feedback = enviados.length > 0
+          ? `✓ Lote aprobado. Publicado en: ${enviados.join(', ')}.${omitidos.length > 0 ? ` Omitido en: ${omitidos.join(', ')} (no seleccionados por el orquestador).` : ''}`
+          : `✓ Lote aprobado (sin canales activos despachados).`
+
+        setPipelineActionMessage(feedback)
         setDrafts((prev) => ({
-          linkedin: { ...prev.linkedin, submitted: true },
-          x: { ...prev.x, submitted: true },
-          discord: { ...prev.discord, submitted: true },
+          linkedin: { ...prev.linkedin, submitted: resCanales.linkedin?.estado_canal === 'enviado' },
+          x: { ...prev.x, submitted: resCanales.x?.estado_canal === 'enviado' },
+          discord: { ...prev.discord, submitted: resCanales.discord?.estado_canal === 'enviado' },
         }))
       } else {
         setPipelineActionMessage(

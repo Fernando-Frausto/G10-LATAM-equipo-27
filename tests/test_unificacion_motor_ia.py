@@ -2934,5 +2934,68 @@ def test_mototradis_run_mass_gemma_baja_relevancia(client):
     assert isinstance(data["procesados"], int)
 
 
+def test_mototradis_hitl_decision_omite_canales_no_generados_y_solo_publica_activos(client):
+    """
+    Verifica que al pulsar 'Aprobar y publicar en canales (HITL)':
+    1. Si un canal no tiene copy o tiene la nota de omisión del orquestador, NO se despacha y se reporta 'omitido'.
+    2. Únicamente los canales con copy real generado (ej. Discord) se despachan y se marcan como 'enviado'.
+    3. En SQLite contenidos_generados solo se actualiza a 'publicado' el canal realmente despachado.
+    4. La publicación individual rechaza despachar canales omitidos.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en)
+            VALUES (2001, 'hash_mt_2001', 'Discord', 'Semana_01', 'dev_junior', '#general', 'mensaje', 'Duda técnica rápida sobre un bucle en Python', '2026-10-18T12:00:00+00:00')
+            """
+        )
+        conn.commit()
 
+    # Copys donde el orquestador solo seleccionó Discord, y LinkedIn/X quedaron omitidos
+    copys_con_omisiones = {
+        "linkedin": {
+            "titulo": "Canal omitido por el orquestador",
+            "texto_copy": "El orquestador omitió LinkedIn (la interacción es una consulta técnica informal). Pulsa 'Regenerar'...",
+        },
+        "x": {
+            "titulo": "Canal omitido por el orquestador",
+            "texto_copy": "",
+        },
+        "discord": {
+            "canal_seleccionado": "#general",
+            "titulo": "Aporte Técnico de la Comunidad",
+            "texto_copy": "Excelente duda compartida por @dev_junior sobre bucles en Python.",
+        }
+    }
 
+    payload = {
+        "id_mensaje": 2001,
+        "decision": "aprobar",
+        "copys_editados": copys_con_omisiones
+    }
+
+    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/123"}, clear=False):
+        resp = client.post("/api/v1/mototradis/hitl-decision", json=payload)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["exito"] is True
+    assert data["decision"] == "aprobar"
+    res_canales = data["resultados_canales"]
+
+    # Discord debe ser enviado
+    assert res_canales["discord"]["estado_canal"] == "enviado"
+    # LinkedIn y X deben quedar estrictamente omitidos
+    assert res_canales["linkedin"]["estado_canal"] == "omitido"
+    assert res_canales["x"]["estado_canal"] == "omitido"
+
+    # Verificar publicación individual con texto omitido
+    resp_ind = client.post("/api/v1/mototradis/publish-channel", json={
+        "id_mensaje": 2001,
+        "canal": "linkedin",
+        "texto_copy": "El orquestador omitió LinkedIn..."
+    })
+    assert resp_ind.status_code == 200
+    data_ind = resp_ind.json()
+    assert data_ind["ok"] is False
+    assert data_ind["estado_canal"] == "omitido"

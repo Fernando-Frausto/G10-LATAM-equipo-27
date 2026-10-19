@@ -3983,6 +3983,16 @@ MENSAJES_OMISION_ORQUESTADOR = {
 }
 
 
+def _es_copy_publicable(txt: str | None) -> bool:
+    """Verifica si un texto es apto para publicación externa, ignorando notas de omisión o vacíos."""
+    t = (txt or "").strip()
+    if not t:
+        return False
+    if t.startswith("El orquestador omitió") or t.startswith("El orquestador no priorizó"):
+        return False
+    return True
+
+
 def _formatear_borradores_ui(copys: dict, rutas_activas: list[str] | None = None) -> dict:
     """Normaliza y aplana copys estructurados (Pydantic o dict) al esquema uniforme de interfaz."""
     if not isinstance(copys, dict):
@@ -4671,17 +4681,26 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
         canal_disc = b_disc.get("canal_seleccionado") or canal_def
         tit_disc = b_disc.get("titulo") or "Aviso Oficial Comunidad"
         txt_disc = b_disc.get("texto_copy") or ""
-        res_disc = despachar_discord_con_cascada(canal_disc, autor, texto_orig, tit_disc, txt_disc)
+        if _es_copy_publicable(txt_disc):
+            res_disc = despachar_discord_con_cascada(canal_disc, autor, texto_orig, tit_disc, txt_disc)
+        else:
+            res_disc = {"ok": True, "detalle": "Canal Discord omitido por el orquestador (sin contenido generado)", "estado_canal": "omitido"}
 
         b_lk = copys_finales.get("linkedin") or {}
         tit_lk = b_lk.get("titulo") or ""
         txt_lk = b_lk.get("texto_copy") or ""
-        res_lk = despachar_linkedin_resiliente(tit_lk, txt_lk)
+        if _es_copy_publicable(txt_lk):
+            res_lk = despachar_linkedin_resiliente(tit_lk, txt_lk)
+        else:
+            res_lk = {"ok": True, "detalle": "Canal LinkedIn omitido por el orquestador (sin contenido generado)", "estado_canal": "omitido"}
 
         b_x = copys_finales.get("x") or {}
         tit_x = b_x.get("titulo") or ""
         txt_x = b_x.get("texto_copy") or ""
-        res_x = despachar_x_resiliente(tit_x, txt_x)
+        if _es_copy_publicable(txt_x):
+            res_x = despachar_x_resiliente(tit_x, txt_x)
+        else:
+            res_x = {"ok": True, "detalle": "Canal X omitido por el orquestador (sin contenido generado)", "estado_canal": "omitido"}
 
         resultados_canales = {
             "discord": res_disc,
@@ -4695,14 +4714,18 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
         _guardar_borradores_sqlite(id_msg, borradores_ui, copys_finales)
 
         with sqlite3.connect(motor_bd.RUTA_BD) as conn:
-            conn.execute(
-                "UPDATE contenidos_generados SET estado = 'publicado', estado_publicacion = 'publicado', publicado_en = ? WHERE interaccion_id = ?",
-                (ahora, id_msg)
-            )
-            conn.execute(
-                "UPDATE interacciones SET etapa_flujo = 'publicado', estado_curaduria = 'aprobado' WHERE id = ?",
-                (id_msg,)
-            )
+            for plat_name, res_item in resultados_canales.items():
+                if res_item.get("estado_canal") == "enviado":
+                    conn.execute(
+                        "UPDATE contenidos_generados SET estado = 'publicado', estado_publicacion = 'publicado', publicado_en = ? WHERE interaccion_id = ? AND plataforma = ?",
+                        (ahora, id_msg, plat_name)
+                    )
+            canales_enviados = [k for k, v in resultados_canales.items() if v.get("estado_canal") == "enviado"]
+            if canales_enviados:
+                conn.execute(
+                    "UPDATE interacciones SET etapa_flujo = 'publicado', estado_curaduria = 'aprobado' WHERE id = ?",
+                    (id_msg,)
+                )
             conn.commit()
 
         # Actualizar Supabase si está disponible
@@ -4785,6 +4808,16 @@ def api_mototradis_publish_channel(req: MototradisPublishChannelRequest):
 
     tit = req.titulo or (req.datos_canal and req.datos_canal.get("titulo")) or ""
     txt = req.texto_copy or (req.datos_canal and req.datos_canal.get("texto_copy")) or ""
+
+    if not _es_copy_publicable(txt):
+        return {
+            "id_mensaje": id_msg,
+            "interaccion_id": id_msg,
+            "canal": canal,
+            "ok": False,
+            "detalle": f"El canal {canal} fue omitido por el orquestador y no contiene un copy redactado para publicar.",
+            "estado_canal": "omitido",
+        }
 
     if canal == "discord":
         ch = req.canal_seleccionado or canal_def
