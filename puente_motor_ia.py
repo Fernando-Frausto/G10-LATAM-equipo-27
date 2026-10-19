@@ -3897,6 +3897,13 @@ def homologar_entorno_mototradis():
             val = os.getenv(var_name)
             if val:
                 setattr(config, var_name, val)
+        urn = os.getenv("LINKEDIN_AUTHOR_URN", "")
+        if urn:
+            if not urn.startswith("urn:li:person:"):
+                clean_id = urn.replace("urn:li:person:", "").replace("urn:li:", "").replace("urn:li", "").strip()
+                urn = f"urn:li:person:{clean_id}"
+            os.environ["LINKEDIN_AUTHOR_URN"] = urn
+            config.LINKEDIN_AUTHOR_URN = urn
     except Exception:
         pass
 
