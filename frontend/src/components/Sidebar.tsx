@@ -1,6 +1,5 @@
 import {
     BarChart3,
-    CheckCircle,
     CloudUpload,
     Home,
     LogOut,
@@ -176,15 +175,6 @@ function Sidebar({
                                 <WandSparkles size={18} />
                             }
                             label="Redacción de contenidos"
-                            onNavigate={handleNavigate}
-                        />
-
-                        <SidebarItem
-                            to="/approvals"
-                            icon={
-                                <CheckCircle size={18} />
-                            }
-                            label="Aprobaciones"
                             onNavigate={handleNavigate}
                         />
 

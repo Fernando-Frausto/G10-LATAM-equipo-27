@@ -12,7 +12,6 @@ import Messages from './pages/Messages'
 import Highlights from './pages/Highlights'
 import Analytics from './pages/Analytics'
 import ContentStudio from './pages/ContentStudio'
-import Approvals from './pages/Approvals'
 import Audit from './pages/Audit'
 import Security from './pages/Security'
 import Settings from './pages/Settings'
@@ -67,7 +66,7 @@ function App() {
           >
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/content" element={<ContentStudio />} />
-            <Route path="/approvals" element={<Approvals />} />
+            <Route path="/approvals" element={<Navigate to="/content" replace />} />
             <Route path="/oci-storage" element={<OCIStorage />} />
           </Route>
 

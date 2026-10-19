@@ -497,7 +497,7 @@ function ContentStudio() {
           error:
             error instanceof Error
               ? error.message
-              : 'No fue posible completar el envio a aprobacion.',
+              : 'No fue posible guardar el contenido en la plataforma.',
         },
       }))
     } finally {
@@ -1071,7 +1071,7 @@ function ContentStudio() {
                   </button>
                 </div>
 
-                {/* Enviar a aprobación */}
+                {/* Guardar y registrar contenido */}
                 <button
                   type="button"
                   onClick={() => handleSubmit(format.id)}
@@ -1088,17 +1088,17 @@ function ContentStudio() {
                   )}
 
                   {draft.submitted
-                    ? 'Enviado a aprobación'
+                    ? 'Guardado en la plataforma'
                     : draft.submitting
-                      ? 'Enviando...'
+                      ? 'Guardando...'
                       : draft.savedId
-                        ? 'Reintentar envio a aprobacion'
-                        : 'Enviar a aprobación'}
+                        ? 'Reintentar guardado'
+                        : 'Guardar y registrar contenido'}
                 </button>
 
                 {draft.savedId && (
                   <p className="mt-2 text-center text-xs font-medium text-green-700">
-                    Borrador #{draft.savedId} guardado para revisión.
+                    Contenido #{draft.savedId} registrado exitosamente. Listo para copiar y publicar.
                   </p>
                 )}
 
@@ -1581,7 +1581,7 @@ function ContentStudio() {
         </div>
       )}
 
-      {/* Flujo */}
+      {/* Flujo editorial directo */}
       <section className="mt-6 rounded-2xl border border-orange-100 bg-orange-50/50 p-5">
         <div className="flex items-start gap-3">
           <Sparkles
@@ -1591,16 +1591,11 @@ function ContentStudio() {
 
           <div>
             <p className="text-sm font-semibold text-slate-800">
-              Flujo de revisión humana
+              Flujo editorial directo
             </p>
 
             <p className="mt-1 text-sm leading-6 text-slate-600">
-              El contenido generado aquí no se publica
-              automáticamente. Primero debe enviarse al módulo de
-              Aprobaciones. Los contenidos de LinkedIn y X
-              podrán copiarse después de ser aprobados, mientras que
-              Discord podrá publicarse mediante la integración del
-              bot.
+              El contenido generado y personalizado aquí se guarda directamente en la base de datos de la plataforma. Puedes copiar los textos optimizados para LinkedIn y X para publicarlos en tus redes, mientras que las respuestas a quejas y soporte de Discord se envían en tiempo real con el bot oficial.
             </p>
           </div>
         </div>
