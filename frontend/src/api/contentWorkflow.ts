@@ -323,6 +323,8 @@ export interface MototradisCheckpointState {
   resultados_canales?: Record<string, any>
   updated_at?: string | null
   copys_generados?: Record<string, any>
+  aviso_fallback?: string | null
+  fallbacks_usados?: string[]
 }
 
 export type MototradisCheckpointResponse = MototradisCheckpointState
@@ -390,6 +392,8 @@ export async function generateMototradisChannelCopy(
   borrador: any
   borradores_ui: MototradisBorradoresUI
   modelo_utilizado: string
+  fallback_usado?: boolean
+  aviso_fallback?: string | null
 }> {
   return (await apiRequest('/api/v1/content-workflow/generate-channel', {
     method: 'POST',

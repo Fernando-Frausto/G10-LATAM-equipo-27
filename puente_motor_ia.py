@@ -4199,20 +4199,24 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
 
     rutas_activas = ["linkedin", "x", "discord"]
     copys_generados = {}
+    fallbacks_usados = []
 
     if grafo:
         try:
             estado_inicial = {
+                "id_mensaje": id_msg,
                 "mensaje_id": id_msg,
-                "autor": interaccion.get("autor") or "anonimo",
+                "autor": interaccion.get("autor") or "comunidad",
                 "semana": interaccion.get("periodo_referencia") or "Semana_01",
                 "fecha_envio": interaccion.get("enviado_en") or a_utc_iso(datetime.now(timezone.utc)),
                 "fecha_extraccion": a_utc_iso(datetime.now(timezone.utc)),
                 "canal_origen": interaccion.get("canal") or "#general",
                 "json_precurado": {
-                    "relevancia": 85,
-                    "sentimiento": "positivo",
-                    "texto_original": interaccion.get("texto") or ""
+                    "relevancia": int(float(interaccion.get("relevancia") or 85)),
+                    "sentimiento": interaccion.get("sentimiento") or "positivo",
+                    "texto_original": interaccion.get("texto") or "",
+                    "autor": interaccion.get("autor") or "comunidad",
+                    "canal_origen": interaccion.get("canal") or "#general",
                 },
                 "rutas_activas": [],
                 "copys_generados": {},
@@ -4229,12 +4233,20 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
             logging.getLogger("puente_motor_ia").warning(f"Inferencia viva requirió fallback defensivo: {exc}")
 
     if not copys_generados or not any(k in copys_generados for k in ("linkedin", "x", "discord")):
+        fallbacks_usados = list(rutas_activas)
         copys_generados = _generar_copys_defensivos(interaccion, rutas_activas)
+    else:
+        for r in rutas_activas:
+            if r not in copys_generados:
+                fallbacks_usados.append(r)
+                def_copys = _generar_copys_defensivos(interaccion, [r])
+                copys_generados[r] = def_copys.get(r) or {}
 
     # Actualizar estado en grafo y checkpointer
     if grafo:
         try:
             grafo.update_state(thread_config, {
+                "id_mensaje": id_msg,
                 "mensaje_id": id_msg,
                 "autor": interaccion.get("autor") or "comunidad",
                 "rutas_activas": rutas_activas,
@@ -4258,6 +4270,12 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
     if req.proveedor:
         modelos_actuales["orquestador"] = resolver_modelo_canal("orquestador", req.proveedor)
 
+    aviso_fallback = (
+        f"⚠️ Se utilizó la IA de rescate ({req.proveedor or 'Llama 3.3'}) para: {', '.join(fallbacks_usados)}."
+        if fallbacks_usados
+        else None
+    )
+
     return {
         "id_mensaje": id_msg,
         "interaccion_id": id_msg,
@@ -4267,6 +4285,8 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
         "borradores_ui": borradores_ui,
         "copys_generados": copys_generados,
         "modelos_utilizados": modelos_actuales,
+        "fallbacks_usados": fallbacks_usados,
+        "aviso_fallback": aviso_fallback,
     }
 
 
@@ -4278,7 +4298,7 @@ def api_mototradis_generate_channel(req: MototradisGenerateChannelRequest):
     """
     Spec 015 - RF-03:
     Inferencia individual por canal con modelo y proveedor especificado,
-    reportando explícitamente modelo_utilizado.
+    reportando explícitamente modelo_utilizado y si se usó la IA de rescate.
     """
     homologar_entorno_mototradis()
     id_msg = req.id_mensaje if req.id_mensaje is not None else req.interaccion_id
@@ -4311,14 +4331,56 @@ def api_mototradis_generate_channel(req: MototradisGenerateChannelRequest):
         except Exception:
             pass
 
-    # Generar contenido para el canal solicitado
-    copys_nuevos = _generar_copys_defensivos(interaccion, [canal])
-    contenido_canal = copys_nuevos.get(canal) or {}
+    # Generar contenido para el canal solicitado invocando el nodo real
+    state_canal = {
+        "id_mensaje": id_msg,
+        "mensaje_id": id_msg,
+        "autor": interaccion.get("autor") or "comunidad",
+        "semana": interaccion.get("periodo_referencia") or "Semana_01",
+        "fecha_envio": interaccion.get("enviado_en") or a_utc_iso(datetime.now(timezone.utc)),
+        "fecha_extraccion": a_utc_iso(datetime.now(timezone.utc)),
+        "canal_origen": interaccion.get("canal") or "#general",
+        "json_precurado": {
+            "relevancia": int(float(interaccion.get("relevancia") or 85)),
+            "sentimiento": interaccion.get("sentimiento") or "positivo",
+            "texto_original": interaccion.get("texto") or "",
+            "autor": interaccion.get("autor") or "comunidad",
+            "canal_origen": interaccion.get("canal") or "#general",
+        },
+        "copys_generados": dict(copys_acumulados),
+    }
+
+    contenido_canal = {}
+    fallback_usado = False
+
+    try:
+        from src import nodes as mototradis_nodes
+        if canal == "linkedin":
+            res_node = mototradis_nodes.nodo_linkedin(state_canal)
+        elif canal == "x":
+            res_node = mototradis_nodes.nodo_x(state_canal)
+        elif canal == "discord":
+            res_node = mototradis_nodes.nodo_discord(state_canal)
+        else:
+            res_node = {}
+        contenido_canal = res_node.get("copys_generados", {}).get(canal) or {}
+    except Exception as exc:
+        import logging
+        logging.getLogger("puente_motor_ia").warning(f"Invocación de nodo {canal} requirió fallback: {exc}")
+        contenido_canal = {}
+
+    if not contenido_canal:
+        fallback_usado = True
+        copys_nuevos = _generar_copys_defensivos(interaccion, [canal])
+        contenido_canal = copys_nuevos.get(canal) or {}
+
     copys_acumulados[canal] = contenido_canal
 
     if grafo:
         try:
             grafo.update_state(thread_config, {
+                "id_mensaje": id_msg,
+                "mensaje_id": id_msg,
                 "copys_generados": copys_acumulados
             })
         except Exception:
@@ -4326,6 +4388,12 @@ def api_mototradis_generate_channel(req: MototradisGenerateChannelRequest):
 
     borradores_ui = _formatear_borradores_ui(copys_acumulados)
     _guardar_borradores_sqlite(id_msg, borradores_ui, copys_acumulados)
+
+    aviso_fallback = (
+        f"⚠️ La IA principal de {canal.upper()} no respondió. Se utilizó la IA de rescate ({modelo_utilizado})."
+        if fallback_usado
+        else None
+    )
 
     return {
         "id_mensaje": id_msg,
@@ -4335,6 +4403,8 @@ def api_mototradis_generate_channel(req: MototradisGenerateChannelRequest):
         "borrador": contenido_canal,
         "borradores_ui": borradores_ui,
         "modelo_utilizado": modelo_utilizado,
+        "fallback_usado": fallback_usado,
+        "aviso_fallback": aviso_fallback,
     }
 
 

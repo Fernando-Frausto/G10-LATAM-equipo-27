@@ -1120,9 +1120,13 @@ function ContentStudio() {
         }))
       }
 
-      setPipelineActionMessage(
-        `✓ Pipeline ejecutado exitosamente con orquestador LangGraph (${res.modelos_utilizados?.orquestador || 'Gemini'}). Borradores generados para canales activos.`
-      )
+      if (res.aviso_fallback) {
+        setPipelineActionMessage(res.aviso_fallback)
+      } else {
+        setPipelineActionMessage(
+          `✓ Pipeline ejecutado exitosamente con orquestador LangGraph (${res.modelos_utilizados?.orquestador || 'Gemini'}). Borradores generados para canales activos.`
+        )
+      }
     } catch (error) {
       setPipelineActionError(
         error instanceof Error ? error.message : 'Error al ejecutar pipeline de redacción.'
@@ -1190,7 +1194,11 @@ function ContentStudio() {
         })
       }
 
-      setPipelineActionMessage(`✓ Copy de ${canal.toUpperCase()} regenerado con ${res.modelo_utilizado}.`)
+      if (res.aviso_fallback) {
+        setPipelineActionMessage(res.aviso_fallback)
+      } else {
+        setPipelineActionMessage(`✓ Copy de ${canal.toUpperCase()} regenerado con ${res.modelo_utilizado}.`)
+      }
     } catch (err) {
       console.warn(`Fallback a regeneración estándar para ${canal}:`, err)
       await handleRegenerate(canal)
@@ -1949,7 +1957,7 @@ function ContentStudio() {
                 htmlFor="workspace-ai-provider"
                 className="text-xs font-semibold text-slate-600"
               >
-                IA para regenerar tarjeta:
+                Fallback IA:
               </label>
               <select
                 id="workspace-ai-provider"
