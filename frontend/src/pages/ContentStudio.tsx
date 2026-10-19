@@ -39,6 +39,7 @@ import {
   submitMototradisHitlDecision,
 } from '../api/contentWorkflow'
 import type {
+  AIProviderOption,
   AnnouncementWebhookStatus,
   ComplaintPublishPreview,
   MototradisCheckpointState,
@@ -108,31 +109,21 @@ type DraftState = {
 function buildDefaultDrafts(
   message?: WorkflowMessage | null,
 ): Record<ContentFormat, DraftState> {
-  if (!message || !message.content.trim()) {
-    return {
-      linkedin: { content: '', submitted: false },
-      x: { content: '', submitted: false },
-      discord: { content: '', submitted: false },
-    }
-  }
-
-  const source = message.content.trim()
-
   return {
     linkedin: {
-      interactionId: message.interactionId,
-      content: `Una conversación de nuestra comunidad nos invita a reflexionar:\n\n"${source}"\n\nTema: ${message.topic}\n\nEn CloudEdTech valoramos las experiencias compartidas y el aprendizaje colaborativo.\n\n#CloudEdTech #Comunidad #Aprendizaje`,
+      interactionId: message?.interactionId,
+      content: '',
       submitted: false,
     },
     x: {
-      interactionId: message.interactionId,
-      content: `Desde nuestra comunidad: ${source}`.slice(0, 280),
+      interactionId: message?.interactionId,
+      content: '',
       submitted: false,
     },
     discord: {
-      interactionId: message.interactionId,
-      attachments: [...message.attachments],
-      content: `Gracias por compartir tu mensaje en #${message.channel}.\n\n"${source}"\n\nDesde CloudEdTech queremos continuar esta conversación con la comunidad.`,
+      interactionId: message?.interactionId,
+      attachments: message?.attachments ? [...message.attachments] : [],
+      content: '',
       submitted: false,
     },
   }
@@ -1033,23 +1024,36 @@ function ContentStudio() {
             if (bui.discord.canal_seleccionado) setDiscordSelectedChannel(bui.discord.canal_seleccionado)
           }
 
-          setDrafts((prev) => ({
+          setDrafts({
             linkedin: {
-              ...prev.linkedin,
               interactionId: selectedMessageId,
-              content: liText || prev.linkedin.content,
+              content: liText,
+              submitted: checkpoint.estado_pipeline === 'publicado',
             },
             x: {
-              ...prev.x,
               interactionId: selectedMessageId,
-              content: xText || prev.x.content,
+              content: xText,
+              submitted: checkpoint.estado_pipeline === 'publicado',
             },
             discord: {
-              ...prev.discord,
               interactionId: selectedMessageId,
-              content: discordText || prev.discord.content,
+              content: discordText,
+              submitted: checkpoint.estado_pipeline === 'publicado',
             },
-          }))
+          })
+        } else {
+          // Si no tiene checkpoint previo, limpiar las tarjetas para que no muestren textos residuales
+          setLinkedinTitle('')
+          setLinkedinCopyTono('')
+          setLinkedinNewsletter({ destaque: '', resumen: '' })
+          setLinkedinFaq({ sugerencia: '', respuesta: '' })
+          setXTitle('')
+          setDiscordTitle('')
+          setDrafts({
+            linkedin: { interactionId: selectedMessageId, content: '', submitted: false },
+            x: { interactionId: selectedMessageId, content: '', submitted: false },
+            discord: { interactionId: selectedMessageId, content: '', submitted: false },
+          })
         }
       })
       .catch((err) => {
@@ -1137,7 +1141,11 @@ function ContentStudio() {
     }))
 
     try {
-      const res = await generateMototradisChannelCopy(selectedMessageId, canal)
+      const res = await generateMototradisChannelCopy(
+        selectedMessageId,
+        canal,
+        workspaceAiProvider as AIProviderOption,
+      )
       const bui = res.borradores_ui || {}
       const canalData = bui[canal] || res.borrador || {}
       const nuevoTexto =
@@ -1168,6 +1176,20 @@ function ContentStudio() {
           error: '',
         },
       }))
+
+      if (res.modelo_utilizado) {
+        setPipelineData((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            modelos_utilizados: {
+              ...prev.modelos_utilizados,
+              [canal]: res.modelo_utilizado,
+            },
+          }
+        })
+      }
+
       setPipelineActionMessage(`✓ Copy de ${canal.toUpperCase()} regenerado con ${res.modelo_utilizado}.`)
     } catch (err) {
       console.warn(`Fallback a regeneración estándar para ${canal}:`, err)
@@ -1927,7 +1949,7 @@ function ContentStudio() {
                 htmlFor="workspace-ai-provider"
                 className="text-xs font-semibold text-slate-600"
               >
-                Fallback IA:
+                IA para regenerar tarjeta:
               </label>
               <select
                 id="workspace-ai-provider"
