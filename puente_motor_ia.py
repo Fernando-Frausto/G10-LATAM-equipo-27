@@ -3434,7 +3434,7 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
         return _cache_canales_discord
 
     canales = [
-        {"id": "webhook", "name": "Canal oficial de #anuncios (Predeterminado)"},
+        {"id": "webhook", "name": "Canal oficial de #notificaciones (Predeterminado)"},
     ]
     token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
     if token:
@@ -3459,6 +3459,8 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
                         if c.get("type") == 0:
                             c_id = str(c.get("id"))
                             c_name = f"#{c.get('name')}"
+                            if c.get("name") == "notificaciones" or c_id == "1559244522842488942":
+                                continue
                             if not any(item["id"] == c_id for item in canales):
                                 canales.append({"id": c_id, "name": c_name})
         except Exception:
@@ -3466,13 +3468,14 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
 
     if len(canales) == 1:
         canales.extend([
-            {"id": "1559244522842488942", "name": "#notificaciones"},
             {"id": "1550016804418621452", "name": "#general"},
             {"id": "1551309281041715230", "name": "#chat-egresados"},
             {"id": "1551309330198953994", "name": "#oportunidades-laborales"},
             {"id": "1551309664397033513", "name": "#faq"},
             {"id": "1559244209884504245", "name": "#pqrs"},
         ])
+    if not any(item.get("name") == "#anuncios" for item in canales):
+        canales.append({"id": "anuncios", "name": "#anuncios"})
 
     _cache_canales_discord = canales
     _timestamp_canales_discord = ahora
@@ -3552,7 +3555,7 @@ async def get_announcements_status_v1():
         "max_characters_limit": 2000,
         "recommended_max_length": 1500,
         "max_characters_recommended": 1500,
-        "channel_hint": "anuncios",
+        "channel_hint": "notificaciones",
         "channels": channels,
         "warning": None if configured else "Variable de entorno DISCORD_WEBHOOK_ANUNCIOS no configurada en el servidor",
     }

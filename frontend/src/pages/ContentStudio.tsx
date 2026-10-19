@@ -200,7 +200,7 @@ function ContentStudio() {
         if (isMounted) {
           setAnnouncementStatus({
             configured: false,
-            channel_hint: 'anuncios',
+            channel_hint: 'notificaciones',
             max_characters_recommended: 1500,
             max_characters_limit: 2000,
             warning: 'No se pudo conectar con el servicio de anuncios',
@@ -401,9 +401,9 @@ function ContentStudio() {
     announcementStatus?.channels && announcementStatus.channels.length > 0
       ? announcementStatus.channels
       : [
-          { id: 'webhook', name: 'Canal oficial de #anuncios (Predeterminado)' },
+          { id: 'webhook', name: 'Canal oficial de #notificaciones (Predeterminado)' },
           { id: '1550016804418621452', name: '#general' },
-          { id: '1559244522842488942', name: '#notificaciones' },
+          { id: 'anuncios', name: '#anuncios' },
           { id: '1551309281041715230', name: '#chat-egresados' },
           { id: '1551309330198953994', name: '#oportunidades-laborales' },
           { id: '1551309664397033513', name: '#faq' },
@@ -412,7 +412,7 @@ function ContentStudio() {
 
   const selectedTargetChannelName =
     availableDiscordChannels.find((c) => c.id === selectedDiscordChannel)?.name ||
-    '#anuncios'
+    '#notificaciones'
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
