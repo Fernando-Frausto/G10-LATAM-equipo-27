@@ -3881,10 +3881,24 @@ _grafo_mototradis_activo = None
 
 def homologar_entorno_mototradis():
     """Garantiza la paridad de variables críticas antes de invocar src/."""
+    from dotenv import load_dotenv
+    load_dotenv(override=False)
     if not os.environ.get("GEMINI_API_KEY") and os.environ.get("GOOGLE_API_KEY"):
         os.environ["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
     if not os.environ.get("SUPABASE_DB_URL") and os.environ.get("DATABASE_URL"):
         os.environ["SUPABASE_DB_URL"] = os.environ["DATABASE_URL"]
+
+    try:
+        from src.config import config
+        for var_name in (
+            "LINKEDIN_ACCESS_TOKEN", "LINKEDIN_AUTHOR_URN",
+            "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"
+        ):
+            val = os.getenv(var_name)
+            if val:
+                setattr(config, var_name, val)
+    except Exception:
+        pass
 
 
 def obtener_checkpointer_resiliente():
@@ -4551,7 +4565,17 @@ def despachar_x_resiliente(titulo: str, texto_copy: str) -> dict:
 
     try:
         from src.publishers import enviar_tweet_x
-        copys = {"x": {"activos_distribucion_generados": {"post_x": tweet_completo}}}
+        copys = {
+            "x": {
+                "status": "success",
+                "activos_distribucion_generados": {
+                    "post_postx": {
+                        "titulo": titulo or "",
+                        "texto_copy": texto_copy or ""
+                    }
+                }
+            }
+        }
         ok = enviar_tweet_x(copys)
         return {
             "ok": ok,
@@ -4580,8 +4604,17 @@ def despachar_linkedin_resiliente(titulo: str, texto_copy: str) -> dict:
 
     try:
         from src.publishers import enviar_linkedin
-        post_completo = f"{titulo}\n\n{texto_copy}".strip() if titulo else texto_copy.strip()
-        copys = {"linkedin": {"activos_distribucion_generados": {"post_linkedin": post_completo}}}
+        copys = {
+            "linkedin": {
+                "status": "success",
+                "activos_distribucion_generados": {
+                    "post_linkedin": {
+                        "titulo": titulo or "",
+                        "texto_copy": texto_copy or ""
+                    }
+                }
+            }
+        }
         ok = enviar_linkedin(copys)
         return {
             "ok": ok,
