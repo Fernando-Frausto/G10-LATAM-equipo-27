@@ -397,18 +397,18 @@ function ContentStudio() {
     }
   }, [targetInteractionId, workflowMessages, selectedMessageId])
 
-  const availableDiscordChannels =
+  const availableDiscordChannels = (
     announcementStatus?.channels && announcementStatus.channels.length > 0
       ? announcementStatus.channels
       : [
           { id: 'webhook', name: 'Canal oficial de #notificaciones (Predeterminado)' },
           { id: '1550016804418621452', name: '#general' },
-          { id: 'anuncios', name: '#anuncios' },
           { id: '1551309281041715230', name: '#chat-egresados' },
           { id: '1551309330198953994', name: '#oportunidades-laborales' },
           { id: '1551309664397033513', name: '#faq' },
           { id: '1559244209884504245', name: '#pqrs' },
         ]
+  ).filter((ch) => !ch.name.toLowerCase().includes('anuncios'))
 
   const selectedTargetChannelName =
     availableDiscordChannels.find((c) => c.id === selectedDiscordChannel)?.name ||

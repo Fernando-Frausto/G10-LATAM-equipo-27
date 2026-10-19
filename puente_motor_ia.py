@@ -3459,7 +3459,7 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
                         if c.get("type") == 0:
                             c_id = str(c.get("id"))
                             c_name = f"#{c.get('name')}"
-                            if c.get("name") == "notificaciones" or c_id == "1559244522842488942":
+                            if c.get("name") in ("notificaciones", "anuncios") or c_id == "1559244522842488942":
                                 continue
                             if not any(item["id"] == c_id for item in canales):
                                 canales.append({"id": c_id, "name": c_name})
@@ -3474,8 +3474,6 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
             {"id": "1551309664397033513", "name": "#faq"},
             {"id": "1559244209884504245", "name": "#pqrs"},
         ])
-    if not any(item.get("name") == "#anuncios" for item in canales):
-        canales.append({"id": "anuncios", "name": "#anuncios"})
 
     _cache_canales_discord = canales
     _timestamp_canales_discord = ahora
@@ -3660,8 +3658,9 @@ async def publish_announcement_v1(payload: dict = Body(...)):
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Error al enviar mensaje al canal {channel_id}: {e}")
     else:
-        # Despacho por webhook estándar
-        if not webhook_url:
+        # Despacho por webhook estándar hacia #notificaciones
+        target_webhook = os.getenv("DISCORD_WEBHOOK_ANUNCIOS")
+        if not target_webhook:
             raise HTTPException(
                 status_code=503,
                 detail="Variable de entorno DISCORD_WEBHOOK_ANUNCIOS no configurada en el servidor.",
@@ -3669,7 +3668,7 @@ async def publish_announcement_v1(payload: dict = Body(...)):
         try:
             import anuncios_discord
             anuncios_discord.publicar_en_discord(contenido)
-            canal_publicado_nombre = "Canal Webhook Oficial"
+            canal_publicado_nombre = "Canal oficial de #notificaciones"
         except Exception as e:
             raise HTTPException(
                 status_code=502,
