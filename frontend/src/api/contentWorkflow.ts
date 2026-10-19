@@ -215,3 +215,50 @@ export async function getPublishedComplaintIds(): Promise<number[]> {
 
   return data.interaction_ids
 }
+
+export interface AnnouncementWebhookStatus {
+  configured: boolean
+  channel_hint: string
+  max_characters_recommended: number
+  max_characters_limit: number
+  warning: string | null
+}
+
+export interface AnnouncementGenerateResponse {
+  anuncio_generado: string
+  caracteres: number
+  borrador_original: string
+  modelo_usado: string
+}
+
+export interface AnnouncementPublishResponse {
+  estado: string
+  id_contenido: number | null
+  fecha_publicacion: string
+  caracteres: number
+}
+
+export async function getAnnouncementWebhookStatus(): Promise<AnnouncementWebhookStatus> {
+  return (await apiRequest('/api/v1/content-workflow/announcements/status', {
+    method: 'GET',
+  })) as AnnouncementWebhookStatus
+}
+
+export async function generateAnnouncement(
+  borrador: string,
+): Promise<AnnouncementGenerateResponse> {
+  return (await apiRequest('/api/v1/content-workflow/announcements/generate', {
+    method: 'POST',
+    body: JSON.stringify({ borrador }),
+  })) as AnnouncementGenerateResponse
+}
+
+export async function publishAnnouncement(
+  contenido: string,
+  confirmado: boolean = true,
+): Promise<AnnouncementPublishResponse> {
+  return (await apiRequest('/api/v1/content-workflow/announcements/publish', {
+    method: 'POST',
+    body: JSON.stringify({ contenido, confirmado }),
+  })) as AnnouncementPublishResponse
+}

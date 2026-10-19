@@ -8,6 +8,9 @@ const API_BASE_URL = (
 
 export interface CommunityHighlight {
     id: number | string
+    id_mensaje?: number
+    is_published?: boolean
+    published_platforms?: string[]
     type: string
     title: string
     message: string
@@ -19,6 +22,33 @@ export interface CommunityHighlight {
     sentiment_score?: number
     relevance: number
     color: 'green' | 'blue' | 'purple' | string
+}
+
+export interface EmojiScorecard {
+    emoji: string
+    count: number
+    value?: number
+    sentiment: 'positive' | 'neutral' | 'negative' | string
+    label: string
+    description: string
+    trend: string
+}
+
+export interface CommunityAnalyticsResponse {
+    sentiment?: {
+        distribution?: Array<{ name: string; value: number }>
+        evolution?: Array<{ date: string; positive: number; neutral: number; negative: number }>
+    }
+    topics?: Array<{ topic: string; percentage: number }>
+    hashtags?: Array<{
+        id: number
+        name: string
+        mentions: number
+        growth: number | null
+    }>
+    emojis?: EmojiScorecard[]
+    brand_alignment_percentage?: number
+    analizados?: number
 }
 
 export interface CommunityHighlightsSummary {
@@ -105,6 +135,9 @@ export async function getCommunityLiveSummary(): Promise<CommunityLiveSummary> {
 
             return {
                 id: h.id || h.id_mensaje || idx + 1,
+                id_mensaje: typeof h.id_mensaje === 'number' ? h.id_mensaje : (typeof h.id === 'number' ? h.id : undefined),
+                is_published: Boolean(h.is_published),
+                published_platforms: Array.isArray(h.published_platforms) ? h.published_platforms : [],
                 type: h.type || (h.copy_final ? 'Historia curada' : 'Insight de comunidad'),
                 title: h.title || h.titulo || `Destacado #${idx + 1}`,
                 message: msgText,

@@ -1,22 +1,38 @@
 import {
+  AlertTriangle,
   BriefcaseBusiness,
   CheckCircle,
   Copy,
   FileText,
+  Megaphone,
   MessageCircle,
   Pencil,
   RotateCcw,
   Send,
   Sparkles,
+  Upload,
 } from 'lucide-react'
 
 import { useEffect, useRef, useState } from 'react'
+import { useLocation, useSearchParams } from 'react-router-dom'
 
-import { createContentDraft, generateComplaintResponse, regenerateContent } from '../api/contentWorkflow'
-import { getComplaintPublishPreview, publishComplaintResponse } from '../api/contentWorkflow'
-import type { ComplaintPublishPreview } from '../api/contentWorkflow'
+import {
+  createContentDraft,
+  generateAnnouncement,
+  generateComplaintResponse,
+  getAnnouncementWebhookStatus,
+  getComplaintPublishPreview,
+  getPublishedComplaintIds,
+  publishAnnouncement,
+  publishComplaintResponse,
+  regenerateContent,
+} from '../api/contentWorkflow'
+import type {
+  AnnouncementWebhookStatus,
+  ComplaintPublishPreview,
+} from '../api/contentWorkflow'
+import { getCommunityLiveSummary } from '../api/communityLive'
 import { updateMessageWorkflow } from '../api/messageWorkflow'
-import { getPublishedComplaintIds } from '../api/contentWorkflow'
 
 const AI_PROVIDERS = [
   'Groq (Llama 3.3)',
@@ -109,12 +125,88 @@ function buildDefaultDrafts(
 }
 
 function ContentStudio() {
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
+
+  const interactionParam =
+    searchParams.get('interaction') ||
+    (location.state as { interactionId?: number | string } | null)?.interactionId
+  const targetInteractionId = interactionParam
+    ? parseInt(String(interactionParam), 10)
+    : null
+
+  const [activeFormat, setActiveFormat] =
+    useState<ContentFormat>('linkedin')
+  const [copiedFormat, setCopiedFormat] =
+    useState<ContentFormat | null>(null)
+  const [showDiscordFiles, setShowDiscordFiles] =
+    useState(false)
+  const [drafts, setDrafts] = useState<
+    Record<ContentFormat, DraftState>
+  >(() => buildDefaultDrafts(null))
+
   const [workflowMessages, setWorkflowMessages] =
     useState<WorkflowMessage[]>([])
-  const [selectedWorkflowId, setSelectedWorkflowId] =
+  const [selectedMessageId, setSelectedMessageId] =
     useState<number | null>(null)
+  const selectedWorkflowId = selectedMessageId
+  const setSelectedWorkflowId = setSelectedMessageId
+
   const [workflowLoading, setWorkflowLoading] = useState(true)
   const [workflowError, setWorkflowError] = useState('')
+
+  const originalMessageRef = useRef<HTMLElement | null>(null)
+
+  // Estados de Anuncios Oficiales (Discord Webhook)
+  const [announcementStatus, setAnnouncementStatus] =
+    useState<AnnouncementWebhookStatus | null>(null)
+  const [announcementStatusLoading, setAnnouncementStatusLoading] =
+    useState(true)
+  const [draftText, setDraftText] = useState('')
+  const [isGeneratingAnnouncement, setIsGeneratingAnnouncement] =
+    useState(false)
+  const [announcementGenerateError, setAnnouncementGenerateError] =
+    useState('')
+  const [finalAnnouncement, setFinalAnnouncement] = useState('')
+  const [announcementPublishSuccess, setAnnouncementPublishSuccess] =
+    useState('')
+  const [announcementPublishError, setAnnouncementPublishError] =
+    useState('')
+  const [isPublishingAnnouncement, setIsPublishingAnnouncement] =
+    useState(false)
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    let isMounted = true
+    getAnnouncementWebhookStatus()
+      .then((status) => {
+        if (isMounted) {
+          setAnnouncementStatus(status)
+        }
+      })
+      .catch((err) => {
+        console.error('Error al consultar estado del webhook de anuncios:', err)
+        if (isMounted) {
+          setAnnouncementStatus({
+            configured: false,
+            channel_hint: 'anuncios',
+            max_characters_recommended: 1500,
+            max_characters_limit: 2000,
+            warning: 'No se pudo conectar con el servicio de anuncios',
+          })
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setAnnouncementStatusLoading(false)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -141,7 +233,7 @@ function ContentStudio() {
 
         const data: WorkflowMessagesResponse = await response.json()
 
-        const messages = data.messages
+        let messages = data.messages
           .filter(
             (item) =>
               (item.analysis.workflow_stage === 'en_redaccion' ||
@@ -163,14 +255,95 @@ function ContentStudio() {
           }))
           .sort((a, b) => b.interactionId - a.interactionId)
 
+        if (targetInteractionId && !Number.isNaN(targetInteractionId)) {
+          const existsInFiltered = messages.some(
+            (m) => m.interactionId === targetInteractionId,
+          )
+
+          if (!existsInFiltered) {
+            const foundInAll = data.messages.find(
+              (item) => item.message.interaction_id === targetInteractionId,
+            )
+            if (foundInAll) {
+              const extraMsg: WorkflowMessage = {
+                interactionId: foundInAll.message.interaction_id,
+                author: foundInAll.message.author_name || 'Usuario',
+                channel: foundInAll.message.channel_name,
+                content: foundInAll.message.content,
+                attachments: Array.isArray(foundInAll.message.attachments)
+                  ? foundInAll.message.attachments
+                  : [],
+                topic: foundInAll.analysis.topic,
+                sentiment: foundInAll.analysis.sentiment,
+                relevance: foundInAll.analysis.relevance,
+              }
+              messages = [extraMsg, ...messages]
+            } else {
+              try {
+                const liveSummary = await getCommunityLiveSummary()
+                const highlight = liveSummary.highlights?.find(
+                  (h) => (h.id_mensaje ?? Number(h.id)) === targetInteractionId,
+                )
+                if (highlight) {
+                  const extraMsg: WorkflowMessage = {
+                    interactionId: highlight.id_mensaje ?? Number(highlight.id),
+                    author: highlight.author || 'Usuario',
+                    channel: (highlight.channel || 'general').replace(/^#/, ''),
+                    content: highlight.message || '',
+                    attachments: [],
+                    topic: highlight.title || 'Historia destacada',
+                    sentiment:
+                      typeof highlight.sentiment === 'number'
+                        ? highlight.sentiment >= 0.5
+                          ? 'positive'
+                          : highlight.sentiment <= -0.5
+                          ? 'negative'
+                          : 'neutral'
+                        : String(highlight.sentiment || 'neutral'),
+                    relevance:
+                      typeof highlight.relevance === 'number'
+                        ? Math.round(
+                            highlight.relevance <= 1
+                              ? highlight.relevance * 100
+                              : highlight.relevance,
+                          )
+                        : 80,
+                  }
+                  messages = [extraMsg, ...messages]
+                }
+              } catch (err) {
+                console.error(
+                  'Error al consultar live-summary para interacción:',
+                  err,
+                )
+              }
+            }
+          }
+        }
+
         if (!controller.signal.aborted) {
           setWorkflowMessages(messages)
-          setSelectedWorkflowId((current) =>
-            messages.some((item) => item.interactionId === current)
-              ? current
-              : messages[0]?.interactionId ?? null,
-          )
-          if (messages.length > 0) {
+
+          const targetMsg =
+            targetInteractionId && !Number.isNaN(targetInteractionId)
+              ? messages.find((m) => m.interactionId === targetInteractionId)
+              : null
+
+          const initialSelectedId = targetMsg
+            ? targetMsg.interactionId
+            : messages[0]?.interactionId ?? null
+
+          setSelectedMessageId(initialSelectedId)
+
+          if (targetMsg) {
+            setDrafts(buildDefaultDrafts(targetMsg))
+            setTimeout(() => {
+              originalMessageRef.current?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start',
+              })
+            }, 100)
+          } else if (messages.length > 0) {
             setDrafts((current) => {
               if (current.linkedin.interactionId) return current
               return buildDefaultDrafts(messages[0])
@@ -195,7 +368,98 @@ function ContentStudio() {
     void loadWorkflowMessages()
 
     return () => controller.abort()
-  }, [])
+  }, [targetInteractionId])
+
+  useEffect(() => {
+    if (!targetInteractionId || Number.isNaN(targetInteractionId)) return
+    const targetMsg = workflowMessages.find(
+      (m) => m.interactionId === targetInteractionId,
+    )
+    if (targetMsg && targetMsg.interactionId !== selectedMessageId) {
+      setSelectedMessageId(targetMsg.interactionId)
+      setDrafts(buildDefaultDrafts(targetMsg))
+      setTimeout(() => {
+        originalMessageRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        })
+      }, 100)
+    }
+  }, [targetInteractionId, workflowMessages, selectedMessageId])
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.name.endsWith('.txt') && !file.name.endsWith('.md')) {
+      setAnnouncementGenerateError('Solo se admiten archivos .txt o .md')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const text = event.target?.result
+      if (typeof text === 'string') {
+        setDraftText(text)
+        setAnnouncementGenerateError('')
+      }
+    }
+    reader.onerror = () => {
+      setAnnouncementGenerateError('Error al leer el archivo seleccionado.')
+    }
+    reader.readAsText(file, 'utf-8')
+    e.target.value = ''
+  }
+
+  const handleGenerateAnnouncement = async () => {
+    const borrador = draftText.trim()
+    if (!borrador || borrador.length > 10000) return
+
+    setIsGeneratingAnnouncement(true)
+    setAnnouncementGenerateError('')
+
+    try {
+      const result = await generateAnnouncement(borrador)
+      setFinalAnnouncement(result.anuncio_generado)
+    } catch (error) {
+      setAnnouncementGenerateError(
+        error instanceof Error
+          ? error.message
+          : 'No fue posible generar el anuncio con IA.',
+      )
+    } finally {
+      setIsGeneratingAnnouncement(false)
+    }
+  }
+
+  const handleConfirmPublish = async () => {
+    const content = finalAnnouncement.trim()
+    if (!content || content.length > 2000 || !announcementStatus?.configured)
+      return
+
+    setIsPublishingAnnouncement(true)
+    setAnnouncementPublishError('')
+    setAnnouncementPublishSuccess('')
+
+    try {
+      const res = await publishAnnouncement(content, true)
+      setShowConfirmModal(false)
+      setAnnouncementPublishSuccess(
+        `✓ Anuncio publicado exitosamente en #${announcementStatus.channel_hint || 'anuncios'}. (ID #${res.id_contenido ?? 'auditado'}, ${res.caracteres} caracteres).`,
+      )
+      setFinalAnnouncement('')
+      setDraftText('')
+    } catch (error) {
+      setAnnouncementPublishError(
+        error instanceof Error
+          ? error.message
+          : 'Error al publicar anuncio en Discord.',
+      )
+      setShowConfirmModal(false)
+    } finally {
+      setIsPublishingAnnouncement(false)
+    }
+  }
 
   const selectedWorkflowMessage =
     workflowMessages.find(
@@ -345,18 +609,6 @@ function ContentStudio() {
 
     return () => controller.abort()
   }, [])
-
-  const [activeFormat, setActiveFormat] =
-    useState<ContentFormat>('linkedin')
-
-  const [copiedFormat, setCopiedFormat] =
-    useState<ContentFormat | null>(null)
-  const [showDiscordFiles, setShowDiscordFiles] =
-    useState(false)
-
-  const [drafts, setDrafts] = useState<
-    Record<ContentFormat, DraftState>
-  >(() => buildDefaultDrafts(null))
 
   const discordFiles = (drafts.discord.attachments ?? []).filter(
     (file) =>
@@ -668,6 +920,297 @@ function ContentStudio() {
         </div>
       </div>
 
+      {/* Panel de Anuncios Oficiales de la Comunidad (Discord Webhook) */}
+      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        {/* Cabecera del Panel */}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600">
+              <Megaphone size={20} />
+            </div>
+
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-slate-900">
+                  Panel de Anuncios Oficiales de la Comunidad (Discord Webhook)
+                </h3>
+
+                <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+                  #{announcementStatus?.channel_hint || 'anuncios'}
+                </span>
+              </div>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Redacta comunicados oficiales, optimízalos con IA o carga archivos .txt/.md y publícalos directamente vía Webhook.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {announcementStatusLoading ? (
+              <span className="text-xs text-slate-400">Consultando webhook...</span>
+            ) : announcementStatus?.configured ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                Webhook configurado
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                Webhook no configurado
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Alerta ámbar si configured === false */}
+        {!announcementStatusLoading && announcementStatus && !announcementStatus.configured && (
+          <div
+            role="alert"
+            className="mt-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          >
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-semibold">
+                ⚠️ Webhook de Discord no configurado en el servidor (DISCORD_WEBHOOK_ANUNCIOS)
+              </p>
+              <p className="mt-0.5 text-xs text-amber-800">
+                {announcementStatus.warning || 'La publicación directa a Discord está bloqueada preventivamente hasta que se configure la variable de entorno.'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Notificación de éxito o error en publicación */}
+        {announcementPublishSuccess && (
+          <div
+            role="status"
+            className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle size={18} className="shrink-0 text-emerald-600" />
+              <span>{announcementPublishSuccess}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAnnouncementPublishSuccess('')}
+              className="text-xs font-semibold text-emerald-700 hover:underline"
+            >
+              Cerrar
+            </button>
+          </div>
+        )}
+
+        {announcementPublishError && (
+          <div
+            role="alert"
+            className="mt-4 flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"
+          >
+            <span>{announcementPublishError}</span>
+            <button
+              type="button"
+              onClick={() => setAnnouncementPublishError('')}
+              className="text-xs font-semibold text-rose-700 hover:underline"
+            >
+              Cerrar
+            </button>
+          </div>
+        )}
+
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Carga de Borrador y Generación */}
+          <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50/50 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor="announcement-draft"
+                className="text-xs font-bold uppercase tracking-wide text-slate-700"
+              >
+                Borrador del anuncio
+              </label>
+              <span
+                className={`text-xs font-medium ${
+                  draftText.length > 10000 ? 'font-bold text-rose-600' : 'text-slate-500'
+                }`}
+              >
+                {draftText.length.toLocaleString()} / 10,000 caracteres
+              </span>
+            </div>
+
+            <textarea
+              id="announcement-draft"
+              value={draftText}
+              onChange={(e) => {
+                setDraftText(e.target.value)
+                setAnnouncementGenerateError('')
+              }}
+              placeholder="Escribe aquí el borrador de anuncio o carga un archivo .txt/.md..."
+              rows={8}
+              className="mt-2.5 w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white p-3.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+            />
+
+            {draftText.length > 10000 && (
+              <p className="mt-1.5 text-xs font-medium text-rose-600">
+                El borrador excede el límite máximo de 10,000 caracteres permitidos.
+              </p>
+            )}
+
+            {announcementGenerateError && (
+              <div
+                role="alert"
+                className="mt-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"
+              >
+                {announcementGenerateError}
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/60 pt-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".txt,.md"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <Upload size={14} />
+                  Cargar archivo .txt / .md
+                </button>
+
+                {draftText && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraftText('')
+                      setAnnouncementGenerateError('')
+                    }}
+                    className="text-xs text-slate-400 transition hover:text-slate-600"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  isGeneratingAnnouncement ||
+                  !draftText.trim() ||
+                  draftText.length > 10000
+                }
+                onClick={handleGenerateAnnouncement}
+                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
+              >
+                {isGeneratingAnnouncement ? (
+                  <RotateCcw size={14} className="animate-spin" />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+                {isGeneratingAnnouncement ? 'Generando anuncio con IA...' : 'Generar anuncio con IA'}
+              </button>
+            </div>
+          </div>
+
+          {/* Editor de Anuncio Final y Semáforo de Caracteres */}
+          <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50/50 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor="announcement-final"
+                className="text-xs font-bold uppercase tracking-wide text-slate-700"
+              >
+                Editor de Anuncio Final
+              </label>
+
+              {/* Semáforo cromático */}
+              <div className="flex items-center gap-2">
+                <span
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
+                    finalAnnouncement.length <= 1500
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : finalAnnouncement.length <= 2000
+                      ? 'border-amber-200 bg-amber-50 text-amber-700'
+                      : 'border-rose-200 bg-rose-50 text-rose-700'
+                  }`}
+                >
+                  {finalAnnouncement.length <= 1500
+                    ? 'Recomendado por manual de marca'
+                    : finalAnnouncement.length <= 2000
+                    ? 'Extenso pero permitido por Discord'
+                    : 'Excede el límite máximo de 2000 caracteres de Discord'}
+                </span>
+                <span className="text-xs font-bold text-slate-700">
+                  {finalAnnouncement.length} / 2000
+                </span>
+              </div>
+            </div>
+
+            <textarea
+              id="announcement-final"
+              value={finalAnnouncement}
+              onChange={(e) => {
+                setFinalAnnouncement(e.target.value)
+                setAnnouncementPublishError('')
+                setAnnouncementPublishSuccess('')
+              }}
+              placeholder="El anuncio generado aparecerá aquí para revisión final, o puedes redactarlo directamente..."
+              rows={8}
+              className="mt-2.5 w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white p-3.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+            />
+
+            {/* Barra de progreso cromática */}
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  finalAnnouncement.length <= 1500
+                    ? 'bg-emerald-500'
+                    : finalAnnouncement.length <= 2000
+                    ? 'bg-amber-500'
+                    : 'bg-rose-500'
+                }`}
+                style={{
+                  width: `${Math.min(100, (finalAnnouncement.length / 2000) * 100)}%`,
+                }}
+              />
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/60 pt-3">
+              <div className="text-xs text-slate-500">
+                {finalAnnouncement.length > 2000 ? (
+                  <span className="font-semibold text-rose-600">
+                    Reduce {finalAnnouncement.length - 2000} caracteres para cumplir con Discord
+                  </span>
+                ) : !announcementStatus?.configured ? (
+                  <span className="text-amber-700">
+                    Publicación deshabilitada (webhook ausente)
+                  </span>
+                ) : (
+                  <span>Listo para publicar en Discord</span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  !finalAnnouncement.trim() ||
+                  finalAnnouncement.length > 2000 ||
+                  !announcementStatus?.configured ||
+                  isPublishingAnnouncement
+                }
+                onClick={() => setShowConfirmModal(true)}
+                className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+              >
+                <Send size={14} />
+                Publicar anuncio en Discord
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
       <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -760,7 +1303,10 @@ function ContentStudio() {
       </section>
 
       {/* Mensaje original */}
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section
+        ref={originalMessageRef}
+        className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
@@ -1578,6 +2124,89 @@ function ContentStudio() {
               </button>
             </div>
           </section>
+        </div>
+      )}
+
+      {/* Modal de confirmación para publicación de Anuncio Oficial */}
+      {showConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-announcement-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isPublishingAnnouncement) {
+              setShowConfirmModal(false)
+            }
+          }}
+        >
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3
+                  id="confirm-announcement-title"
+                  className="text-lg font-bold text-slate-900"
+                >
+                  Confirmar publicación de anuncio en Discord
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  El comunicado se despachará al canal oficial{' '}
+                  <strong className="text-indigo-600">
+                    #{announcementStatus?.channel_hint || 'anuncios'}
+                  </strong>{' '}
+                  mediante el webhook configurado.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={isPublishingAnnouncement}
+                onClick={() => setShowConfirmModal(false)}
+                aria-label="Cerrar modal"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+              <div className="flex items-center justify-between text-[11px] font-semibold uppercase text-slate-500">
+                <span>Vista previa del mensaje</span>
+                <span>{finalAnnouncement.length} caracteres</span>
+              </div>
+              <p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 font-mono text-xs leading-relaxed text-slate-800">
+                {finalAnnouncement.trim()}
+              </p>
+            </div>
+
+            <p className="mt-3 text-[11px] font-medium text-amber-700">
+              ⚠️ Esta acción es irreversible: el anuncio será visible inmediatamente para los miembros de la comunidad y quedará registrado en la auditoría.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={isPublishingAnnouncement}
+                onClick={() => setShowConfirmModal(false)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isPublishingAnnouncement}
+                onClick={handleConfirmPublish}
+                className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+              >
+                {isPublishingAnnouncement ? (
+                  <RotateCcw size={14} className="animate-spin" />
+                ) : (
+                  <Send size={14} />
+                )}
+                {isPublishingAnnouncement ? 'Publicando...' : 'Confirmar y publicar'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -1,9 +1,6 @@
-import { updateMessageWorkflow } from '../api/messageWorkflow'
-import { updateMessageCuration } from '../api/messageCuration'
 import {
     AlertTriangle,
     BarChart3,
-    CheckCircle2,
     ChevronRight,
     Hash,
     Lightbulb,
@@ -16,37 +13,18 @@ import {
 } from 'lucide-react'
 
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 
-
-type IncomingInteraction = {
-    id: string
-    author: string
-    channel: string
-    content: string
-    sentiment: 'positive' | 'neutral' | 'negative'
-    sentimentLabel: string
-    topic: string
-    keywords: string[]
-    relevance: number
-}
-
-type MotorMessageResponse = {
+type CommunityMessagesResponse = {
+    total?: number
     messages: Array<{
-        message: {
-            interaction_id: number
-            message_id: string
-            author_name: string
-            channel_name: string
-            content: string
+        message?: {
+            content?: string
         }
-        analysis: {
-            sentiment: 'positive' | 'neutral' | 'negative'
-            topic: string
-            keywords: string[]
-            relevance: number
-            workflow_stage: string
-            curation_status: 'pending' | 'curated' | 'discarded'
+        analysis?: {
+            sentiment?: 'positive' | 'neutral' | 'negative'
+            topic?: string
+            relevance?: number
         }
     }>
 }
@@ -68,13 +46,21 @@ type MotorAnalyticsResponse = {
         mentions: number
         growth: number | null
     }>
+    emojis?: Array<{
+        emoji: string
+        count: number
+        sentiment: string
+        label: string
+        description: string
+        trend: string
+    }>
+    brand_alignment_percentage?: number
 }
 
 const topicIcons = [BarChart3, MessageSquare, ShieldCheck, Sparkles]
 
 function Analytics() {
     const navigate = useNavigate()
-    const location = useLocation()
 
     const [motorAnalytics, setMotorAnalytics] =
         useState<MotorAnalyticsResponse | null>(null)
@@ -108,106 +94,6 @@ function Analytics() {
         return () => controller.abort()
     }, [])
 
-    const [analysisQueue, setAnalysisQueue] = useState<
-        Array<{
-            interactionId: number
-            curationStatus: 'pending' | 'curated' | 'discarded'
-            interaction: IncomingInteraction
-        }>
-    >([])
-    const [queueError, setQueueError] = useState<string | null>(null)
-    const [queueLoading, setQueueLoading] = useState(true)
-    const [sendingToContent, setSendingToContent] = useState(false)
-    const [workflowError, setWorkflowError] = useState<string | null>(null)
-
-    const interactionParam = new URLSearchParams(location.search)
-        .get('interaction')
-
-    const interactionId = interactionParam
-        ? Number(interactionParam)
-        : null
-
-    useEffect(() => {
-        const controller = new AbortController()
-
-        const loadQueue = async () => {
-            setQueueLoading(true)
-            setQueueError(null)
-
-            try {
-                const response = await fetch(
-                    `${MOTOR_API_URL}/api/community/messages?limit=500`,
-                    { signal: controller.signal },
-                )
-
-                if (!response.ok) {
-                    throw new Error('No se pudo consultar la bandeja de Analisis')
-                }
-
-                const data: MotorMessageResponse = await response.json()
-
-                const queue = data.messages
-                    .filter(
-                        (item) =>
-                            item.analysis.workflow_stage === 'en_analisis' &&
-                        item.analysis.curation_status !== 'discarded',
-                    )
-                    .map((item) => {
-                        const sentiment = item.analysis.sentiment
-                        const sentimentLabel = {
-                            positive: 'Positivo',
-                            neutral: 'Neutral',
-                            negative: 'Negativo',
-                        }[sentiment]
-
-                        return {
-                            interactionId: item.message.interaction_id,
-                            curationStatus: item.analysis.curation_status,
-                            interaction: {
-                                id: item.message.message_id,
-                                author: item.message.author_name || 'Usuario',
-                                channel: item.message.channel_name,
-                                content: item.message.content,
-                                sentiment,
-                                sentimentLabel,
-                                topic: item.analysis.topic,
-                                keywords: item.analysis.keywords || [],
-                                relevance: item.analysis.relevance,
-                            },
-                        }
-                    })
-
-                if (!controller.signal.aborted) {
-                    setAnalysisQueue(queue)
-                }
-            } catch (error) {
-                if (!controller.signal.aborted) {
-                    setQueueError(
-                        error instanceof Error
-                            ? error.message
-                            : 'No fue posible recuperar la bandeja',
-                    )
-                }
-            } finally {
-                if (!controller.signal.aborted) {
-                    setQueueLoading(false)
-                }
-            }
-        }
-
-        void loadQueue()
-
-        return () => controller.abort()
-    }, [location.key])
-
-    const selectedQueueItem =
-        analysisQueue.find(
-            (item) => item.interactionId === interactionId,
-        ) ?? analysisQueue[0]
-
-    const incomingInteraction =
-        selectedQueueItem?.interaction ?? null
-
     const [messageStats, setMessageStats] = useState<{
         total: number
         positive: number
@@ -230,9 +116,7 @@ function Analytics() {
                 )
                 if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
-                const data = (await response.json()) as MotorMessageResponse & {
-                    total?: number
-                }
+                const data = (await response.json()) as CommunityMessagesResponse
 
                 const messages = data.messages ?? []
                 const analyzed = messages.filter(
@@ -240,7 +124,7 @@ function Analytics() {
                 )
                 const relevance = analyzed.length
                     ? analyzed.reduce(
-                          (sum, item) => sum + Number(item.analysis.relevance),
+                          (sum, item) => sum + Number(item.analysis?.relevance ?? 0),
                           0,
                       ) / analyzed.length
                     : null
@@ -248,7 +132,7 @@ function Analytics() {
                 const questions = messages.filter((item) => {
                     const content = item.message?.content?.trim() ?? ''
                     return content.includes('?') ||
-                        content.includes('?')
+                        content.includes('¿')
                 })
 
                 const questionTopics = new Map<string, number>()
@@ -282,7 +166,7 @@ function Analytics() {
                     priorityAlerts: messages.filter(
                         (item) =>
                             item.analysis?.sentiment === 'negative' &&
-                            Number(item.analysis?.relevance) >= 70,
+                            Number(item.analysis?.relevance ?? 0) >= 70,
                     ).length,
                     questionCount: questions.length,
                     frequentQuestionTopic:
@@ -330,7 +214,10 @@ function Analytics() {
         icon: topicIcons[index % topicIcons.length],
     }))
 
-    const brandAlignment = 'N/D'
+    const brandAlignment =
+        typeof motorAnalytics?.brand_alignment_percentage === 'number'
+            ? motorAnalytics.brand_alignment_percentage
+            : 100.0
 
     const leadingTopic = [...(motorAnalytics?.topics ?? [])]
         .sort((a, b) => b.percentage - a.percentage)[0]
@@ -353,80 +240,6 @@ function Analytics() {
                     ? 'Sin datos disponibles sobre mensajes que requieren atención.'
                     : `${messageStats.alerts} mensajes negativos detectados; ${messageStats.priorityAlerts} con relevancia alta (70 o más).`,
         },
-    }
-
-
-    const [savingCuration, setSavingCuration] = useState(false)
-
-    const handleReviewCuration = async (
-        status: 'curated' | 'discarded',
-    ) => {
-        if (!selectedQueueItem || savingCuration) return
-
-        const id = selectedQueueItem.interactionId
-        setSavingCuration(true)
-        setWorkflowError(null)
-
-        try {
-            await updateMessageCuration(id, status)
-
-            setAnalysisQueue((current) =>
-                status === 'discarded'
-                    ? current.filter((item) => item.interactionId !== id)
-                    : current.map((item) =>
-                          item.interactionId === id
-                              ? { ...item, curationStatus: status }
-                              : item,
-                      ),
-            )
-        } catch (error) {
-            setWorkflowError(
-                error instanceof Error
-                    ? error.message
-                    : 'No fue posible guardar la curaduría',
-            )
-        } finally {
-            setSavingCuration(false)
-        }
-    }
-
-    const handleSendToContent = async (
-        interaction: IncomingInteraction,
-    ) => {
-        if (sendingToContent || !selectedQueueItem) return
-
-        if (selectedQueueItem.curationStatus !== 'curated') {
-            setWorkflowError(
-                'Este mensaje sigue pendiente de curaduría. Debe ser curado antes de enviarlo a Redacción.',
-            )
-            return
-        }
-
-        setSendingToContent(true)
-        setWorkflowError(null)
-
-        try {
-            await updateMessageWorkflow(
-                selectedQueueItem.interactionId,
-                'en_redaccion',
-            )
-
-            navigate('/content', {
-                state: {
-                    source: 'analytics',
-                    interaction,
-                    interactionId: selectedQueueItem.interactionId,
-                },
-            })
-        } catch (error) {
-            setWorkflowError(
-                error instanceof Error
-                    ? error.message
-                    : 'No fue posible enviar el mensaje a Redaccion',
-            )
-        } finally {
-            setSendingToContent(false)
-        }
     }
 
     return (
@@ -506,7 +319,7 @@ function Analytics() {
 
                     <MetricCard
                         label="Alineación de marca"
-                        value={String(brandAlignment)}
+                        value={`${brandAlignment.toFixed(1)}%`}
                         helper="Consistencia de tono CloudEdTech"
                         icon={<ShieldCheck size={19} />}
                         iconClass="bg-emerald-100 text-emerald-600"
@@ -548,46 +361,52 @@ function Analytics() {
                     </span>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                    {([] as Array<{emoji: string; label: string; description: string; value: number; trend: string}>).map((item) => {
-                        const negative = item.trend.startsWith('-')
+                {(!motorAnalytics?.emojis || motorAnalytics.emojis.length === 0) ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-center text-xs text-slate-500">
+                        Aún no se han detectado emojis en los mensajes analizados de la comunidad.
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                        {motorAnalytics.emojis.map((item, idx) => {
+                            const isNegative = item.trend.startsWith('-')
 
-                        return (
-                            <div
-                                key={item.label}
-                                className="rounded-xl border border-slate-200 bg-slate-50/50 p-4"
-                            >
-                                <div className="flex items-start justify-between">
-                                    <span className="text-2xl">
-                                        {item.emoji}
-                                    </span>
+                            return (
+                                <div
+                                    key={`${item.emoji}-${item.label}-${idx}`}
+                                    className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-slate-300"
+                                >
+                                    <div className="flex items-start justify-between">
+                                        <span className="text-2xl" role="img" aria-label={item.label}>
+                                            {item.emoji}
+                                        </span>
 
-                                    <span
-                                        className={`rounded-md px-2 py-1 text-[10px] font-bold ${
-                                            negative
-                                                ? 'bg-rose-50 text-rose-600'
-                                                : 'bg-emerald-50 text-emerald-600'
-                                        }`}
-                                    >
-                                        {item.trend}
-                                    </span>
+                                        <span
+                                            className={`rounded-md px-2 py-1 text-[10px] font-bold ${
+                                                isNegative
+                                                    ? 'bg-rose-50 text-rose-600'
+                                                    : 'bg-emerald-50 text-emerald-600'
+                                            }`}
+                                        >
+                                            {item.trend}
+                                        </span>
+                                    </div>
+
+                                    <p className="mt-3 text-xl font-black text-slate-900">
+                                        {item.count}
+                                    </p>
+
+                                    <p className="mt-1 text-xs font-semibold text-slate-700">
+                                        {item.label}
+                                    </p>
+
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                        {item.description}
+                                    </p>
                                 </div>
-
-                                <p className="mt-3 text-xl font-black text-slate-900">
-                                    {item.value}
-                                </p>
-
-                                <p className="mt-1 text-xs font-semibold text-slate-700">
-                                    {item.label}
-                                </p>
-
-                                <p className="mt-1 text-[11px] text-slate-400">
-                                    {item.description}
-                                </p>
-                            </div>
-                        )
-                    })}
-                </div>
+                            )
+                        })}
+                    </div>
+                )}
             </section>
 
             {/* HASHTAGS + TEMAS */}
@@ -735,275 +554,6 @@ function Analytics() {
                 </section>
             </div>
 
-            {/* BANDEJA PERSISTENTE DE ANALISIS */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <h2 className="text-base font-bold text-slate-900">
-                            Bandeja de mensajes en Analisis
-                        </h2>
-                        <p className="mt-1 text-xs text-slate-500">
-                            Mensajes guardados en el flujo de trabajo.
-                        </p>
-                    </div>
-                    <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-600">
-                        {analysisQueue.length} en analisis
-                    </span>
-                </div>
-
-                {queueLoading && (
-                    <p className="text-sm text-slate-500">
-                        Cargando mensajes...
-                    </p>
-                )}
-
-                {queueError && (
-                    <p role="alert" className="text-sm text-rose-600">
-                        {queueError}
-                    </p>
-                )}
-
-                {!queueLoading && !queueError && analysisQueue.length === 0 && (
-                    <p className="text-sm text-slate-500">
-                        No hay mensajes pendientes de analisis.
-                    </p>
-                )}
-
-                {analysisQueue.length > 0 && (
-                    <div className="grid gap-2 md:grid-cols-2">
-                        {analysisQueue.map((item) => (
-                            <button
-                                key={item.interactionId}
-                                type="button"
-                                onClick={() =>
-                                    navigate(
-                                        `/analytics?interaction=${item.interactionId}`,
-                                    )
-                                }
-                                className={`rounded-xl border p-4 text-left transition ${
-                                    selectedQueueItem?.interactionId === item.interactionId
-                                        ? 'border-orange-400 bg-orange-50'
-                                        : 'border-slate-200 hover:border-orange-200'
-                                }`}
-                            >
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-bold text-slate-800">
-                                        {item.interaction.author}
-                                    </span>
-                                    <span className="text-[11px] text-slate-500">
-                                        #{item.interaction.channel}
-                                    </span>
-                                </div>
-                                <p className="mt-2 line-clamp-2 text-xs text-slate-600">
-                                    {item.interaction.content}
-                                </p>
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </section>
-
-            {workflowError && (
-                <div
-                    role="alert"
-                    className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
-                >
-                    {workflowError}
-                </div>
-            )}
-
-            {/* MENSAJES LISTOS PARA COPYWRITING */}
-            <section>
-                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-2">
-                        <CheckCircle2
-                            size={19}
-                            className="text-emerald-600"
-                        />
-
-                        <div>
-                            <h2 className="font-bold text-slate-900">
-                                Revisión de mensajes y curaduría
-                            </h2>
-
-                            <p className="mt-0.5 text-xs text-slate-500">
-                                Revisa las interacciones antes de habilitar su envío a Redacción.
-                            </p>
-                        </div>
-                    </div>
-
-                    <span className="text-xs font-bold text-slate-600">
-                        {incomingInteraction ? '1 mensaje seleccionado' : 'Sin selección desde Ingesta'}
-                    </span>
-                </div>
-
-                {incomingInteraction ? (
-                    <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                        <div className="flex flex-col gap-5">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#080A27] text-xs font-bold text-white">
-                                        {incomingInteraction.author
-                                            .split(/[\s._-]+/)
-                                            .filter(Boolean)
-                                            .slice(0, 2)
-                                            .map((part) => part[0]?.toUpperCase())
-                                            .join('')}
-                                    </div>
-
-                                    <div>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <p className="font-bold text-slate-900">
-                                                {incomingInteraction.author}
-                                            </p>
-
-                                            <span className="rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600">
-                                                #{incomingInteraction.channel}
-                                            </span>
-                                        </div>
-
-                                        <p className="mt-1 text-xs text-slate-500">
-                                            Tema: {incomingInteraction.topic}
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                                    {selectedQueueItem?.curationStatus === 'curated'
-                                        ? 'Listo para Copywriting'
-                                        : 'Pendiente de curadur?a'}
-                                </span>
-                            </div>
-
-                            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
-                                <p className="text-sm italic leading-6 text-slate-700">
-                                    “{incomingInteraction.content}”
-                                </p>
-                            </div>
-
-                            {incomingInteraction.keywords.length > 0 && (
-                                <div className="flex flex-wrap gap-2">
-                                    {incomingInteraction.keywords.map((keyword) => (
-                                        <span
-                                            key={keyword}
-                                            className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600"
-                                        >
-                                            #{keyword}
-                                        </span>
-                                    ))}
-                                </div>
-                            )}
-
-                            <div className="flex flex-col gap-4 border-t border-slate-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
-                                <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-slate-500">
-                                    <span>
-                                        Relevancia:{' '}
-                                        <strong className="text-slate-800">
-                                            {incomingInteraction.relevance}/100
-                                        </strong>
-                                    </span>
-
-                                    <span>
-                                        Alineación de marca:{' '}
-                                        <strong className="text-slate-800">
-                                            {brandAlignment}%
-                                        </strong>
-                                    </span>
-
-                                    <span>
-                                        Sentimiento:{' '}
-                                        <strong
-                                            className={
-                                                incomingInteraction.sentiment === 'positive'
-                                                    ? 'text-emerald-600'
-                                                    : incomingInteraction.sentiment === 'negative'
-                                                      ? 'text-rose-600'
-                                                      : 'text-blue-600'
-                                            }
-                                        >
-                                            {incomingInteraction.sentimentLabel}
-                                        </strong>
-                                    </span>
-                                </div>
-
-                                {selectedQueueItem?.curationStatus === 'pending' && (
-                                    <div className="flex flex-wrap gap-2">
-                                        <button
-                                            type="button"
-                                            disabled={savingCuration}
-                                            onClick={() => void handleReviewCuration('curated')}
-                                            className="rounded-xl bg-emerald-600 px-4 py-3 text-xs font-bold text-white disabled:opacity-50"
-                                        >
-                                            Aprobar curaduría
-                                        </button>
-                                        <button
-                                            type="button"
-                                            disabled={savingCuration}
-                                            onClick={() => void handleReviewCuration('discarded')}
-                                            className="rounded-xl border border-rose-300 px-4 py-3 text-xs font-bold text-rose-600 disabled:opacity-50"
-                                        >
-                                            Descartar
-                                        </button>
-                                    </div>
-                                )}
-
-                                {selectedQueueItem?.curationStatus === 'pending' && (
-                                    <p className="text-xs text-amber-700">
-                                        Pendiente de curaduría: aprueba el mensaje
-                                        para habilitar su envío a Redacción.
-                                    </p>
-                                )}
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        void handleSendToContent(incomingInteraction)
-                                    }
-                                    disabled={
-                                        sendingToContent ||
-                                        savingCuration ||
-                                        selectedQueueItem?.curationStatus !== 'curated'
-                                    }
-                                    aria-busy={sendingToContent}
-                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-xs font-bold text-white shadow-sm transition ${
-                                        selectedQueueItem?.curationStatus === 'curated'
-                                            ? 'bg-orange-500 hover:bg-orange-600'
-                                            : 'cursor-not-allowed bg-slate-400 opacity-70'
-                                    }`}
-                                >
-                                    Enviar a Redacción de Contenidos
-                                    <ChevronRight size={15} />
-                                </button>
-                            </div>
-                        </div>
-                    </article>
-                ) : (
-                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
-                        <MessageSquare
-                            size={32}
-                            className="mx-auto text-slate-300"
-                        />
-
-                        <h3 className="mt-3 text-sm font-bold text-slate-700">
-                            Aún no hay una interacción seleccionada
-                        </h3>
-
-                        <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-slate-500">
-                            Desde Ingesta utiliza el botón Analizar para enviar una interacción a esta etapa del flujo.
-                        </p>
-
-                        <button
-                            type="button"
-                            onClick={() => navigate('/messages')}
-                            className="mt-4 inline-flex items-center gap-1 text-xs font-bold text-orange-500 hover:text-orange-600"
-                        >
-                            Ir a Ingesta
-                            <ChevronRight size={14} />
-                        </button>
-                    </div>
-                )}
-            </section>
-
             {/* INSIGHTS */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                 <InsightCard
@@ -1045,13 +595,7 @@ function Analytics() {
                         </p>
 
                         <p className="mt-1 text-xs leading-5 text-blue-700">
-                            CloudEdTech consulta estad?sticas de sentimiento,
-                            temas y hashtags desde el Motor IA. Las preguntas
-                            frecuentes y alertas se calculan con los mensajes
-                            reales disponibles de Discord. El flujo editorial
-                            conecta Ingesta, An?lisis, Redacci?n de Contenidos
-                            y Aprobaciones. Algunas m?tricas complementarias
-                            siguen pendientes de integraci?n.
+                            La pestaña de Análisis consolida la telemetría inteligente de la comunidad: distribución de sentimiento, detección semántica de temas clave, tendencias de hashtags y frecuencia de emojis calculados a partir de los mensajes reales de Discord. Permite auditar el comportamiento comunitario e identificar oportunidades editoriales sin intermediación de curaduría.
                         </p>
                     </div>
                 </div>

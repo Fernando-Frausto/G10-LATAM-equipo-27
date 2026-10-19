@@ -11,6 +11,7 @@ import sqlite3
 from fastapi.testclient import TestClient
 
 import puente_motor_ia
+import anuncios_discord
 
 
 # --- Fixtures y Mocks Auxiliares ---
@@ -2175,3 +2176,327 @@ def test_content_workflow_drafts_validacion_campos_requeridos(client):
     }
     resp = client.post("/api/v1/content-workflow/drafts", json=payload_sin_contenido)
     assert resp.status_code in (400, 422)
+
+
+# ==============================================================================
+# Spec 013: Análisis Integral, Historias Destacadas del Dashboard y Webhook de Anuncios
+# ==============================================================================
+
+def test_community_analytics_incluye_emojis_y_brand_alignment(client):
+    """
+    (Spec 013 - RF-02, RF-03) GET /api/community/analytics
+    Valida que retorne 'emojis' (lista de objetos con {emoji, count, sentiment, label, description, trend})
+    y 'brand_alignment_percentage' (float), manteniendo intactos sentiment, topics y hashtags.
+    """
+    # Insertar interacciones de prueba con emojis Unicode (ZWJ) y sintaxis de Discord
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, enviado_en, creado_en)
+            VALUES 
+            (801, 'hash_801', 'Discord', 'Semana_01', 'mariana_dev', '#general', 'mensaje', '¡Gran avance en el proyecto! 🚀✨ Mucho éxito ❤️', '2026-10-18T10:00:00+00:00', '2026-10-18T10:00:00+00:00'),
+            (802, 'hash_802', 'Discord', 'Semana_01', 'carlos_g', '#general', 'mensaje', 'Nuevo release con <:python_custom:12345678> y <a:fire_anim:98765432> 💡', '2026-10-18T11:00:00+00:00', '2026-10-18T11:00:00+00:00')
+            """
+        )
+        conn.commit()
+
+    resp = client.get("/api/community/analytics")
+    assert resp.status_code == 200, f"Error {resp.status_code}: {resp.text}"
+    data = resp.json()
+
+    # Mantener intactos sentiment, topics y hashtags
+    assert "sentiment" in data, "Falta clave preexistente 'sentiment'"
+    assert "topics" in data, "Falta clave preexistente 'topics'"
+    assert "hashtags" in data, "Falta clave preexistente 'hashtags'"
+
+    # Nuevos campos de Spec 013
+    assert "emojis" in data, "Falta clave 'emojis' requerida por Spec 013"
+    assert isinstance(data["emojis"], list), "'emojis' debe ser una lista"
+    assert len(data["emojis"]) > 0, "Se esperaba detectar al menos un emoji en las interacciones"
+
+    for item in data["emojis"]:
+        for campo in ("emoji", "count", "sentiment", "label", "description", "trend"):
+            assert campo in item, f"Falta el campo obligatorio '{campo}' en el objeto emoji: {item}"
+        assert isinstance(item["emoji"], str)
+        assert isinstance(item["count"], int)
+        assert isinstance(item["sentiment"], str)
+        assert isinstance(item["label"], str)
+        assert isinstance(item["description"], str)
+        assert isinstance(item["trend"], str)
+
+    assert "brand_alignment_percentage" in data, "Falta 'brand_alignment_percentage' requerida por Spec 013"
+    assert isinstance(data["brand_alignment_percentage"], (int, float))
+    assert 0.0 <= float(data["brand_alignment_percentage"]) <= 100.0
+
+
+def test_community_analytics_proteccion_division_cero_corpus_vacio(client):
+    """
+    (Spec 013 - RF-03) GET /api/community/analytics
+    Valida que ante interacciones vacías no arroje ZeroDivisionError y retorne brand_alignment_percentage: 100.0 y emojis: [].
+    """
+    with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"interacciones": [], "kpis": []}):
+        with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+            conn.execute("DELETE FROM interacciones")
+            conn.commit()
+
+        # Usar cliente sin re-raise de excepciones no capturadas de endpoints heredados para validar código HTTP 200
+        cliente_seguro = TestClient(puente_motor_ia.app, raise_server_exceptions=False)
+        resp = cliente_seguro.get("/api/community/analytics")
+        assert resp.status_code == 200, f"Error {resp.status_code}: {resp.text}"
+        data = resp.json()
+
+        assert "brand_alignment_percentage" in data, "Falta 'brand_alignment_percentage' en respuesta vacía"
+        assert float(data["brand_alignment_percentage"]) == 100.0, (
+            f"Se esperaba brand_alignment_percentage 100.0 ante corpus vacío, recibido {data.get('brand_alignment_percentage')}"
+        )
+        assert "emojis" in data, "Falta 'emojis' en respuesta vacía"
+        assert data["emojis"] == [], f"Se esperaba emojis [] ante corpus vacío, recibido {data.get('emojis')}"
+
+
+def test_community_live_summary_y_alias_filtran_autores_sinteticos(client):
+    """
+    (Spec 013 - RF-04, RF-05) GET /api/v1/community/live-summary y GET /api/community/summary
+    Valida que excluyan 'usuario_uno', 'usuario_tres' e IDs 31 y 34,
+    e incluyan 'is_published' y 'published_platforms' en las historias destacadas.
+    """
+    interacciones_test = [
+        {"id": 10, "autor": "danitower", "texto": "Increíble taller de IA aplicada", "canal": "#general", "tipo": "mensaje"},
+        {"id": 20, "autor": "carlos_g", "texto": "Pregunta técnica sobre FastApi", "canal": "#preguntas", "tipo": "mensaje"},
+        {"id": 31, "autor": "usuario_uno", "texto": "Mensaje sintético de prueba id 31", "canal": "#general", "tipo": "mensaje"},
+        {"id": 34, "autor": "usuario_tres", "texto": "Mensaje sintético de prueba id 34", "canal": "#general", "tipo": "mensaje"},
+        {"id": 50, "autor": "usuario_dos", "texto": "Mensaje con prefijo usuario_", "canal": "#general", "tipo": "mensaje"},
+        {"id": 51, "autor": "test_qa", "texto": "Mensaje con prefijo test_", "canal": "#general", "tipo": "mensaje"},
+    ]
+    lotes_kpis_test = [
+        {"id": 10, "id_mensaje": 10, "autor": "danitower", "texto": "Increíble taller de IA aplicada", "relevancia": 85, "sentimiento": "Positivo", "canal_origen": "#general"},
+        {"id": 20, "id_mensaje": 20, "autor": "carlos_g", "texto": "Pregunta técnica sobre FastApi", "relevancia": 80, "sentimiento": "Neutral", "canal_origen": "#preguntas"},
+        {"id": 31, "id_mensaje": 31, "autor": "usuario_uno", "texto": "Mensaje sintético de prueba id 31", "relevancia": 90, "sentimiento": "Positivo", "canal_origen": "#general"},
+        {"id": 34, "id_mensaje": 34, "autor": "usuario_tres", "texto": "Mensaje sintético de prueba id 34", "relevancia": 90, "sentimiento": "Positivo", "canal_origen": "#general"},
+        {"id": 50, "id_mensaje": 50, "autor": "usuario_dos", "texto": "Mensaje con prefijo usuario_", "relevancia": 90, "sentimiento": "Positivo", "canal_origen": "#general"},
+        {"id": 51, "id_mensaje": 51, "autor": "test_qa", "texto": "Mensaje con prefijo test_", "relevancia": 90, "sentimiento": "Positivo", "canal_origen": "#general"},
+    ]
+
+    # Marcar interacción 10 como publicada en SQLite contenidos_generados
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT INTO contenidos_generados (interaccion_id, formato, plataforma, titulo, contenido, estado, estado_publicacion, creado_en, actualizado_en)
+            VALUES (10, 'discord', 'discord', 'Taller IA', 'Contenido publicado en canal', 'publicado', 'publicado', '2026-10-18T10:00:00+00:00', '2026-10-18T10:00:00+00:00')
+            """
+        )
+        conn.commit()
+
+
+    with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"interacciones": interacciones_test, "kpis": lotes_kpis_test}), \
+         patch.object(puente_motor_ia, "_obtener_lotes_kpis_completos", return_value=lotes_kpis_test, create=True):
+
+        for endpoint in ("/api/v1/community/live-summary", "/api/community/summary"):
+            resp = client.get(endpoint)
+            assert resp.status_code == 200, f"Endpoint {endpoint} respondió {resp.status_code}: {resp.text}"
+            data = resp.json()
+            assert "highlights" in data, f"Falta 'highlights' en respuesta de {endpoint}"
+            highlights = data["highlights"]
+
+            autores = [str(h.get("autor") or h.get("author") or "").lower() for h in highlights]
+            ids = [h.get("id_mensaje") or h.get("id") for h in highlights]
+
+            # 1. Filtro estricto de autores sintéticos y semillas de prueba
+            assert not any("usuario_uno" in a for a in autores), f"'usuario_uno' encontrado en {endpoint}: {autores}"
+            assert not any("usuario_tres" in a for a in autores), f"'usuario_tres' encontrado en {endpoint}: {autores}"
+            assert not any(a.startswith("usuario_") for a in autores), f"Autor con prefijo 'usuario_' encontrado en {endpoint}: {autores}"
+            assert not any(a.startswith("test_") for a in autores), f"Autor con prefijo 'test_' encontrado en {endpoint}: {autores}"
+            assert 31 not in ids, f"ID 31 de prueba encontrado en {endpoint}: {ids}"
+            assert 34 not in ids, f"ID 34 de prueba encontrado en {endpoint}: {ids}"
+
+            # 2. Autores reales presentes
+            assert any("danitower" in a for a in autores), f"'danitower' no encontrado en {endpoint}: {autores}"
+            assert any("carlos_g" in a for a in autores), f"'carlos_g' no encontrado en {endpoint}: {autores}"
+
+            # 3. Metadatos de publicación requeridos
+            for h in highlights:
+                assert "is_published" in h, f"Falta 'is_published' en highlight {h} de {endpoint}"
+                assert isinstance(h["is_published"], bool)
+                assert "published_platforms" in h, f"Falta 'published_platforms' en highlight {h} de {endpoint}"
+                assert isinstance(h["published_platforms"], list)
+
+            # Validar estado para el ID 10 (publicado) y ID 20 (no publicado)
+            h_10 = next(h for h in highlights if (h.get("id_mensaje") or h.get("id")) == 10)
+            assert h_10["is_published"] is True
+            assert "discord" in [str(p).lower() for p in h_10["published_platforms"]]
+
+            h_20 = next(h for h in highlights if (h.get("id_mensaje") or h.get("id")) == 20)
+            assert h_20["is_published"] is False
+            assert h_20["published_platforms"] == []
+
+
+def test_announcements_status_endpoint(client, monkeypatch):
+    """
+    (Spec 013 - RF-06) GET /api/v1/content-workflow/announcements/status
+    Valida retorno de {configured: bool, max_length: 2000, recommended_max_length: 1500}.
+    """
+    # 1. Con webhook configurado
+    monkeypatch.setenv("DISCORD_WEBHOOK_ANUNCIOS", "https://discord.com/api/webhooks/123/xyz")
+    resp_conf = client.get("/api/v1/content-workflow/announcements/status")
+    assert resp_conf.status_code == 200, f"Error {resp_conf.status_code}: {resp_conf.text}"
+    data_conf = resp_conf.json()
+    assert data_conf.get("configured") is True
+    max_len = data_conf.get("max_length", data_conf.get("max_characters_limit"))
+    rec_len = data_conf.get("recommended_max_length", data_conf.get("max_characters_recommended"))
+    assert max_len == 2000, f"max_length esperado 2000, recibido {max_len}"
+    assert rec_len == 1500, f"recommended_max_length esperado 1500, recibido {rec_len}"
+
+    # 2. Sin webhook configurado
+    monkeypatch.delenv("DISCORD_WEBHOOK_ANUNCIOS", raising=False)
+    resp_unconf = client.get("/api/v1/content-workflow/announcements/status")
+    assert resp_unconf.status_code == 200, f"Error {resp_unconf.status_code}: {resp_unconf.text}"
+    data_unconf = resp_unconf.json()
+    assert data_unconf.get("configured") is False
+    max_len = data_unconf.get("max_length", data_unconf.get("max_characters_limit"))
+    rec_len = data_unconf.get("recommended_max_length", data_unconf.get("max_characters_recommended"))
+    assert max_len == 2000
+    assert rec_len == 1500
+
+
+def test_announcements_generate_validacion_y_delegacion(client):
+    """
+    (Spec 013 - RF-07) POST /api/v1/content-workflow/announcements/generate
+    Valida delegación a anuncios_discord.generar_anuncio, rechazo 400 si el borrador supera 10,000 caracteres o está vacío.
+    """
+    # 1. Rechazo 400 ante borrador vacío
+    resp_vacio = client.post("/api/v1/content-workflow/announcements/generate", json={"borrador": ""})
+    assert resp_vacio.status_code == 400, f"Esperado 400 ante borrador vacío, recibido {resp_vacio.status_code}"
+
+    resp_blancos = client.post("/api/v1/content-workflow/announcements/generate", json={"borrador": "   \n\t  "})
+    assert resp_blancos.status_code == 400, f"Esperado 400 ante espacios, recibido {resp_blancos.status_code}"
+
+    # 2. Rechazo 400 ante borrador > 10,000 caracteres
+    resp_largo = client.post("/api/v1/content-workflow/announcements/generate", json={"borrador": "W" * 10001})
+    assert resp_largo.status_code == 400, f"Esperado 400 ante borrador > 10k chars, recibido {resp_largo.status_code}"
+
+    # 3. Flujo válido con mock de delegación hacia anuncios_discord.generar_anuncio
+    mock_retorno = "🚀 **Nuevo Hackathon CloudEdTech**: Participa y crea soluciones con IA."
+    borrador_input = "Detalles del hackathon de este fin de semana para todos los alumnos."
+    with patch("anuncios_discord.generar_anuncio", return_value=mock_retorno) as mock_gen:
+        resp_ok = client.post(
+            "/api/v1/content-workflow/announcements/generate",
+            json={"borrador": borrador_input},
+        )
+        assert resp_ok.status_code == 200, f"Error al generar: {resp_ok.status_code} - {resp_ok.text}"
+        data_ok = resp_ok.json()
+
+        mock_gen.assert_called_once()
+        assert mock_gen.call_args[0][0] == borrador_input
+
+        anuncio_res = data_ok.get("anuncio_generado", data_ok.get("anuncio", data_ok.get("contenido")))
+        assert anuncio_res == mock_retorno
+        caracteres_res = data_ok.get("caracteres", data_ok.get("longitud"))
+        assert caracteres_res == len(mock_retorno)
+
+
+def test_announcements_publish_validacion_persistencia_sqlite_y_webhook(client, monkeypatch):
+    """
+    (Spec 013 - RF-08) POST /api/v1/content-workflow/announcements/publish
+    Valida mock de anuncios_discord.publicar_en_discord, rechazo 400 si supera 2000 caracteres o falta confirmar=true,
+    rechazo 503 si falta el webhook, y persistencia en SQLite contenidos_generados con tipo_contenido='anuncio_oficial', estado='publicado'.
+    """
+    url_webhook = "https://discord.com/api/webhooks/999/test-token"
+    texto_anuncio = "📢 **Aviso Importante**: Nueva clase en vivo de Kubernetes este sábado."
+
+    # 1. Rechazo 400 si supera 2000 caracteres
+    monkeypatch.setenv("DISCORD_WEBHOOK_ANUNCIOS", url_webhook)
+    resp_largo = client.post(
+        "/api/v1/content-workflow/announcements/publish",
+        json={"contenido": "Z" * 2001, "confirmar": True, "confirmado": True},
+    )
+    assert resp_largo.status_code == 400, f"Esperado 400 ante texto > 2000 chars, recibido {resp_largo.status_code}"
+
+    # 2. Rechazo 400 si falta confirmación (confirmar=False / confirmado=False / ausente)
+    resp_no_conf = client.post(
+        "/api/v1/content-workflow/announcements/publish",
+        json={"contenido": texto_anuncio, "confirmar": False, "confirmado": False},
+    )
+    assert resp_no_conf.status_code == 400, f"Esperado 400 ante confirmación false, recibido {resp_no_conf.status_code}"
+
+    resp_sin_conf = client.post(
+        "/api/v1/content-workflow/announcements/publish",
+        json={"contenido": texto_anuncio},
+    )
+    assert resp_sin_conf.status_code == 400, f"Esperado 400 ante omisión de confirmación, recibido {resp_sin_conf.status_code}"
+
+    # 3. Rechazo 503 si el webhook no está configurado
+    monkeypatch.delenv("DISCORD_WEBHOOK_ANUNCIOS", raising=False)
+    resp_no_hook = client.post(
+        "/api/v1/content-workflow/announcements/publish",
+        json={"contenido": texto_anuncio, "confirmar": True, "confirmado": True},
+    )
+    assert resp_no_hook.status_code == 503, f"Esperado 503 ante webhook ausente, recibido {resp_no_hook.status_code}"
+
+    # 4. Flujo exitoso: despacho a Discord y persistencia en SQLite
+    monkeypatch.setenv("DISCORD_WEBHOOK_ANUNCIOS", url_webhook)
+    with patch("anuncios_discord.publicar_en_discord", return_value=None) as mock_pub:
+        resp_pub = client.post(
+            "/api/v1/content-workflow/announcements/publish",
+            json={"contenido": texto_anuncio, "confirmar": True, "confirmado": True},
+        )
+        assert resp_pub.status_code in (200, 201), f"Error al publicar: {resp_pub.status_code} - {resp_pub.text}"
+        data_pub = resp_pub.json()
+        assert data_pub.get("estado") == "publicado"
+
+        mock_pub.assert_called_once_with(texto_anuncio)
+
+        with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT * FROM contenidos_generados
+                WHERE tipo_contenido = 'anuncio_oficial' AND estado = 'publicado'
+                ORDER BY id DESC LIMIT 1
+                """
+            ).fetchone()
+            assert row is not None, "No se persistió el registro en contenidos_generados"
+            assert row["tipo_contenido"] == "anuncio_oficial"
+            assert row["estado"] == "publicado"
+            assert row["formato"] == "discord"
+            assert texto_anuncio in row["contenido"]
+
+
+def test_featured_stories_frontend_contract_and_static_spec():
+    """
+    Spec 013 - Tarea 4: Validación estricta del contrato y requisitos de FeaturedStories.tsx.
+    1. Verifica que 'Ver mensaje' y su handler a '/messages' hayan sido eliminados por completo.
+    2. Verifica navegación contextual a /content?interaction={id} con { state: { interactionId: targetId } }.
+    3. Verifica cálculo de targetId numérico (id_mensaje o id).
+    4. Verifica resiliencia ante targetId == 0 / carrusel vacío mostrando 'Sin historias disponibles'.
+    5. Verifica trazabilidad de publicación: badge '✓ Publicado en' y alternancia 'Volver a publicar' / 'Generar publicación'.
+    """
+    ruta_componente = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "frontend", "src", "components", "FeaturedStories.tsx"
+    )
+    assert os.path.exists(ruta_componente), f"No existe {ruta_componente}"
+    with open(ruta_componente, "r", encoding="utf-8") as f:
+        codigo = f.read()
+
+    # 1. 'Ver mensaje' y MessageCircle eliminados
+    assert "Ver mensaje" not in codigo, "El botón 'Ver mensaje' debe ser eliminado por completo"
+    assert "MessageCircle" not in codigo, "Icono 'MessageCircle' no utilizado debe ser eliminado"
+
+    # 2. Navegación contextual con interaction ID y location.state
+    assert "/content?interaction=" in codigo, "Debe navegar a /content?interaction=${targetId}"
+    assert "interactionId:" in codigo or "interactionId :" in codigo, "Debe transferir interactionId en location.state"
+
+    # 3. targetId numérico
+    assert "id_mensaje" in codigo, "Debe considerar id_mensaje para targetId"
+    assert "targetId" in codigo, "Debe definir targetId numérico"
+
+    # 4. Resiliencia de carrusel vacío
+    assert "Sin historias disponibles" in codigo, "Debe mostrar 'Sin historias disponibles' cuando esté deshabilitado"
+
+    # 5. Trazabilidad de publicación
+    assert "is_published" in codigo, "Debe evaluar is_published"
+    assert "published_platforms" in codigo, "Debe evaluar published_platforms"
+    assert "✓ Publicado en" in codigo, "Debe desplegar la insignia '✓ Publicado en ...'"
+    assert "Volver a publicar" in codigo, "El botón debe alternar a 'Volver a publicar'"
+    assert "Generar publicación" in codigo, "El botón debe mostrar 'Generar publicación' si no está publicado"
+
+
