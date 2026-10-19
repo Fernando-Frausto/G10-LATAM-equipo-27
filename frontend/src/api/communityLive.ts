@@ -279,3 +279,52 @@ export async function evaluateSingleMessage(
     }
 }
 
+export interface ChannelParticipationItem {
+    channel: string
+    name: string
+    count: number
+    percentage: number
+}
+
+export interface ChannelParticipationResponse {
+    channels: ChannelParticipationItem[]
+    total_messages: number
+}
+
+const DEFAULT_CHANNEL_PARTICIPATION: ChannelParticipationResponse = {
+    total_messages: 0,
+    channels: [
+        { channel: '#general', name: 'general', count: 0, percentage: 0.0 },
+        { channel: '#faq', name: 'faq', count: 0, percentage: 0.0 },
+        { channel: '#pqrs', name: 'pqrs', count: 0, percentage: 0.0 },
+        { channel: '#notificaciones', name: 'notificaciones', count: 0, percentage: 0.0 },
+        { channel: '#chat-egresados', name: 'chat-egresados', count: 0, percentage: 0.0 },
+        { channel: '#oportunidades-laborales', name: 'oportunidades-laborales', count: 0, percentage: 0.0 },
+    ],
+}
+
+export async function getChannelParticipation(): Promise<ChannelParticipationResponse> {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/community/channel-participation`)
+        if (!response.ok) {
+            return DEFAULT_CHANNEL_PARTICIPATION
+        }
+        const data = await response.json()
+        if (!data || !Array.isArray(data.channels)) {
+            return DEFAULT_CHANNEL_PARTICIPATION
+        }
+        return {
+            total_messages: typeof data.total_messages === 'number' ? data.total_messages : 0,
+            channels: data.channels.map((ch: any) => ({
+                channel: ch.channel || '',
+                name: ch.name || '',
+                count: typeof ch.count === 'number' ? ch.count : 0,
+                percentage: typeof ch.percentage === 'number' ? ch.percentage : 0.0,
+            })),
+        }
+    } catch {
+        return DEFAULT_CHANNEL_PARTICIPATION
+    }
+}
+
+

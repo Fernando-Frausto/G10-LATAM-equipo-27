@@ -1,4 +1,3 @@
-import { updateMessageWorkflow } from '../api/messageWorkflow'
 import {
     AlertCircle,
     AlertTriangle,
@@ -102,12 +101,6 @@ const API_BASE_URL =
 function Messages() {
     const navigate = useNavigate()
 
-    const [analyzingMessageId, setAnalyzingMessageId] =
-        useState<number | null>(null)
-    const [workflowError, setWorkflowError] =
-        useState<string | null>(null)
-
-
     const [apiData, setApiData] = useState<MessagesApiResponse>({
         total: 0,
         messages: [],
@@ -117,17 +110,7 @@ function Messages() {
     const [channelFilter, setChannelFilter] = useState('all')
     const [sentimentFilter, setSentimentFilter] = useState('all')
     const [timeFilter, setTimeFilter] = useState('all')
-    type StageFilterType =
-        | 'all'
-        | 'pending_eval'
-        | 'pending_copy'
-        | 'completos'
-        | 'descartados'
-        | 'ingesta'
-        | 'en_analisis'
-
     const [curationFilter, setCurationFilter] = useState('all')
-    const [stageFilter, setStageFilter] = useState<StageFilterType>('all')
     const [aiModels, setAiModels] = useState<AiModel[]>(DEFAULT_AI_MODELS)
     const [selectedAiBrain, setSelectedAiBrain] = useState<string>('Groq (Llama 3.3)')
     const [dateFrom, setDateFrom] = useState<string>('')
@@ -383,7 +366,16 @@ function Messages() {
         }
 
         const currentCuration = curationStatus[message.id] ?? 'pending'
-        const isDiscarded = currentCuration === 'discarded'
+
+        // Precedencia humana (HITL):
+        // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
+        // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado ni restaurado a 'pending'
+        const isDiscarded =
+            currentCuration === 'discarded' ||
+            (message.isAnalyzed &&
+                message.relevance < 70 &&
+                currentCuration !== 'curated' &&
+                currentCuration !== 'pending')
 
         const isCompleted =
             !isDiscarded &&
@@ -399,27 +391,17 @@ function Messages() {
 
         const isPendingCopy = !isDiscarded && !isCompleted && !isPendingEval
 
-        // Filtro por etapa de flujo editorial
-        if (stageFilter === 'descartados') {
+        // Filtro unificado por Estado del mensaje
+        if (curationFilter === 'descartados') {
             if (!isDiscarded) return false
-        } else if (stageFilter === 'completos') {
+        } else if (curationFilter === 'completos') {
             if (!isCompleted) return false
-        } else if (stageFilter === 'pending_copy' || stageFilter === 'en_analisis') {
+        } else if (curationFilter === 'pending_copy') {
             if (!isPendingCopy) return false
-        } else if (stageFilter === 'pending_eval' || stageFilter === 'ingesta') {
+        } else if (curationFilter === 'pending_eval') {
             if (!isPendingEval) return false
         }
-        // Cuando stageFilter === 'all' ("Todas (Todos los mensajes)"), muestra todos los mensajes (incluidos descartados, pendientes y completos)
-
-        if (curationFilter === 'discarded') {
-            if (!isDiscarded) {
-                return false
-            }
-        } else if (curationFilter !== 'all') {
-            if (isDiscarded) {
-                return false
-            }
-        }
+        // Cuando curationFilter === 'all', pasan todos los mensajes
 
         const search = searchTerm.trim().toLowerCase()
 
@@ -443,15 +425,10 @@ function Messages() {
             sentimentFilter === 'all' ||
             message.sentiment === sentimentFilter
 
-        const matchesCuration =
-            curationFilter === 'all' ||
-            currentCuration === curationFilter
-
         return (
             matchesSearch &&
             matchesChannel &&
             matchesSentiment &&
-            matchesCuration &&
             matchesTimeFilter(message.rawDate)
         )
     })
@@ -479,57 +456,6 @@ function Messages() {
             )
         } finally {
             setSavingCurationId(null)
-        }
-    }
-
-    const handleAnalyze = async (message: MessageItem) => {
-        if (analyzingMessageId !== null) return
-
-        const currentCuration =
-            curationStatus[message.id] ?? 'pending'
-
-        if (currentCuration === 'discarded') {
-            return
-        }
-
-        setAnalyzingMessageId(message.interactionId)
-        setWorkflowError(null)
-
-        try {
-            if (
-                message.workflowStage === 'ingesta' ||
-                message.workflowStage === 'en_ingesta'
-            ) {
-                await updateMessageWorkflow(
-                    message.interactionId,
-                    'en_analisis',
-                )
-            }
-
-            navigate(`/analytics?interaction=${message.interactionId}`, {
-        state: {
-            source: 'ingesta',
-            interaction: {
-                id: message.id,
-                author: message.author,
-                channel: message.channel,
-                content: message.message,
-                sentiment: message.sentiment,
-                sentimentLabel: message.sentimentLabel,
-                topic: message.topic,
-                keywords: message.keywords,
-                relevance: message.relevance,
-            },
-        },
-    })
-        } catch (error) {
-            setWorkflowError(
-                error instanceof Error
-                    ? error.message
-                    : 'No fue posible enviar el mensaje a Analisis',
-            )
-        } finally {
-            setAnalyzingMessageId(null)
         }
     }
 
@@ -773,7 +699,6 @@ function Messages() {
         setSentimentFilter('all')
         setTimeFilter('all')
         setCurationFilter('all')
-        setStageFilter('all')
         setDateFrom('')
         setDateTo('')
         setBatchEvalMessage(null)
@@ -782,14 +707,6 @@ function Messages() {
 
     return (
         <div className="space-y-6">
-            {workflowError && (
-                <div
-                    role="alert"
-                    className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
-                >
-                    {workflowError}
-                </div>
-            )}
 
             {/* Encabezado */}
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -1310,13 +1227,16 @@ function Messages() {
                             <option value="all">
                                 Todos los estados
                             </option>
-                            <option value="pending">
-                                Pendientes
+                            <option value="pending_eval">
+                                Pendientes de evaluar
                             </option>
-                            <option value="curated">
-                                Listo / Aprobado
+                            <option value="pending_copy">
+                                Pendientes de copy
                             </option>
-                            <option value="discarded">
+                            <option value="completos">
+                                Proceso completo
+                            </option>
+                            <option value="descartados">
                                 Descartado
                             </option>
                         </select>
@@ -1344,44 +1264,6 @@ function Messages() {
                             Negativo
                         </option>
                     </select>
-
-                    <select
-                        value={stageFilter}
-                        onChange={(event) => {
-                            const nextStage = event.target.value as StageFilterType
-                            setStageFilter(nextStage)
-                            if (
-                                nextStage === 'descartados' &&
-                                curationFilter !== 'all' &&
-                                curationFilter !== 'discarded'
-                            ) {
-                                setCurationFilter('all')
-                            } else if (
-                                nextStage !== 'descartados' &&
-                                nextStage !== 'all' &&
-                                curationFilter === 'discarded'
-                            ) {
-                                setCurationFilter('all')
-                            }
-                        }}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-orange-400"
-                    >
-                        <option value="all">
-                            Etapa: Todas (Todos los mensajes)
-                        </option>
-                        <option value="pending_eval">
-                            Etapa: Pendientes de Evaluar
-                        </option>
-                        <option value="pending_copy">
-                            Etapa: Pendientes de Copy
-                        </option>
-                        <option value="completos">
-                            Etapa: Solo Completos
-                        </option>
-                        <option value="descartados">
-                            Etapa: Descartados
-                        </option>
-                    </select>
                 </div>
             </section>
 
@@ -1392,15 +1274,15 @@ function Messages() {
                     <span className="font-bold text-slate-700">
                         {filteredMessages.length}
                     </span>{' '}
-                    {stageFilter === 'descartados' || curationFilter === 'discarded'
+                    {curationFilter === 'descartados'
                         ? filteredMessages.length === 1
                             ? 'mensaje descartado'
                             : 'mensajes descartados'
-                        : stageFilter === 'completos'
+                        : curationFilter === 'completos'
                         ? 'mensajes con proceso completo'
-                        : stageFilter === 'pending_eval' || stageFilter === 'ingesta'
+                        : curationFilter === 'pending_eval'
                         ? 'mensajes pendientes de evaluar'
-                        : stageFilter === 'pending_copy' || stageFilter === 'en_analisis'
+                        : curationFilter === 'pending_copy'
                         ? 'mensajes en la cola de copy'
                         : 'mensajes en total (Todos los mensajes)'}
                     {(dateFrom || dateTo) && (
@@ -1449,8 +1331,16 @@ function Messages() {
                 )}
 
                 {filteredMessages.map((message) => {
+                    const currentCuration =
+                        curationStatus[message.id] ?? 'pending'
                     const status =
-                        curationStatus[message.id] || 'pending'
+                        currentCuration === 'discarded' ||
+                        (message.isAnalyzed &&
+                            message.relevance < 70 &&
+                            currentCuration !== 'curated' &&
+                            currentCuration !== 'pending')
+                            ? 'discarded'
+                            : currentCuration
 
                     return (
                         <article
@@ -1672,7 +1562,7 @@ function Messages() {
                                         </div>
                                     </div>
 
-                                    <div className={message.isAnalyzed ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-2 gap-2'}>
+                                    <div className="grid grid-cols-1 gap-2">
                                         {!message.isAnalyzed && (
                                             <button
                                                 type="button"
@@ -1688,7 +1578,7 @@ function Messages() {
                                                         ? 'Restaura el mensaje para evaluarlo con IA'
                                                         : `Evaluar este mensaje con ${selectedAiBrain}`
                                                 }
-                                                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-purple-600 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-purple-600 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
                                             >
                                                 <Sparkles
                                                     size={13}
@@ -1704,27 +1594,26 @@ function Messages() {
                                             </button>
                                         )}
 
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                handleAnalyze(message)
-                                            }
-                                            disabled={
-                                                status === 'discarded' ||
-                                                analyzingMessageId !== null
-                                            }
-                                            title={
-                                                status === 'discarded'
-                                                    ? 'Restaura el mensaje para ver su análisis'
-                                                    : 'Ver análisis en Analytics'
-                                            }
-                                            className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-slate-100 px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                            Analytics
-                                            <ChevronRight
-                                                size={14}
-                                            />
-                                        </button>
+                                        {message.isAnalyzed && (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    navigate(`/content?interaction=${message.interactionId}`, {
+                                                        state: { interactionId: message.interactionId },
+                                                    })
+                                                }
+                                                disabled={status === 'discarded'}
+                                                title={
+                                                    status === 'discarded'
+                                                        ? 'Restaura el mensaje para generar publicación'
+                                                        : 'Generar publicación a partir de este mensaje'
+                                                }
+                                                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-orange-500 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                                Generar publicación
+                                                <ChevronRight size={14} />
+                                            </button>
+                                        )}
                                     </div>
                                 </aside>
                             </div>

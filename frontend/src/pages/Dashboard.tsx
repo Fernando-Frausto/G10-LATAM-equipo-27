@@ -11,6 +11,7 @@ import {
 
 import KpiCard from '../components/KpiCard'
 import FeaturedStories from '../components/FeaturedStories'
+import ChannelParticipation from '../components/ChannelParticipation'
 import SentimentChart from '../charts/SentimentChart'
 import TopicsChart from '../charts/TopicsChart'
 import SentimentEvolution from '../charts/SentimentEvolution'
@@ -197,6 +198,10 @@ function Dashboard() {
       
              
       <FeaturedStories key={`stories-${analyticsVersion}`} />
+
+      <div className="mt-8">
+        <ChannelParticipation key={`channels-${analyticsVersion}`} />
+      </div>
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
 

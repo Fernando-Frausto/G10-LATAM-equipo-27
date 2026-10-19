@@ -2500,3 +2500,179 @@ def test_featured_stories_frontend_contract_and_static_spec():
     assert "Generar publicación" in codigo, "El botón debe mostrar 'Generar publicación' si no está publicado"
 
 
+# ==============================================================================
+# Spec 014: Telemetría de Canales y Participación de la Comunidad (RF-03, RF-06)
+# ==============================================================================
+
+CANALES_OFICIALES_DISCORD_ESPERADOS = [
+    {"channel": "#general", "name": "general"},
+    {"channel": "#faq", "name": "faq"},
+    {"channel": "#pqrs", "name": "pqrs"},
+    {"channel": "#notificaciones", "name": "notificaciones"},
+    {"channel": "#chat-egresados", "name": "chat-egresados"},
+    {"channel": "#oportunidades-laborales", "name": "oportunidades-laborales"},
+]
+
+
+def test_channel_participation_endpoint_estructura_y_calculo(client):
+    """
+    Spec 014 - RF-03, RF-06:
+    Verifica 'GET /api/community/channel-participation' y su alias 'GET /api/v1/community/channels-participation':
+    - Retorno HTTP 200 con { channels: [...], total_messages: int }.
+    - Contiene exactamente los 6 canales oficiales en orden canónico estricto.
+    - Cada elemento contiene 'channel', 'name', 'count', 'percentage'.
+    - Porcentajes float con 1 decimal y suma de porcentajes igual a 100.0% cuando total_messages > 0.
+    """
+    with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"interacciones": [], "kpis": []}):
+        with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+            conn.execute(
+                """
+                INSERT INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en)
+                VALUES
+                (901, 'hash_901', 'Discord', 'Semana_01', 'user1', '#general', 'mensaje', 'Mensaje en general', '2026-10-18T10:00:00+00:00'),
+                (902, 'hash_902', 'Discord', 'Semana_01', 'user2', '#general', 'mensaje', 'Otro en general', '2026-10-18T10:05:00+00:00'),
+                (903, 'hash_903', 'Discord', 'Semana_01', 'user3', '#faq', 'mensaje', 'Duda en faq', '2026-10-18T10:10:00+00:00'),
+                (904, 'hash_904', 'Discord', 'Semana_01', 'user4', '#pqrs', 'mensaje', 'Reclamo pqrs', '2026-10-18T10:15:00+00:00'),
+                (905, 'hash_905', 'Discord', 'Semana_01', 'user5', '#notificaciones', 'mensaje', 'Aviso notificaciones', '2026-10-18T10:20:00+00:00'),
+                (906, 'hash_906', 'Discord', 'Semana_01', 'user6', '#chat-egresados', 'mensaje', 'Egresados chat', '2026-10-18T10:25:00+00:00'),
+                (907, 'hash_907', 'Discord', 'Semana_01', 'user7', '#oportunidades-laborales', 'mensaje', 'Vacante laboral', '2026-10-18T10:30:00+00:00')
+                """
+            )
+            conn.commit()
+
+        # Probar endpoint canónico y su alias
+        for endpoint in ["/api/community/channel-participation", "/api/v1/community/channels-participation"]:
+            resp = client.get(endpoint)
+            assert resp.status_code == 200, f"Error {resp.status_code} al consultar {endpoint}: {resp.text}"
+            data = resp.json()
+
+            assert "total_messages" in data, f"Falta 'total_messages' en respuesta de {endpoint}"
+            assert "channels" in data, f"Falta 'channels' en respuesta de {endpoint}"
+            assert data["total_messages"] == 7
+            assert len(data["channels"]) == 6, f"Se esperaban exactamente 6 canales, recibidos {len(data['channels'])}"
+
+            canales_obtenidos = [item["channel"] for item in data["channels"]]
+            canales_esperados = [c["channel"] for c in CANALES_OFICIALES_DISCORD_ESPERADOS]
+            assert canales_obtenidos == canales_esperados, f"El orden de canales no es canónico: {canales_obtenidos}"
+
+            suma_porcentajes = 0.0
+            conteo_total = 0
+            for i, canal_info in enumerate(data["channels"]):
+                meta_esperada = CANALES_OFICIALES_DISCORD_ESPERADOS[i]
+                assert canal_info["channel"] == meta_esperada["channel"]
+                assert canal_info["name"] == meta_esperada["name"]
+                assert isinstance(canal_info["count"], int)
+                assert isinstance(canal_info["percentage"], (int, float))
+                # Verificar precisión a un decimal
+                assert canal_info["percentage"] == round(canal_info["percentage"], 1)
+
+                conteo_total += canal_info["count"]
+                suma_porcentajes += canal_info["percentage"]
+
+            assert conteo_total == data["total_messages"] == 7
+            # Con total_messages > 0 la suma de porcentajes debe ser exactamente 100.0%
+            assert round(suma_porcentajes, 1) == 100.0, f"La suma de porcentajes no es 100.0%: {suma_porcentajes}"
+
+
+def test_channel_participation_proteccion_division_cero_sin_mensajes(client):
+    """
+    Spec 014 - RF-03, RF-06:
+    Verifica que ante base de datos o corpus vacío retorne 200 OK con:
+    - total_messages: 0
+    - Exactamente los 6 canales con count=0 y percentage=0.0
+    - Sin excepción de división por cero (ZeroDivisionError).
+    """
+    with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"interacciones": [], "kpis": []}):
+        with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+            conn.execute("DELETE FROM interacciones")
+            conn.commit()
+
+        # Usar cliente con raise_server_exceptions=False para capturar caídas 500
+        cliente_seguro = TestClient(puente_motor_ia.app, raise_server_exceptions=False)
+        for endpoint in ["/api/community/channel-participation", "/api/v1/community/channels-participation"]:
+            resp = cliente_seguro.get(endpoint)
+            assert resp.status_code == 200, f"Fallo al manejar corpus vacío en {endpoint}: {resp.status_code} {resp.text}"
+            data = resp.json()
+
+            assert data.get("total_messages") == 0
+            assert isinstance(data.get("channels"), list)
+            assert len(data["channels"]) == 6
+
+            canales_esperados = [c["channel"] for c in CANALES_OFICIALES_DISCORD_ESPERADOS]
+            assert [c["channel"] for c in data["channels"]] == canales_esperados
+
+            for canal in data["channels"]:
+                assert canal["count"] == 0, f"Canal {canal['channel']} count debe ser 0 en corpus vacío"
+                assert canal["percentage"] == 0.0, f"Canal {canal['channel']} percentage debe ser 0.0 en corpus vacío"
+
+
+def test_channel_participation_exclusion_bots_y_mapeo_sinonimos(client):
+    """
+    Spec 014 - RF-03, RF-06:
+    Verifica que:
+    1. Se excluyan categóricamente mensajes de cuentas bots o webhooks.
+    2. Mensajes de canales sinónimos antiguos ('preguntas', 'dudas') se acumulen deterministamente en '#faq'.
+    3. Mensajes con canal 'anuncios' se acumulen en '#notificaciones'.
+    4. El conteo total y porcentajes ignoren los bots y mapeen los sinónimos correctamente.
+    """
+    with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"interacciones": [], "kpis": []}):
+        with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+            conn.execute(
+                """
+                INSERT INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en)
+                VALUES
+                -- Mensajes humanos válidos
+                (910, 'h910', 'Discord', 'Semana_01', 'humano1', '#general', 'mensaje', 'Hola comunidad', '2026-10-18T12:00:00+00:00'),
+                (911, 'h911', 'Discord', 'Semana_01', 'humano2', 'preguntas', 'mensaje', 'Tengo una pregunta', '2026-10-18T12:01:00+00:00'),
+                (912, 'h912', 'Discord', 'Semana_01', 'humano3', '#dudas', 'mensaje', 'Tengo una duda', '2026-10-18T12:02:00+00:00'),
+                (913, 'h913', 'Discord', 'Semana_01', 'humano4', 'anuncios', 'mensaje', 'Anuncio importante', '2026-10-18T12:03:00+00:00'),
+                -- Mensajes de bots y webhooks que deben ser estrictamente excluidos
+                (914, 'h914', 'Discord', 'Semana_01', 'Spidey Boy#0000', '#general', 'bot', 'Webhook alert', '2026-10-18T12:04:00+00:00'),
+                (915, 'h915', 'Discord', 'Semana_01', 'Webhook#0000', '#faq', 'webhook', 'Deploy alert', '2026-10-18T12:05:00+00:00'),
+                (916, 'h916', 'Discord', 'Semana_01', 'BotComunidad', '#pqrs', 'mensaje', 'Auto reply', '2026-10-18T12:06:00+00:00'),
+                (917, 'h917', 'Discord', 'Semana_01', 'Moderador#0000', '#chat-egresados', 'mensaje', 'Bot check', '2026-10-18T12:07:00+00:00')
+                """
+            )
+            conn.commit()
+
+        resp = client.get("/api/community/channel-participation")
+        assert resp.status_code == 200, f"Error {resp.status_code}: {resp.text}"
+        data = resp.json()
+
+        # Sólo 4 mensajes humanos válidos deben computarse
+        assert data["total_messages"] == 4, f"Se esperaban 4 mensajes totales tras excluir bots, recibidos: {data['total_messages']}"
+
+        canales_dict = {item["channel"]: item for item in data["channels"]}
+
+        # 'preguntas' y '#dudas' deben acumularse en '#faq' (2 mensajes = 50.0%)
+        assert canales_dict["#faq"]["count"] == 2
+        assert canales_dict["#faq"]["percentage"] == 50.0
+
+        # '#general' tiene 1 mensaje humano (25.0%)
+        assert canales_dict["#general"]["count"] == 1
+        assert canales_dict["#general"]["percentage"] == 25.0
+
+        # 'anuncios' mapeado a '#notificaciones' tiene 1 mensaje (25.0%)
+        assert canales_dict["#notificaciones"]["count"] == 1
+        assert canales_dict["#notificaciones"]["percentage"] == 25.0
+
+        # Los demás canales deben tener 0 conteo y 0.0%
+        assert canales_dict["#pqrs"]["count"] == 0
+        assert canales_dict["#pqrs"]["percentage"] == 0.0
+        assert canales_dict["#chat-egresados"]["count"] == 0
+        assert canales_dict["#chat-egresados"]["percentage"] == 0.0
+        assert canales_dict["#oportunidades-laborales"]["count"] == 0
+        assert canales_dict["#oportunidades-laborales"]["percentage"] == 0.0
+
+        # Suma de porcentajes debe ser exactamente 100.0%
+        suma = sum(ch["percentage"] for ch in data["channels"])
+        assert round(suma, 1) == 100.0
+
+
+# Aliases para compatibilidad con nomenclatura del plan de tareas
+test_participacion_canales_discord_calculo_y_orden = test_channel_participation_endpoint_estructura_y_calculo
+test_participacion_canales_discord_corpus_vacio = test_channel_participation_proteccion_division_cero_sin_mensajes
+test_participacion_canales_exclusion_bots_y_alias = test_channel_participation_exclusion_bots_y_mapeo_sinonimos
+
+
+
