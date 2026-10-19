@@ -668,73 +668,8 @@ function ContentStudio() {
         </div>
       </div>
 
-      {/* Mensaje original */}
-      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-              <MessageCircle size={19} />
-            </div>
-
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900">
-                  Mensaje original de Discord
-                </h3>
-
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                  Mesa de trabajo
-                </span>
-              </div>
-
-              <p className="mt-1 text-xs text-slate-400">
-                Insumo seleccionado para generación de contenido
-              </p>
-            </div>
-          </div>
-
-          <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
-            Discord
-          </span>
-        </div>
-
-        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="font-semibold text-slate-900">
-                {selectedWorkflowMessage?.author ?? 'Sin mensaje seleccionado'}
-              </p>
-
-              <p className="mt-1 text-xs text-slate-400">
-                Conversación seleccionada
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
-                Sentimiento {selectedWorkflowMessage?.sentiment ?? 'Sin datos'}
-              </span>
-
-              <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700">
-                Relevancia {selectedWorkflowMessage?.relevance ?? 'Sin datos'}
-              </span>
-            </div>
-          </div>
-
-          <h4 className="mt-4 font-bold text-slate-900">
-            {selectedWorkflowMessage?.topic ?? 'Selecciona una interacción'}
-          </h4>
-
-          <div className="mt-3 rounded-r-xl border-l-4 border-orange-500 bg-white/90 p-4 shadow-xs">
-            <p className="text-sm italic leading-relaxed text-slate-700">
-              "{selectedWorkflowMessage?.content ?? 'Selecciona una conversación de la bandeja para comenzar a redactar sus copys.'}"
-            </p>
-          </div>
-        </div>
-      </section>
-
       {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2.5">
@@ -822,6 +757,71 @@ function ContentStudio() {
             })}
           </div>
         )}
+      </section>
+
+      {/* Mensaje original */}
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+              <MessageCircle size={19} />
+            </div>
+
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-slate-900">
+                  Mensaje original de Discord
+                </h3>
+
+                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                  Mesa de trabajo
+                </span>
+              </div>
+
+              <p className="mt-1 text-xs text-slate-400">
+                Insumo seleccionado para generación de contenido
+              </p>
+            </div>
+          </div>
+
+          <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+            Discord
+          </span>
+        </div>
+
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold text-slate-900">
+                {selectedWorkflowMessage?.author ?? 'Sin mensaje seleccionado'}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                Conversación seleccionada
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+                Sentimiento {selectedWorkflowMessage?.sentiment ?? 'Sin datos'}
+              </span>
+
+              <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700">
+                Relevancia {selectedWorkflowMessage?.relevance ?? 'Sin datos'}
+              </span>
+            </div>
+          </div>
+
+          <h4 className="mt-4 font-bold text-slate-900">
+            {selectedWorkflowMessage?.topic ?? 'Selecciona una interacción'}
+          </h4>
+
+          <div className="mt-3 rounded-r-xl border-l-4 border-orange-500 bg-white/90 p-4 shadow-xs">
+            <p className="text-sm italic leading-relaxed text-slate-700">
+              "{selectedWorkflowMessage?.content ?? 'Selecciona una conversación de la bandeja para comenzar a redactar sus copys.'}"
+            </p>
+          </div>
+        </div>
       </section>
 
       {/* Selector de formato */}
