@@ -463,5 +463,15 @@ export async function runMototradisMassProcess(
   })) as MototradisMassResult
 }
 
+export async function getMototradisMassQueueStatus(): Promise<{
+  total_en_cola: number
+  criterio?: string
+}> {
+  return (await apiRequest('/api/v1/content-workflow/mass-queue-status', {
+    method: 'GET',
+  })) as { total_en_cola: number; criterio?: string }
+}
+
+
 export const runMototradisMassGemma = runMototradisMassProcess
 

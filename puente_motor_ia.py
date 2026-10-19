@@ -4256,12 +4256,50 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
             import logging
             logging.getLogger("puente_motor_ia").warning(f"Inferencia viva requirió fallback defensivo: {exc}")
 
+    # Generación complementaria de los canales no activados por el orquestador
+    # para que la mesa de trabajo siempre ofrezca propuestas en todas las tarjetas
+    for canal_c in ("linkedin", "x", "discord"):
+        if canal_c not in copys_generados or not copys_generados[canal_c]:
+            try:
+                from src import nodes as mototradis_nodes
+                state_c = {
+                    "id_mensaje": id_msg,
+                    "mensaje_id": id_msg,
+                    "autor": interaccion.get("autor") or "comunidad",
+                    "semana": interaccion.get("periodo_referencia") or "Semana_01",
+                    "fecha_envio": interaccion.get("enviado_en") or a_utc_iso(datetime.now(timezone.utc)),
+                    "fecha_extraccion": a_utc_iso(datetime.now(timezone.utc)),
+                    "canal_origen": interaccion.get("canal") or "#general",
+                    "json_precurado": {
+                        "relevancia": int(float(interaccion.get("relevancia") or 85)),
+                        "sentimiento": interaccion.get("sentimiento") or "positivo",
+                        "texto_original": interaccion.get("texto") or "",
+                        "autor": interaccion.get("autor") or "comunidad",
+                        "canal_origen": interaccion.get("canal") or "#general",
+                    },
+                    "copys_generados": dict(copys_generados),
+                }
+                if canal_c == "linkedin":
+                    res_c = mototradis_nodes.nodo_linkedin(state_c)
+                elif canal_c == "x":
+                    res_c = mototradis_nodes.nodo_x(state_c)
+                elif canal_c == "discord":
+                    res_c = mototradis_nodes.nodo_discord(state_c)
+                else:
+                    res_c = {}
+                copy_c = res_c.get("copys_generados", {}).get(canal_c)
+                if copy_c:
+                    copys_generados[canal_c] = copy_c
+            except Exception as e_c:
+                import logging
+                logging.getLogger("puente_motor_ia").warning(f"Generación complementaria de {canal_c}: {e_c}")
+
     if not copys_generados or not any(k in copys_generados for k in ("linkedin", "x", "discord")):
         fallbacks_usados = list(rutas_activas)
         copys_generados = _generar_copys_defensivos(interaccion, rutas_activas)
     else:
-        for r in rutas_activas:
-            if r not in copys_generados:
+        for r in ("linkedin", "x", "discord"):
+            if r not in copys_generados or not copys_generados[r]:
                 fallbacks_usados.append(r)
                 def_copys = _generar_copys_defensivos(interaccion, [r])
                 copys_generados[r] = def_copys.get(r) or {}
@@ -4784,28 +4822,53 @@ def api_mototradis_run_mass(req: MototradisRunMassRequest):
     homologar_entorno_mototradis()
     limite = req.limite or 10
 
-    with sqlite3.connect(motor_bd.RUTA_BD) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT id, autor, canal, texto FROM interacciones WHERE etapa_flujo != 'publicado' ORDER BY id ASC LIMIT ?",
-            (limite,)
-        ).fetchall()
-        items = [dict(r) for r in rows]
-
-    total_procesados = len(items) if items else limite
+    total_procesados = 0
     publicados = 0
     descartados = 0
 
-    if items:
-        for it in items:
-            txt = (it.get("texto") or "").lower()
-            if "spam" in txt or len(txt) < 10:
+    try:
+        from src.database import obtener_lotes_pendientes_masivos, actualizar_estado_lote
+        lotes = obtener_lotes_pendientes_masivos(limite=limite)
+    except Exception as e:
+        logger.warning(f"Error consultando lotes pendientes masivos de Supabase: {e}")
+        lotes = []
+
+    if lotes:
+        total_procesados = len(lotes)
+        for it in lotes:
+            txt = (it.get("texto_original") or "").lower()
+            rel = it.get("relevancia") or 0
+            id_m = it.get("id_mensaje")
+            if rel <= 10 or "spam" in txt or len(txt) < 10:
                 descartados += 1
+                try:
+                    actualizar_estado_lote(id_m, "desaprobado")
+                except Exception:
+                    pass
             else:
                 publicados += 1
+                try:
+                    actualizar_estado_lote(id_m, "aprobado")
+                except Exception:
+                    pass
     else:
-        publicados = max(1, total_procesados // 2)
-        descartados = total_procesados - publicados
+        # Fallback a interacciones locales sqlite si no hay conexión a Supabase o está vacía
+        with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, autor, canal, texto FROM interacciones WHERE etapa_flujo != 'publicado' ORDER BY id ASC LIMIT ?",
+                (limite,)
+            ).fetchall()
+            items = [dict(r) for r in rows]
+
+        total_procesados = len(items) if items else 0
+        if items:
+            for it in items:
+                txt = (it.get("texto") or "").lower()
+                if "spam" in txt or len(txt) < 10:
+                    descartados += 1
+                else:
+                    publicados += 1
 
     return {
         "status": "exito",
@@ -4815,6 +4878,30 @@ def api_mototradis_run_mass(req: MototradisRunMassRequest):
         "descartados": descartados,
         "limite": limite,
     }
+
+
+@app.get("/api/v1/content-workflow/mass-queue-status")
+@app.get("/api/v1/content-workflow/mass-queue-status/")
+@app.get("/api/v1/mototradis/mass-queue-status")
+@app.get("/api/v1/mototradis/mass-queue-status/")
+def api_mototradis_mass_queue_status():
+    """
+    Retorna la cantidad exacta de mensajes en cola pendientes con relevancia < 35
+    para procesamiento masivo con Google Gemma 4.
+    """
+    homologar_entorno_mototradis()
+    total = 0
+    try:
+        from src.database import obtener_lotes_pendientes_masivos
+        lotes = obtener_lotes_pendientes_masivos(limite=500)
+        total = len(lotes) if lotes else 0
+    except Exception:
+        total = 0
+    return {
+        "total_en_cola": total,
+        "criterio": "relevancia < 35 y estado_revision en ('pendiente', 'rechazado')",
+    }
+
 
 
 

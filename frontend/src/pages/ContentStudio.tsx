@@ -36,6 +36,7 @@ import {
   publishMototradisChannel,
   regenerateContent,
   runMototradisMassProcess,
+  getMototradisMassQueueStatus,
   submitMototradisHitlDecision,
 } from '../api/contentWorkflow'
 import type {
@@ -963,6 +964,30 @@ function ContentStudio() {
   const [massResult, setMassResult] = useState<MototradisMassResult | null>(null)
   const [massLimit, setMassLimit] = useState(10)
   const [massError, setMassError] = useState('')
+  const [massQueueCount, setMassQueueCount] = useState<number>(0)
+  const [massQueueLoading, setMassQueueLoading] = useState<boolean>(true)
+
+  // Cargar estado de la cola de baja relevancia (< 35)
+  useEffect(() => {
+    let isMounted = true
+    setMassQueueLoading(true)
+    getMototradisMassQueueStatus()
+      .then((res) => {
+        if (isMounted) {
+          setMassQueueCount(res.total_en_cola ?? 0)
+        }
+      })
+      .catch((err) => {
+        console.warn('Error al consultar cola masiva de baja relevancia:', err)
+      })
+      .finally(() => {
+        if (isMounted) setMassQueueLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   // Modelos de IA utilizados reportados reactivamente
   const modelosUtilizados: MototradisModelosUtilizados = useMemo(() => {
@@ -1324,6 +1349,9 @@ function ContentStudio() {
     try {
       const res = await runMototradisMassProcess(massLimit)
       setMassResult(res)
+      // Refrescar conteo de cola tras procesar
+      const queueRes = await getMototradisMassQueueStatus()
+      setMassQueueCount(queueRes.total_en_cola ?? 0)
     } catch (error) {
       setMassError(
         error instanceof Error ? error.message : 'Error en el procesamiento masivo con Gemma 4.'
@@ -2679,6 +2707,19 @@ function ContentStudio() {
                   <Cpu size={12} />
                   🤖 Modelo IA: {modelosUtilizados.masivo}
                 </span>
+
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold transition ${
+                    massQueueLoading
+                      ? 'border-slate-200 bg-slate-50 text-slate-500'
+                      : massQueueCount > 0
+                      ? 'border-purple-300 bg-purple-100/70 text-purple-800'
+                      : 'border-slate-200 bg-slate-100 text-slate-500'
+                  }`}
+                  title="Cantidad de mensajes en cola pendientes con relevancia menor a 35"
+                >
+                  📥 {massQueueLoading ? 'Consultando cola...' : `Cola pendiente: ${massQueueCount} ${massQueueCount === 1 ? 'mensaje' : 'mensajes'}`}
+                </span>
               </div>
 
               <p className="mt-1 text-xs text-slate-500">
@@ -2697,17 +2738,23 @@ function ContentStudio() {
               min={1}
               max={50}
               value={massLimit}
+              disabled={massProcessing || massQueueCount === 0}
               onChange={(e) => setMassLimit(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs font-bold text-slate-700 outline-none focus:border-purple-400"
+              className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs font-bold text-slate-700 outline-none focus:border-purple-400 disabled:bg-slate-50 disabled:text-slate-400"
             />
             <button
               type="button"
-              disabled={massProcessing}
+              disabled={massProcessing || massQueueLoading || massQueueCount === 0}
               onClick={handleRunMassGemma}
               className="flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
+              title={massQueueCount === 0 ? 'Sin mensajes en cola con relevancia menor a 35' : undefined}
             >
               <RotateCcw size={14} className={massProcessing ? 'animate-spin' : ''} />
-              {massProcessing ? 'Procesando con Gemma 4...' : '⚡ Procesar cola (< 35) con Gemma 4'}
+              {massProcessing
+                ? 'Procesando con Gemma 4...'
+                : massQueueCount === 0
+                ? 'Sin mensajes en cola (< 35)'
+                : '⚡ Procesar cola (< 35) con Gemma 4'}
             </button>
           </div>
         </div>
