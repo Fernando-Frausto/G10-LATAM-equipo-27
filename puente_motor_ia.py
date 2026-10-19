@@ -1181,24 +1181,81 @@ async def _verificar_mensaje_discord(channel_id: str, message_id: str, token: st
         return False
 
 
-async def _enviar_reply_discord(channel_id: str, source_message_id: str, respuesta: str, token: str) -> dict:
+async def _buscar_mensaje_real_discord(channel_id: str, texto: str, autor: str, token: str) -> str | None:
+    """Busca en el historial de Discord el snowflake real del mensaje original si no estaba almacenado."""
+    if not channel_id or not token:
+        return None
+    try:
+        import urllib.request
+        import json
+        url = f"https://discord.com/api/v10/channels/{channel_id}/messages?limit=100"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bot {token}",
+                "User-Agent": "CommunityLab/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            mensajes = json.loads(resp.read().decode("utf-8"))
+            texto_limpio = " ".join(texto.lower().split()[:6]) if texto else ""
+            autor_limpio = autor.lower().strip("@").strip() if autor else ""
+            # 1. Búsqueda por coincidencia de texto
+            if texto_limpio:
+                for m in mensajes:
+                    if texto_limpio in str(m.get("content", "")).lower():
+                        return str(m.get("id"))
+            # 2. Búsqueda por autor si no hay texto
+            if autor_limpio:
+                for m in mensajes:
+                    u = str((m.get("author") or {}).get("username", "")).lower()
+                    if autor_limpio == u:
+                        return str(m.get("id"))
+    except Exception:
+        pass
+    return None
+
+
+async def _enviar_reply_discord(
+    channel_id: str,
+    source_message_id: str,
+    respuesta: str,
+    token: str,
+    texto_original: str = "",
+    autor_original: str = "",
+) -> dict:
     if not channel_id or not token:
         raise HTTPException(status_code=502, detail="Faltan parámetros requeridos de Discord (channel_id o token).")
 
     import urllib.request
     import json
+
+    real_snowflake = source_message_id if (source_message_id and source_message_id.isdigit() and len(source_message_id) >= 17) else None
+    if not real_snowflake and (texto_original or autor_original):
+        fn_buscar = getattr(sys.modules[__name__], "_buscar_mensaje_real_discord", _buscar_mensaje_real_discord)
+        try:
+            if inspect.iscoroutinefunction(fn_buscar):
+                real_snowflake = await fn_buscar(channel_id, texto_original, autor_original, token)
+            else:
+                real_snowflake = fn_buscar(channel_id, texto_original, autor_original, token)
+        except Exception:
+            real_snowflake = None
+
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     payload_body = {
         "content": respuesta,
         "allowed_mentions": {"parse": []},
     }
-    # Solo agregar message_reference si es un snowflake de Discord real (>= 17 dígitos)
-    if source_message_id and source_message_id.isdigit() and len(source_message_id) >= 17:
+
+    if real_snowflake:
         payload_body["message_reference"] = {
-            "message_id": source_message_id,
+            "message_id": real_snowflake,
             "channel_id": channel_id,
             "fail_if_not_exists": False,
         }
+    elif autor_original or texto_original:
+        resumen = (texto_original[:90] + "...") if len(texto_original) > 90 else texto_original
+        payload_body["content"] = f"> **En respuesta a @{autor_original or 'usuario'}:** *\"{resumen}\"*\n\n{respuesta}"
 
     req = urllib.request.Request(
         url,
@@ -1307,6 +1364,21 @@ async def vista_previa_publicacion_queja_v1(interaccion_id: int):
             "detail": "Bot de Discord no configurado en el servidor",
         }
 
+    # Si source_message_id no es un snowflake real (>= 17 dígitos), intentar resolverlo del historial de Discord
+    real_snowflake = source_message_id if (source_message_id and source_message_id.isdigit() and len(source_message_id) >= 17) else None
+    if not real_snowflake and (original_content or author):
+        fn_buscar = getattr(sys.modules[__name__], "_buscar_mensaje_real_discord", _buscar_mensaje_real_discord)
+        try:
+            if inspect.iscoroutinefunction(fn_buscar):
+                real_snowflake = await fn_buscar(channel_id, original_content, author, token)
+            else:
+                real_snowflake = fn_buscar(channel_id, original_content, author, token)
+        except Exception:
+            real_snowflake = None
+
+    if real_snowflake:
+        source_message_id = real_snowflake
+
     # Si la interacción venía con channel_id explícito en la base de datos, validar existencia estricta
     fn_verificar = getattr(sys.modules[__name__], "_verificar_mensaje_discord", _verificar_mensaje_discord)
     if interaccion.get("channel_id") and source_message_id:
@@ -1365,13 +1437,35 @@ async def publicar_respuesta_queja_v1(payload: dict = Body(...)):
 
     channel_id, channel_name = _resolver_canal_discord(interaccion)
     source_message_id = str(interaccion.get("message_id") or "")
+    texto_original = str(interaccion.get("texto") or "")
+    autor_original = str(interaccion.get("autor") or "")
 
     fn_enviar = getattr(sys.modules[__name__], "_enviar_reply_discord", _enviar_reply_discord)
     try:
         if inspect.iscoroutinefunction(fn_enviar):
-            res_envio = await fn_enviar(channel_id, source_message_id, respuesta, token)
+            try:
+                res_envio = await fn_enviar(
+                    channel_id,
+                    source_message_id,
+                    respuesta,
+                    token,
+                    texto_original=texto_original,
+                    autor_original=autor_original,
+                )
+            except TypeError:
+                res_envio = await fn_enviar(channel_id, source_message_id, respuesta, token)
         else:
-            res_envio = fn_enviar(channel_id, source_message_id, respuesta, token)
+            try:
+                res_envio = fn_enviar(
+                    channel_id,
+                    source_message_id,
+                    respuesta,
+                    token,
+                    texto_original=texto_original,
+                    autor_original=autor_original,
+                )
+            except TypeError:
+                res_envio = fn_enviar(channel_id, source_message_id, respuesta, token)
     except HTTPException:
         raise
     except Exception as e:
