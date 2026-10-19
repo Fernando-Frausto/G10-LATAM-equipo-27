@@ -1165,7 +1165,7 @@ function ContentStudio() {
           </p>
         )}
 
-        <div className="mt-5 space-y-3">
+        <div className="mt-5 max-h-[480px] overflow-y-auto pr-1.5 space-y-3">
           {!complaintsLoading && !complaintsError && complaints.length === 0 && (
             <p className="text-sm text-slate-500">
               No hay interacciones negativas para revisar.
