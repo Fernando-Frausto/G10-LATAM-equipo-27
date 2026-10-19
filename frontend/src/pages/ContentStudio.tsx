@@ -2315,13 +2315,23 @@ function ContentStudio() {
             )}
 
             {channelPublishResult['linkedin'] && (
-              <p
+              <div
                 className={`mt-2 text-center text-xs font-medium ${
                   channelPublishResult['linkedin'].ok ? 'text-green-700' : 'text-rose-600'
                 }`}
               >
-                {channelPublishResult['linkedin'].detalle}
-              </p>
+                <p>{channelPublishResult['linkedin'].detalle}</p>
+                {channelPublishResult['linkedin'].ok && (
+                  <a
+                    href="https://www.linkedin.com/feed/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
+                  >
+                    ↗ Ver en LinkedIn (Feed / Actividad)
+                  </a>
+                )}
+              </div>
             )}
           </div>
         </section>
@@ -2522,13 +2532,23 @@ function ContentStudio() {
             )}
 
             {channelPublishResult['x'] && (
-              <p
+              <div
                 className={`mt-2 text-center text-xs font-medium ${
                   channelPublishResult['x'].ok ? 'text-green-700' : 'text-rose-600'
                 }`}
               >
-                {channelPublishResult['x'].detalle}
-              </p>
+                <p>{channelPublishResult['x'].detalle}</p>
+                {channelPublishResult['x'].ok && (
+                  <a
+                    href="https://x.com/CloudEdTech_1"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
+                  >
+                    ↗ Ver tweets en @CloudEdTech_1
+                  </a>
+                )}
+              </div>
             )}
           </div>
         </section>

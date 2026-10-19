@@ -4586,7 +4586,8 @@ def despachar_x_resiliente(titulo: str, texto_copy: str) -> dict:
         ok = enviar_tweet_x(copys)
         return {
             "ok": ok,
-            "detalle": "Publicado en X exitosamente" if ok else "Fallo al enviar tweet en X",
+            "detalle": "Publicado en X exitosamente (ver en https://x.com/CloudEdTech_1)" if ok else "Fallo al enviar tweet en X",
+            "url": "https://x.com/CloudEdTech_1" if ok else None,
             "estado_canal": "enviado" if ok else "error"
         }
     except Exception as exc:
@@ -4625,7 +4626,8 @@ def despachar_linkedin_resiliente(titulo: str, texto_copy: str) -> dict:
         ok = enviar_linkedin(copys)
         return {
             "ok": ok,
-            "detalle": "Publicado en LinkedIn exitosamente" if ok else "Fallo al publicar en LinkedIn",
+            "detalle": "Publicado en LinkedIn (perfil de Enoc Ramirez) exitosamente" if ok else "Fallo al publicar en LinkedIn",
+            "url": "https://www.linkedin.com/feed/" if ok else None,
             "estado_canal": "enviado" if ok else "error"
         }
     except Exception as exc:
