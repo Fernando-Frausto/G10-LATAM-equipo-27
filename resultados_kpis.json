@@ -2,40 +2,21 @@
   "aprobados": [],
   "descartados": [
     {
-      "id_mensaje": 114,
-      "autor": "editionab",
-      "canal_origen": "#oportunidades-laborales",
+      "id_mensaje": 120,
+      "autor": "isseigremory7244",
+      "canal_origen": "#general",
       "comunidad": "Discord_Grupo_ONE_G10",
-      "fecha_envio": "2026-10-19T22:21:55+00:00",
-      "fecha_extraccion": "2026-10-19T22:46:18+00:00",
+      "fecha_envio": "2026-10-20T01:09:26+00:00",
+      "fecha_extraccion": "2026-10-20T01:17:06+00:00",
       "semana": "Semana_05",
       "modelo_ia": "Groq (Llama 3.3)",
-      "texto_original": "Hola buenas tardes, la semana pasada se me acabó el contrato, alguien sabe de alguna oferta temporal de fin de año.",
+      "texto_original": "1 2 o 3",
       "kpis": {
-        "relevancia": 60,
-        "sentimiento": "Neutral",
-        "temas_clave": "#ofertatemporal, #empleo, #finDeAño",
-        "segmento": "personas en búsqueda de empleo temporal",
-        "razonamiento": "El mensaje solicita información laboral concreta, aportando contexto pero sin profundidad analítica."
-      },
-      "estado_revision": "rechazado"
-    },
-    {
-      "id_mensaje": 9402,
-      "autor": "laura_pendiente_1",
-      "canal_origen": "#general",
-      "comunidad": "Discord",
-      "fecha_envio": "2026-10-19T11:00:00+00:00",
-      "fecha_extraccion": "2026-10-19T11:00:00+00:00",
-      "semana": "Semana_01",
-      "modelo_ia": "Groq (Llama 3.3)",
-      "texto_original": "Mensaje pendiente de evaluar 1",
-      "kpis": {
-        "relevancia": 15,
+        "relevancia": 10,
         "sentimiento": "Neutral",
         "temas_clave": "N/A",
         "segmento": "N/A",
-        "razonamiento": "El mensaje carece de contenido sustancial, por lo que su valor y profundidad son mínimos."
+        "razonamiento": "El mensaje solo contiene números sin contexto, aporta poco valor ni información."
       },
       "estado_revision": "rechazado"
     }
