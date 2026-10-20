@@ -1200,12 +1200,51 @@ def _resolver_canal_discord(interaccion: dict) -> tuple[str, str]:
     return channel_id, channel_name
 
 
+def _enrutar_url_discord(url: str) -> str:
+    """Enruta cualquier URL de Discord a través del reverse proxy si está configurado en las variables de entorno."""
+    if not url:
+        return url
+    proxy = (os.getenv("DISCORD_PROXY_URL") or os.getenv("DISCORD_PROXY_BASE") or "").strip().rstrip("/")
+    if proxy and (url.startswith("https://discord.com") or url.startswith("http://discord.com")):
+        return url.replace("https://discord.com", proxy, 1).replace("http://discord.com", proxy, 1)
+    return url
+
+
+def _aplicar_parche_proxy_discord():
+    """Aplica el proxy de Discord a variables de entorno de webhooks y a discord.http.Route.BASE."""
+    proxy = (os.getenv("DISCORD_PROXY_URL") or os.getenv("DISCORD_PROXY_BASE") or "").strip().rstrip("/")
+    if not proxy:
+        return
+    for var_name in (
+        "DISCORD_WEBHOOK_ANUNCIOS",
+        "DISCORD_WEBHOOK_GENERAL",
+        "DISCORD_WEBHOOK_FAQ",
+        "DISCORD_WEBHOOK_PQRS",
+        "DISCORD_WEBHOOK_NOTIFICACIONES",
+    ):
+        val = os.environ.get(var_name)
+        if val and ("https://discord.com" in val or "http://discord.com" in val):
+            os.environ[var_name] = val.replace("https://discord.com", proxy, 1).replace("http://discord.com", proxy, 1)
+            logger.info(f"Variable {var_name} enrutada exitosamente a través del proxy: {proxy}")
+
+    try:
+        import discord.http
+        discord.http.Route.BASE = f"{proxy}/api/v10"
+        logger.info(f"discord.http.Route.BASE enrutado a {discord.http.Route.BASE}")
+    except Exception as e:
+        logger.warning(f"No se pudo enrutar discord.http.Route.BASE: {e}")
+
+
+# Ejecutar la verificación del proxy al cargar el módulo
+_aplicar_parche_proxy_discord()
+
+
 async def _verificar_mensaje_discord(channel_id: str, message_id: str, token: str) -> bool:
     if not channel_id or not message_id or not token:
         return False
     try:
         import urllib.request
-        url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
+        url = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}")
         req = urllib.request.Request(
             url,
             headers={
@@ -1226,7 +1265,7 @@ async def _buscar_mensaje_real_discord(channel_id: str, texto: str, autor: str, 
     try:
         import urllib.request
         import json
-        url = f"https://discord.com/api/v10/channels/{channel_id}/messages?limit=100"
+        url = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{channel_id}/messages?limit=100")
         req = urllib.request.Request(
             url,
             headers={
@@ -1279,7 +1318,7 @@ async def _enviar_reply_discord(
         except Exception:
             real_snowflake = None
 
-    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    url = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{channel_id}/messages")
     payload_body = {
         "content": respuesta,
         "allowed_mentions": {"parse": []},
@@ -1321,7 +1360,7 @@ async def _enviar_reply_discord(
             # Fallback al webhook de PQRS / soporte bajo CloudEdTech_Oficial
             webhook_support = os.getenv("DISCORD_WEBHOOK_PQRS") or os.getenv("DISCORD_WEBHOOK_ANUNCIOS")
             if webhook_support:
-                target_wh = webhook_support
+                target_wh = _enrutar_url_discord(webhook_support)
                 if "wait=true" not in target_wh:
                     target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
                 try:
@@ -3062,6 +3101,7 @@ def _formatear_respuesta_rate_limit(error_o_codigo: Any = None, detalle_contextu
 
 
 async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 100):
+    _aplicar_parche_proxy_discord()
     intents = discord.Intents.default()
     intents.message_content = True
     client = discord.Client(intents=intents)
@@ -3651,7 +3691,8 @@ def _obtener_telemetria_bots_omitidos_discord() -> int:
         import requests
         headers = {"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"}
         for cid in canales_ids:
-            resp = requests.get(f"https://discord.com/api/v10/channels/{cid}/messages?limit=100", headers=headers, timeout=2)
+            url_ch = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{cid}/messages?limit=100")
+            resp = requests.get(url_ch, headers=headers, timeout=2)
             if resp.status_code == 200:
                 msgs = resp.json()
                 total_bots += sum(1 for m in msgs if m.get("author", {}).get("bot") or m.get("webhook_id"))
@@ -3865,7 +3906,7 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
             import urllib.request
             import json
             req_guilds = urllib.request.Request(
-                "https://discord.com/api/v10/users/@me/guilds",
+                _enrutar_url_discord("https://discord.com/api/v10/users/@me/guilds"),
                 headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
             )
             with urllib.request.urlopen(req_guilds, timeout=4) as resp:
@@ -3873,7 +3914,7 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
             for g in guilds:
                 gid = g.get("id")
                 req_ch = urllib.request.Request(
-                    f"https://discord.com/api/v10/guilds/{gid}/channels",
+                    _enrutar_url_discord(f"https://discord.com/api/v10/guilds/{gid}/channels"),
                     headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
                 )
                 with urllib.request.urlopen(req_ch, timeout=4) as r_ch:
@@ -4075,7 +4116,7 @@ async def publish_announcement_v1(payload: dict = Body(...)):
         import urllib.request
         import json
         req = urllib.request.Request(
-            f"https://discord.com/api/v10/channels/{channel_id}/messages",
+            _enrutar_url_discord(f"https://discord.com/api/v10/channels/{channel_id}/messages"),
             data=json.dumps({"content": contenido, "allowed_mentions": {"parse": []}}).encode("utf-8"),
             headers={
                 "Authorization": f"Bot {bot_token}",
@@ -4105,7 +4146,7 @@ async def publish_announcement_v1(payload: dict = Body(...)):
 
     if not despachado:
         # Despacho por webhook estándar hacia #notificaciones bajo CloudEdTech_Oficial
-        target_webhook = webhook_url or os.getenv("DISCORD_WEBHOOK_ANUNCIOS")
+        target_webhook = _enrutar_url_discord(webhook_url or os.getenv("DISCORD_WEBHOOK_ANUNCIOS"))
         if not target_webhook:
             raise HTTPException(
                 status_code=503,
@@ -5036,7 +5077,7 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
         webhook_url = os.getenv("DISCORD_WEBHOOK_GENERAL")
 
     if webhook_url:
-        target_wh = webhook_url
+        target_wh = _enrutar_url_discord(webhook_url)
         if "wait=true" not in target_wh:
             target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
         try:
@@ -5066,7 +5107,7 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
             import requests
             headers = {"Authorization": f"Bot {token}", "Content-Type": "application/json", "User-Agent": "CommunityLab/1.0"}
             resp = requests.post(
-                f"https://discord.com/api/v10/channels/{target_channel_id}/messages",
+                _enrutar_url_discord(f"https://discord.com/api/v10/channels/{target_channel_id}/messages"),
                 json={"content": cuerpo_mensaje, "allowed_mentions": {"parse": []}},
                 headers=headers,
                 timeout=10
@@ -5091,7 +5132,7 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
     # Nivel 3: Fallback a webhook de anuncios si el canal solicitado era notificaciones/anuncios o si no hay bot token
     webhook_anuncios = os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or os.getenv("DISCORD_WEBHOOK_NOTIFICACIONES")
     if webhook_anuncios and (c_norm in ("notificaciones", "anuncios") or not token):
-        target_wh = webhook_anuncios
+        target_wh = _enrutar_url_discord(webhook_anuncios)
         if "wait=true" not in target_wh:
             target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
         try:

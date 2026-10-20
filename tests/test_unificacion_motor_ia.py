@@ -3597,3 +3597,38 @@ test_despacho_discord_cascada_sin_falsos_positivos = test_publish_channel_erradi
 test_publish_channel_no_persiste_en_sqlite_ante_fallo_de_canal = test_publish_channel_erradicacion_falsos_positivos_discord
 test_adaptadores_autonomos_x_y_linkedin_capturan_ids_y_urls_canonicas = test_publish_channel_captura_ids_y_urls_x_y_linkedin
 
+
+def test_enrutar_url_discord_con_proxy_y_sin_proxy(monkeypatch):
+    """Verifica que _enrutar_url_discord sustituya https://discord.com cuando DISCORD_PROXY_URL esté configurado."""
+    import puente_motor_ia
+
+    # 1. Sin proxy
+    monkeypatch.delenv("DISCORD_PROXY_URL", raising=False)
+    monkeypatch.delenv("DISCORD_PROXY_BASE", raising=False)
+    url_orig = "https://discord.com/api/v10/channels/123/messages"
+    assert puente_motor_ia._enrutar_url_discord(url_orig) == url_orig
+
+    # 2. Con proxy
+    proxy_test = "https://discord-proxy-edtech.fraustojeovany.workers.dev"
+    monkeypatch.setenv("DISCORD_PROXY_URL", proxy_test)
+    url_enrutada = puente_motor_ia._enrutar_url_discord(url_orig)
+    assert url_enrutada == f"{proxy_test}/api/v10/channels/123/messages"
+
+
+def test_aplicar_parche_proxy_discord_variables_y_route_base(monkeypatch):
+    """Verifica que _aplicar_parche_proxy_discord actualice variables de entorno de webhooks y discord.http.Route.BASE."""
+    import puente_motor_ia
+    import discord.http
+
+    proxy_test = "https://discord-proxy-edtech.fraustojeovany.workers.dev"
+    monkeypatch.setenv("DISCORD_PROXY_URL", proxy_test)
+    monkeypatch.setenv("DISCORD_WEBHOOK_ANUNCIOS", "https://discord.com/api/webhooks/111/aaa")
+    monkeypatch.setenv("DISCORD_WEBHOOK_GENERAL", "https://discord.com/api/webhooks/222/bbb")
+
+    puente_motor_ia._aplicar_parche_proxy_discord()
+
+    assert os.environ["DISCORD_WEBHOOK_ANUNCIOS"] == f"{proxy_test}/api/webhooks/111/aaa"
+    assert os.environ["DISCORD_WEBHOOK_GENERAL"] == f"{proxy_test}/api/webhooks/222/bbb"
+    assert discord.http.Route.BASE == f"{proxy_test}/api/v10"
+
+
