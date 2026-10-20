@@ -48,11 +48,15 @@ type ApiMessage = {
         topic: string
         keywords: string[]
         highlight: boolean
+        is_published?: boolean
+        published_platforms?: string[]
     }
 }
 
 type MessagesApiResponse = {
     total: number
+    omitted_bots_count?: number
+    real_messages_count?: number
     messages: ApiMessage[]
 }
 
@@ -78,6 +82,8 @@ type MessageItem = {
     relevance: number
     highlight: boolean
     isAnalyzed: boolean
+    isPublished?: boolean
+    publishedPlatforms?: string[]
 }
 
 type AiModel = {
@@ -103,6 +109,8 @@ function Messages() {
 
     const [apiData, setApiData] = useState<MessagesApiResponse>({
         total: 0,
+        omitted_bots_count: 0,
+        real_messages_count: 0,
         messages: [],
     })
 
@@ -115,7 +123,7 @@ function Messages() {
     const [selectedAiBrain, setSelectedAiBrain] = useState<string>('Groq (Llama 3.3)')
     const [dateFrom, setDateFrom] = useState<string>('')
     const [dateTo, setDateTo] = useState<string>('')
-    const [onlyPending, setOnlyPending] = useState<boolean>(true)
+    const [batchLimit, setBatchLimit] = useState<number>(5)
     const [isEvaluatingBatch, setIsEvaluatingBatch] = useState<boolean>(false)
     const [batchEvalMessage, setBatchEvalMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
     const [isSyncingDiscord, setIsSyncingDiscord] = useState<boolean>(false)
@@ -213,6 +221,11 @@ function Messages() {
                         ? 'faq'
                         : rawChannel || 'general'
 
+                const isPublished = Boolean(analysis.is_published)
+                const publishedPlatforms = Array.isArray(analysis.published_platforms)
+                    ? analysis.published_platforms
+                    : []
+
                 return {
                     id: message.message_id,
                     interactionId: message.interaction_id,
@@ -235,13 +248,17 @@ function Messages() {
                     relevance: Math.max(0, Math.min(100, analysis.relevance)),
                     highlight: analysis.highlight,
                     isAnalyzed: Boolean(
-                        analysis.workflow_stage !== 'ingesta' &&
-                        analysis.workflow_stage !== 'en_ingesta' &&
-                        (analysis.workflow_stage === 'en_analisis' ||
-                            analysis.workflow_stage === 'en_redaccion' ||
-                            analysis.workflow_stage === 'en_aprobacion' ||
-                            analysis.relevance > 0)
+                        isPublished ||
+                        analysis.workflow_stage === 'publicado' ||
+                        (analysis.workflow_stage !== 'ingesta' &&
+                            analysis.workflow_stage !== 'en_ingesta' &&
+                            (analysis.workflow_stage === 'en_analisis' ||
+                                analysis.workflow_stage === 'en_redaccion' ||
+                                analysis.workflow_stage === 'en_aprobacion' ||
+                                analysis.relevance > 0))
                     ),
+                    isPublished,
+                    publishedPlatforms,
                 }
             }),
         [apiData.messages]
@@ -309,26 +326,6 @@ function Messages() {
 
 
 
-    const pendingInCopy = messageItems.filter((message) => {
-        const curation = curationStatus[message.id] ?? 'pending'
-        return (
-            message.isAnalyzed &&
-            !message.author.toLowerCase().includes('cloudedtech community bot') &&
-            curation !== 'discarded' &&
-            curation !== 'curated' &&
-            message.workflowStage !== 'en_aprobacion' &&
-            message.workflowStage !== 'en_redaccion'
-        )
-    }).length
-
-    const priorityIncidents = messageItems.filter((message) =>
-        message.isAnalyzed &&
-        !message.author.toLowerCase().includes('cloudedtech community bot') &&
-        (curationStatus[message.id] ?? 'pending') !== 'discarded' &&
-        message.sentiment === 'negative' &&
-        message.relevance >= 70
-    ).length
-
     const matchesTimeFilter = (date: Date) => {
         // 1. Rango específico seleccionado por el usuario en 'Desde' y 'Hasta'
         if (dateFrom) {
@@ -365,26 +362,31 @@ function Messages() {
             return false
         }
 
+        const isMsgPublished = Boolean(message.isPublished) || message.workflowStage === 'publicado'
         const currentCuration = curationStatus[message.id] ?? 'pending'
 
         // Precedencia humana (HITL):
         // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
         // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado ni restaurado a 'pending'
+        // Y NUNCA si el mensaje ya fue publicado
         const isDiscarded =
-            currentCuration === 'discarded' ||
-            (message.isAnalyzed &&
-                message.relevance < 70 &&
-                currentCuration !== 'curated' &&
-                currentCuration !== 'pending')
+            !isMsgPublished &&
+            (currentCuration === 'discarded' ||
+                (message.isAnalyzed &&
+                    message.relevance < 70 &&
+                    currentCuration !== 'curated' &&
+                    currentCuration !== 'pending'))
 
         const isCompleted =
             !isDiscarded &&
-            (currentCuration === 'curated' ||
+            (isMsgPublished ||
+                currentCuration === 'curated' ||
                 message.workflowStage === 'en_aprobacion' ||
                 message.workflowStage === 'en_redaccion')
 
         const isPendingEval =
             !isDiscarded &&
+            !isCompleted &&
             (!message.isAnalyzed ||
                 message.workflowStage === 'ingesta' ||
                 message.workflowStage === 'en_ingesta')
@@ -452,7 +454,7 @@ function Messages() {
             setCurationError(
                 error instanceof Error
                     ? error.message
-                    : 'No se pudo guardar la curadur?a',
+                    : 'No se pudo guardar la curaduría',
             )
         } finally {
             setSavingCurationId(null)
@@ -541,21 +543,24 @@ function Messages() {
 
             totalInRange++
 
+            const isMsgPublished = Boolean(msg.isPublished) || msg.workflowStage === 'publicado'
             const st = curationStatus[msg.id] ?? 'pending'
-            if (st === 'discarded') {
+            if (!isMsgPublished && st === 'discarded') {
                 discardedInRange++
                 continue
             }
 
             const isCompleted =
+                isMsgPublished ||
                 st === 'curated' ||
                 msg.workflowStage === 'en_aprobacion' ||
                 msg.workflowStage === 'en_redaccion'
 
             const isPendingEval =
-                !msg.isAnalyzed ||
-                msg.workflowStage === 'ingesta' ||
-                msg.workflowStage === 'en_ingesta'
+                !isCompleted &&
+                (!msg.isAnalyzed ||
+                    msg.workflowStage === 'ingesta' ||
+                    msg.workflowStage === 'en_ingesta')
 
             if (isCompleted) {
                 completedInRange++
@@ -567,8 +572,7 @@ function Messages() {
         }
 
         const pendingInRange = pendingEvalInRange
-        const activeInRange = pendingEvalInRange + pendingCopyInRange + completedInRange
-        const evaluableCount = onlyPending ? pendingEvalInRange : activeInRange
+        const evaluableCount = pendingEvalInRange
 
         return {
             isDateRangeInverted: false,
@@ -580,7 +584,18 @@ function Messages() {
             discardedInRange,
             evaluableCount,
         }
-    }, [messageItems, dateFrom, dateTo, onlyPending, curationStatus])
+    }, [messageItems, dateFrom, dateTo, curationStatus])
+
+    useEffect(() => {
+        const count = batchEvalMetrics.evaluableCount
+        if (count > 0 && count < 5) {
+            setBatchLimit(count)
+        } else if (count >= 5) {
+            if (batchLimit !== 1 && batchLimit !== 5 && batchLimit !== 10 && batchLimit !== count) {
+                setBatchLimit(5)
+            }
+        }
+    }, [batchEvalMetrics.evaluableCount, batchLimit])
 
     const handleSyncDiscord = async () => {
         if (isSyncingDiscord) return
@@ -653,8 +668,8 @@ function Messages() {
                 limite: number
             } = {
                 proveedor: selectedAiBrain,
-                solo_pendientes: onlyPending,
-                limite: 100,
+                solo_pendientes: true,
+                limite: batchLimit,
             }
             if (dateFrom) payload.desde = dateFrom
             if (dateTo) payload.hasta = dateTo
@@ -864,14 +879,16 @@ function Messages() {
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="flex divide-x divide-slate-200 rounded-xl border border-slate-100">
                             <div className="px-6 py-2 text-center">
-                                <p className="text-xs font-medium text-slate-500">Pendientes en Copy</p>
-                                <p className="mt-1 text-lg font-bold text-orange-500">{pendingInCopy}</p>
+                                <p className="text-xs font-medium text-slate-500">Mensajes omitidos de bots</p>
+                                <p className="mt-1 text-lg font-bold text-slate-600">
+                                    {apiData.omitted_bots_count ?? 0}
+                                </p>
                             </div>
 
                             <div className="px-6 py-2 text-center">
-                                <p className="text-xs font-medium text-slate-500">Incidentes prioritarios</p>
-                                <p className="mt-1 text-lg font-bold text-rose-600">
-                                    {priorityIncidents}
+                                <p className="text-xs font-medium text-slate-500">Mensajes reales detectados</p>
+                                <p className="mt-1 text-lg font-bold text-emerald-600">
+                                    {apiData.real_messages_count ?? apiData.total ?? messageItems.length}
                                 </p>
                             </div>
                         </div>
@@ -940,7 +957,7 @@ function Messages() {
                                 <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-indigo-700">
                                     <Sparkles size={13} className="shrink-0" />
-                                    <strong>{batchEvalMetrics.pendingCopyInRange}</strong> pendientes de copy
+                                    <strong>{batchEvalMetrics.pendingCopyInRange}</strong> Pendientes de publicar
                                 </span>
                                 <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-emerald-700">
@@ -1058,17 +1075,39 @@ function Messages() {
                         />
                     </div>
 
-                    {/* Checkbox y Botón de Acción */}
+                    {/* Selector de tamaño de lote y Botón de Acción */}
                     <div className="flex flex-col gap-2">
-                        <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-slate-600">
-                            <input
-                                type="checkbox"
-                                checked={onlyPending}
-                                onChange={(e) => setOnlyPending(e.target.checked)}
-                                className="rounded border-slate-300 text-purple-600 focus:ring-purple-400"
-                            />
-                            Solo pendientes de evaluar
-                        </label>
+                        <div>
+                            <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+                                Tamaño del lote
+                            </label>
+                            <select
+                                value={batchEvalMetrics.evaluableCount === 0 ? 0 : batchLimit}
+                                onChange={(e) => setBatchLimit(Number(e.target.value))}
+                                disabled={batchEvalMetrics.evaluableCount === 0 || isEvaluatingBatch}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                                {batchEvalMetrics.evaluableCount === 0 ? (
+                                    <option value={0} disabled>Sin pendientes</option>
+                                ) : (
+                                    <>
+                                        <option value={1}>1 mensaje</option>
+                                        {batchEvalMetrics.evaluableCount > 1 && batchEvalMetrics.evaluableCount < 5 && (
+                                            <option value={batchEvalMetrics.evaluableCount}>
+                                                Evaluar todos ({batchEvalMetrics.evaluableCount})
+                                            </option>
+                                        )}
+                                        <option value={5}>5 mensajes</option>
+                                        {batchEvalMetrics.evaluableCount > 5 && batchEvalMetrics.evaluableCount < 10 && (
+                                            <option value={batchEvalMetrics.evaluableCount}>
+                                                Evaluar todos ({batchEvalMetrics.evaluableCount})
+                                            </option>
+                                        )}
+                                        <option value={10}>10 mensajes</option>
+                                    </>
+                                )}
+                            </select>
+                        </div>
 
                         <button
                             type="button"
@@ -1231,7 +1270,7 @@ function Messages() {
                                 Pendientes de evaluar
                             </option>
                             <option value="pending_copy">
-                                Pendientes de copy
+                                Pendientes de publicar
                             </option>
                             <option value="completos">
                                 Proceso completo
@@ -1283,7 +1322,7 @@ function Messages() {
                         : curationFilter === 'pending_eval'
                         ? 'mensajes pendientes de evaluar'
                         : curationFilter === 'pending_copy'
-                        ? 'mensajes en la cola de copy'
+                        ? 'mensajes en la cola de publicación'
                         : 'mensajes en total (Todos los mensajes)'}
                     {(dateFrom || dateTo) && (
                         <span className="ml-1 font-semibold text-purple-700">
@@ -1312,7 +1351,7 @@ function Messages() {
             )}
 
             {/* Mensajes */}
-            <div className="space-y-4">
+            <div className="max-h-[min(850px,70vh)] overflow-y-auto pr-2 space-y-4">
                 {filteredMessages.length === 0 && (
                     <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
                         <MessageCircle
@@ -1331,16 +1370,38 @@ function Messages() {
                 )}
 
                 {filteredMessages.map((message) => {
+                    const isMsgPublished = Boolean(message.isPublished) || message.workflowStage === 'publicado'
                     const currentCuration =
                         curationStatus[message.id] ?? 'pending'
                     const status =
-                        currentCuration === 'discarded' ||
-                        (message.isAnalyzed &&
-                            message.relevance < 70 &&
-                            currentCuration !== 'curated' &&
-                            currentCuration !== 'pending')
+                        isMsgPublished
+                            ? 'curated'
+                            : currentCuration === 'discarded' ||
+                              (message.isAnalyzed &&
+                                  message.relevance < 70 &&
+                                  currentCuration !== 'curated' &&
+                                  currentCuration !== 'pending')
                             ? 'discarded'
                             : currentCuration
+
+                    const ALL_PLATFORMS = ['Discord', 'LinkedIn', 'X'] as const
+                    const rawPublished = (message.publishedPlatforms || []).map((p) => {
+                        const lower = p.toLowerCase()
+                        if (lower === 'discord') return 'Discord'
+                        if (lower === 'linkedin') return 'LinkedIn'
+                        if (lower === 'x' || lower === 'twitter') return 'X'
+                        return p
+                    })
+                    const canonicalPublished = ALL_PLATFORMS.filter((p) => rawPublished.includes(p))
+                    const effectivePublished = canonicalPublished.length > 0 ? canonicalPublished : ['Discord']
+                    const missingPlatforms = ALL_PLATFORMS.filter((p) => !effectivePublished.includes(p))
+                    const publishedPlatformsText = effectivePublished.join(', ')
+
+                    const actionButtonLabel = !isMsgPublished
+                        ? 'Generar publicación'
+                        : missingPlatforms.length > 0
+                            ? `Publicar en demás redes (${missingPlatforms.join(', ')})`
+                            : 'Ver en mesa de trabajo'
 
                     return (
                         <article
@@ -1375,17 +1436,21 @@ function Messages() {
                                                 </span>
 
                                                 <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
-                                                    status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
+                                                    isMsgPublished
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
                                                         ? 'bg-emerald-100 text-emerald-700'
                                                         : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
                                                         ? 'bg-amber-100 text-amber-700'
                                                         : 'bg-indigo-100 text-indigo-700'
                                                 }`}>
-                                                    {status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
+                                                    {isMsgPublished
+                                                        ? 'Publicado'
+                                                        : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
                                                         ? 'Completo'
                                                         : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
                                                         ? 'Ingesta / IA'
-                                                        : 'Copy'}
+                                                        : 'Publicar'}
                                                 </span>
 
                                                 <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600">
@@ -1452,6 +1517,12 @@ function Messages() {
                                                         Destacado
                                                     </span>
                                                 )}
+
+                                                {isMsgPublished && (
+                                                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                                                        ✓ Publicado en: {publishedPlatformsText}
+                                                    </span>
+                                                )}
                                             </div>
 
                                             {/* Metadatos IA */}
@@ -1459,7 +1530,7 @@ function Messages() {
                                                 {message.isAnalyzed ? (
                                                     <>
                                                         <span className="text-slate-500">
-                                                            Tema:{' '}
+                                                             Tema:{' '}
                                                             <strong className="text-slate-700">
                                                                 {message.topic}
                                                             </strong>
@@ -1511,6 +1582,7 @@ function Messages() {
                                         <StatusBadge
                                             status={status}
                                             isAnalyzed={message.isAnalyzed}
+                                            isPublished={isMsgPublished}
                                             workflowStage={message.workflowStage}
                                         />
 
@@ -1533,8 +1605,12 @@ function Messages() {
                                             ) : (
                                                 <button
                                                     type="button"
-                                                    title="Descartar"
-                                                    disabled={savingCurationId !== null}
+                                                    title={
+                                                        isMsgPublished
+                                                            ? 'Mensaje ya publicado (no se puede descartar)'
+                                                            : 'Descartar'
+                                                    }
+                                                    disabled={savingCurationId !== null || isMsgPublished}
                                                     onClick={() =>
                                                         markCuration(
                                                             message,
@@ -1602,15 +1678,15 @@ function Messages() {
                                                         state: { interactionId: message.interactionId },
                                                     })
                                                 }
-                                                disabled={status === 'discarded'}
+                                                disabled={status === 'discarded' && !isMsgPublished}
                                                 title={
-                                                    status === 'discarded'
+                                                    status === 'discarded' && !isMsgPublished
                                                         ? 'Restaura el mensaje para generar publicación'
-                                                        : 'Generar publicación a partir de este mensaje'
+                                                        : actionButtonLabel
                                                 }
                                                 className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-orange-500 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
                                             >
-                                                Generar publicación
+                                                <span>{actionButtonLabel}</span>
                                                 <ChevronRight size={14} />
                                             </button>
                                         )}
@@ -1676,12 +1752,23 @@ function KpiCard({
 function StatusBadge({
     status,
     isAnalyzed,
+    isPublished,
     workflowStage,
 }: {
     status: CurationStatus
     isAnalyzed?: boolean
+    isPublished?: boolean
     workflowStage?: string
 }) {
+    if (isPublished || workflowStage === 'publicado') {
+        return (
+            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Proceso completo
+            </span>
+        )
+    }
+
     if (status === 'discarded') {
         return (
             <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-700">
@@ -1714,11 +1801,11 @@ function StatusBadge({
         )
     }
 
-    // Ya analizado por IA, pero le falta la parte de redacción / copy de Enoc
+    // Ya analizado por IA, pero le falta la parte de redacción / publicación
     return (
         <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700">
             <Sparkles size={12} />
-            Falta redacción de copy
+            Falta redacción de publicación
         </span>
     )
 }

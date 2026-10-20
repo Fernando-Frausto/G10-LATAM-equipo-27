@@ -25,7 +25,7 @@ export async function getDiscordPublishingChannels():
 
     if (!Array.isArray(response.items)) {
         throw new Error(
-            'El servidor no devolvio una lista valida de canales',
+            'El servidor no devolvió una lista válida de canales',
         )
     }
 
@@ -45,11 +45,11 @@ export async function publishApprovedContent(
 ): Promise<DiscordPublishResponse> {
 
     if (!Number.isInteger(contentId) || contentId <= 0) {
-        throw new Error('Identificador de contenido invalido')
+        throw new Error('Identificador de contenido inválido')
     }
 
     if (!/^\d+$/.test(channelId)) {
-        throw new Error('Canal de Discord invalido')
+        throw new Error('Canal de Discord inválido')
     }
 
     const response = await apiRequest(
@@ -70,7 +70,7 @@ export async function publishApprovedContent(
         !response.mensaje_id
     ) {
         throw new Error(
-            'El servidor no confirmo la publicacion en Discord',
+            'El servidor no confirmó la publicación en Discord',
         )
     }
 

@@ -159,7 +159,7 @@ function Approvals() {
                 : 'Error desconocido'
 
             const invalidChannel =
-                /canal de discord invalido|canal de discord inv?lido/i.test(detail)
+                /canal de discord invalido|canal de discord inválido/i.test(detail)
 
             if (invalidChannel) {
                 setPublicationLockedIds((current) =>

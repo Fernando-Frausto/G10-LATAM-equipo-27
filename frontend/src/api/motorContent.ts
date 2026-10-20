@@ -58,7 +58,7 @@ export async function getMotorContents(
     const data: MotorContentResponse = await response.json()
 
     if (!Array.isArray(data.items)) {
-        throw new Error('Respuesta inv?lida del Motor IA')
+        throw new Error('Respuesta inválida del Motor IA')
     }
 
     return data.items

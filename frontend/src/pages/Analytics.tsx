@@ -579,6 +579,19 @@ function Analytics() {
                     title="Atención requerida"
                     subtitle="Señales detectadas"
                     content={analyticsData.insights.attention_required}
+                    action={
+                        <button
+                            type="button"
+                            onClick={() => navigate('/content#panel-quejas')}
+                            className="inline-flex w-full items-center justify-between gap-2 rounded-xl border border-red-200 bg-red-50/70 px-4 py-2.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 hover:text-red-800"
+                        >
+                            <span className="flex items-center gap-2">
+                                <AlertTriangle size={14} className="text-red-600" />
+                                <span>Gestionar quejas y reclamos</span>
+                            </span>
+                            <ChevronRight size={14} className="text-red-500" />
+                        </button>
+                    }
                 />
             </div>
 
@@ -653,36 +666,46 @@ function InsightCard({
     title,
     subtitle,
     content,
+    action,
 }: {
     icon: React.ReactNode
     iconClass: string
     title: string
     subtitle: string
     content: string
+    action?: React.ReactNode
 }) {
     return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-4 flex items-center gap-3">
-                <div
-                    className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconClass}`}
-                >
-                    {icon}
+        <div className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div>
+                <div className="mb-4 flex items-center gap-3">
+                    <div
+                        className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconClass}`}
+                    >
+                        {icon}
+                    </div>
+
+                    <div>
+                        <h3 className="font-semibold text-slate-900">
+                            {title}
+                        </h3>
+
+                        <p className="text-xs text-slate-400">
+                            {subtitle}
+                        </p>
+                    </div>
                 </div>
 
-                <div>
-                    <h3 className="font-semibold text-slate-900">
-                        {title}
-                    </h3>
-
-                    <p className="text-xs text-slate-400">
-                        {subtitle}
-                    </p>
-                </div>
+                <p className="text-sm leading-6 text-slate-600">
+                    {content}
+                </p>
             </div>
 
-            <p className="text-sm leading-6 text-slate-600">
-                {content}
-            </p>
+            {action && (
+                <div className="mt-4 pt-4 border-t border-slate-100">
+                    {action}
+                </div>
+            )}
         </div>
     )
 }

@@ -47,14 +47,26 @@ function FeaturedStories() {
     const targetId = Number(currentStory.id_mensaje || currentStory.id)
     const isActionDisabled = stories.length === 0 || !targetId || targetId === 0
     const isPublished = Boolean(currentStory.is_published)
-    const publishedPlatforms = Array.isArray(currentStory.published_platforms) && currentStory.published_platforms.length > 0
-        ? currentStory.published_platforms.join(', ')
-        : 'Discord'
+
+    const ALL_PLATFORMS = ['Discord', 'LinkedIn', 'X']
+    const rawPublishedList = (currentStory.published_platforms || []).map((p) => {
+        const lower = p.toLowerCase()
+        if (lower === 'discord') return 'Discord'
+        if (lower === 'linkedin') return 'LinkedIn'
+        if (lower === 'x' || lower === 'twitter') return 'X'
+        return p
+    })
+    const canonicalPublished = ALL_PLATFORMS.filter((p) => rawPublishedList.includes(p))
+    const effectivePublished = canonicalPublished.length > 0 ? canonicalPublished : ['Discord']
+    const missingPlatforms = ALL_PLATFORMS.filter((p) => !effectivePublished.includes(p))
+    const publishedPlatforms = effectivePublished.join(', ')
 
     const actionButtonText = isActionDisabled
         ? 'Sin historias disponibles'
         : isPublished
-            ? 'Volver a publicar'
+            ? missingPlatforms.length > 0
+                ? `Publicar en demás redes (${missingPlatforms.join(', ')})`
+                : 'Ver publicación en mesa de trabajo'
             : 'Generar publicación'
 
     const handleGeneratePublication = () => {
@@ -139,7 +151,7 @@ function FeaturedStories() {
 
                             {isPublished && (
                                 <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                                    ✓ Publicado en {publishedPlatforms}
+                                    ✓ Publicado en: {publishedPlatforms}
                                 </span>
                             )}
 

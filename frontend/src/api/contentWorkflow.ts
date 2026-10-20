@@ -56,13 +56,13 @@ export async function regenerateContent(
     !data.contenido.trim()
   ) {
     throw new Error(
-      'El Motor IA no devolvio un contenido valido para el formato solicitado.',
+      'El Motor IA no devolvió un contenido válido para el formato solicitado.',
     )
   }
 
   if (solicitud.formato === 'x' && [...data.contenido].length > 280) {
     throw new Error(
-      'El Motor IA genero un texto que supera los 280 caracteres de X.',
+      'El Motor IA generó un texto que supera los 280 caracteres de X.',
     )
   }
 
@@ -128,7 +128,7 @@ export async function publishComplaintResponse(
   solicitud: PublishComplaintResponseRequest,
 ): Promise<PublishComplaintResponseResult> {
   if (!Number.isSafeInteger(solicitud.interaccion_id) || solicitud.interaccion_id <= 0) {
-    throw new Error('La interacci?n seleccionada no es v?lida.')
+    throw new Error('La interacción seleccionada no es válida.')
   }
 
   const respuesta = solicitud.respuesta.trim()
@@ -209,7 +209,7 @@ export async function getPublishedComplaintIds(): Promise<number[]> {
     )
   ) {
     throw new Error(
-      'El servidor devolvio una lista de publicaciones no valida.',
+      'El servidor devolvió una lista de publicaciones no válida.',
     )
   }
 
@@ -325,6 +325,8 @@ export interface MototradisCheckpointState {
   copys_generados?: Record<string, any>
   aviso_fallback?: string | null
   fallbacks_usados?: string[]
+  is_published?: boolean
+  plataformas_publicadas?: string[]
 }
 
 export type MototradisCheckpointResponse = MototradisCheckpointState

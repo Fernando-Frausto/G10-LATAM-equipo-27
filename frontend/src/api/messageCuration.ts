@@ -13,7 +13,7 @@ export async function updateMessageCuration(
     status: CurationStatus,
 ): Promise<CurationResponse> {
     if (!Number.isInteger(interactionId) || interactionId <= 0) {
-        throw new Error('Identificador de interacci?n inv?lido')
+        throw new Error('Identificador de interacción inválido')
     }
 
     const result = (await apiRequest(
@@ -29,7 +29,7 @@ export async function updateMessageCuration(
         result.curation_status !== status ||
         result.updated !== true
     ) {
-        throw new Error('El servidor no confirm? la curadur?a')
+        throw new Error('El servidor no confirmó la curaduría')
     }
 
     return result

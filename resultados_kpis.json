@@ -2,21 +2,21 @@
   "aprobados": [],
   "descartados": [
     {
-      "id_mensaje": 1,
-      "autor": "Tania",
-      "canal_origen": "general",
+      "id_mensaje": 9403,
+      "autor": "miguel_pendiente_2",
+      "canal_origen": "#general",
       "comunidad": "Discord",
-      "fecha_envio": "2026-10-09T19:21:54+00:00",
-      "fecha_extraccion": "2026-10-09T19:21:54+00:00",
-      "semana": "2026-W40",
-      "modelo_ia": "Google Gemma 4",
-      "texto_original": "Probando conexion con Supabase!",
+      "fecha_envio": "2026-10-19T10:00:00+00:00",
+      "fecha_extraccion": "2026-10-19T10:00:00+00:00",
+      "semana": "Semana_01",
+      "modelo_ia": "Groq (Llama 3.3)",
+      "texto_original": "Mensaje pendiente de evaluar 2",
       "kpis": {
-        "relevancia": 30,
+        "relevancia": 10,
         "sentimiento": "Neutral",
-        "temas_clave": "#Supabase #Conexion",
-        "segmento": "Desarrolladores",
-        "razonamiento": "El mensaje es una prueba técnica simple sin profundidad ni aporte de valor a la comunidad."
+        "temas_clave": "N/A",
+        "segmento": "N/A",
+        "razonamiento": "El mensaje carece de contenido sustancial, por lo que su valor y profundidad son mínimos."
       },
       "estado_revision": "rechazado"
     }

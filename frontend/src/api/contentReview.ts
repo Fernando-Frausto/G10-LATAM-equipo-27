@@ -48,7 +48,7 @@ export async function reviewContent(
         response.estado !== review.estado
     ) {
         throw new Error(
-            'El servidor no confirmo correctamente la revision',
+            'El servidor no confirmó correctamente la revisión',
         )
     }
 

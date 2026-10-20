@@ -1,4 +1,4 @@
-﻿import { apiRequest } from './client'
+import { apiRequest } from './client'
 
 export interface ManualPublicationResponse {
     id: number
@@ -20,7 +20,7 @@ export async function confirmManualPublication(
     const url = publicationUrl.trim()
 
     if (!url || url.length > 2048) {
-        throw new Error('Debes ingresar una URL de publicacion valida')
+        throw new Error('Debes ingresar una URL de publicación válida')
     }
 
     let parsed: URL
@@ -28,7 +28,7 @@ export async function confirmManualPublication(
     try {
         parsed = new URL(url)
     } catch {
-        throw new Error('La URL de publicacion no es valida')
+        throw new Error('La URL de publicación no es válida')
     }
 
     if (parsed.protocol !== 'https:') {
@@ -53,7 +53,7 @@ export async function confirmManualPublication(
         !response.url_publicacion
     ) {
         throw new Error(
-            'El servidor no confirmo correctamente la publicacion manual',
+            'El servidor no confirmó correctamente la publicación manual',
         )
     }
 

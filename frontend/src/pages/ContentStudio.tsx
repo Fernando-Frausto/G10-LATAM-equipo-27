@@ -73,6 +73,8 @@ type WorkflowMessage = {
   sentiment: string
   relevance: number
   attachments: DiscordAttachment[]
+  isPublished?: boolean
+  publishedPlatforms?: string[]
 }
 
 type WorkflowMessagesResponse = {
@@ -90,6 +92,8 @@ type WorkflowMessagesResponse = {
       sentiment: string
       relevance: number
       curation_status?: string
+      is_published?: boolean
+      published_platforms?: string[]
     }
   }>
 }
@@ -163,6 +167,8 @@ function ContentStudio() {
 
   const [workflowMessages, setWorkflowMessages] =
     useState<WorkflowMessage[]>([])
+  const [activeWorkbenchMessage, setActiveWorkbenchMessage] =
+    useState<WorkflowMessage | null>(null)
   const [selectedMessageId, setSelectedMessageId] =
     useState<number | null>(null)
   const selectedWorkflowId = selectedMessageId
@@ -265,7 +271,8 @@ function ContentStudio() {
               (item.analysis.workflow_stage === 'en_redaccion' ||
                 item.analysis.workflow_stage === 'en_analisis') &&
               item.analysis.relevance >= 70 &&
-              item.analysis.curation_status !== 'discarded',
+              item.analysis.curation_status !== 'discarded' &&
+              !item.analysis.is_published,
           )
           .map((item) => ({
             interactionId: item.message.interaction_id,
@@ -278,20 +285,25 @@ function ContentStudio() {
             topic: item.analysis.topic,
             sentiment: item.analysis.sentiment,
             relevance: item.analysis.relevance,
+            isPublished: Boolean(item.analysis.is_published),
+            publishedPlatforms: item.analysis.published_platforms || [],
           }))
           .sort((a, b) => b.interactionId - a.interactionId)
 
+        let targetMsg: WorkflowMessage | null = null
         if (targetInteractionId && !Number.isNaN(targetInteractionId)) {
-          const existsInFiltered = messages.some(
+          const foundInTray = messages.find(
             (m) => m.interactionId === targetInteractionId,
           )
 
-          if (!existsInFiltered) {
+          if (foundInTray) {
+            targetMsg = foundInTray
+          } else {
             const foundInAll = data.messages.find(
               (item) => item.message.interaction_id === targetInteractionId,
             )
             if (foundInAll) {
-              const extraMsg: WorkflowMessage = {
+              targetMsg = {
                 interactionId: foundInAll.message.interaction_id,
                 author: foundInAll.message.author_name || 'Usuario',
                 channel: foundInAll.message.channel_name,
@@ -302,8 +314,9 @@ function ContentStudio() {
                 topic: foundInAll.analysis.topic,
                 sentiment: foundInAll.analysis.sentiment,
                 relevance: foundInAll.analysis.relevance,
+                isPublished: Boolean(foundInAll.analysis.is_published),
+                publishedPlatforms: foundInAll.analysis.published_platforms || [],
               }
-              messages = [extraMsg, ...messages]
             } else {
               try {
                 const liveSummary = await getCommunityLiveSummary()
@@ -311,7 +324,7 @@ function ContentStudio() {
                   (h) => (h.id_mensaje ?? Number(h.id)) === targetInteractionId,
                 )
                 if (highlight) {
-                  const extraMsg: WorkflowMessage = {
+                  targetMsg = {
                     interactionId: highlight.id_mensaje ?? Number(highlight.id),
                     author: highlight.author || 'Usuario',
                     channel: (highlight.channel || 'general').replace(/^#/, ''),
@@ -334,8 +347,9 @@ function ContentStudio() {
                               : highlight.relevance,
                           )
                         : 80,
+                    isPublished: Boolean(highlight.is_published),
+                    publishedPlatforms: highlight.published_platforms || [],
                   }
-                  messages = [extraMsg, ...messages]
                 }
               } catch (err) {
                 console.error(
@@ -350,30 +364,22 @@ function ContentStudio() {
         if (!controller.signal.aborted) {
           setWorkflowMessages(messages)
 
-          const targetMsg =
-            targetInteractionId && !Number.isNaN(targetInteractionId)
-              ? messages.find((m) => m.interactionId === targetInteractionId)
-              : null
-
-          const initialSelectedId = targetMsg
-            ? targetMsg.interactionId
-            : messages[0]?.interactionId ?? null
+          const initialMsg = targetMsg || messages[0] || null
+          const initialSelectedId = initialMsg?.interactionId ?? null
 
           setSelectedMessageId(initialSelectedId)
+          setActiveWorkbenchMessage(initialMsg)
 
-          if (targetMsg) {
-            setDrafts(buildDefaultDrafts(targetMsg))
-            setTimeout(() => {
-              originalMessageRef.current?.scrollIntoView({
-                behavior: 'smooth',
-                block: 'start',
-              })
-            }, 100)
-          } else if (messages.length > 0) {
-            setDrafts((current) => {
-              if (current.linkedin.interactionId) return current
-              return buildDefaultDrafts(messages[0])
-            })
+          if (initialMsg) {
+            setDrafts(buildDefaultDrafts(initialMsg))
+            if (targetMsg) {
+              setTimeout(() => {
+                originalMessageRef.current?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'start',
+                })
+              }, 100)
+            }
           }
         }
       } catch (error) {
@@ -398,11 +404,13 @@ function ContentStudio() {
 
   useEffect(() => {
     if (!targetInteractionId || Number.isNaN(targetInteractionId)) return
+    if (activeWorkbenchMessage?.interactionId === targetInteractionId) return
     const targetMsg = workflowMessages.find(
       (m) => m.interactionId === targetInteractionId,
     )
-    if (targetMsg && targetMsg.interactionId !== selectedMessageId) {
+    if (targetMsg) {
       setSelectedMessageId(targetMsg.interactionId)
+      setActiveWorkbenchMessage(targetMsg)
       setDrafts(buildDefaultDrafts(targetMsg))
       setTimeout(() => {
         originalMessageRef.current?.scrollIntoView({
@@ -411,7 +419,7 @@ function ContentStudio() {
         })
       }, 100)
     }
-  }, [targetInteractionId, workflowMessages, selectedMessageId])
+  }, [targetInteractionId, workflowMessages, activeWorkbenchMessage])
 
   const PREFERRED_ANNOUNCEMENT_CHANNELS_ORDER = useMemo(
     () => [
@@ -545,9 +553,11 @@ function ContentStudio() {
   }
 
   const selectedWorkflowMessage =
-    workflowMessages.find(
-      (item) => item.interactionId === selectedWorkflowId,
-    ) ?? null
+    activeWorkbenchMessage && activeWorkbenchMessage.interactionId === selectedWorkflowId
+      ? activeWorkbenchMessage
+      : workflowMessages.find(
+          (item) => item.interactionId === selectedWorkflowId,
+        ) ?? activeWorkbenchMessage ?? null
 
   const [complaintAiProvider, setComplaintAiProvider] =
     useState<string>('Groq (Llama 3.3)')
@@ -693,6 +703,18 @@ function ContentStudio() {
     return () => controller.abort()
   }, [])
 
+  useEffect(() => {
+    if (location.hash === '#panel-quejas') {
+      const timer = setTimeout(() => {
+        const el = document.getElementById('panel-quejas')
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 150)
+      return () => clearTimeout(timer)
+    }
+  }, [location.hash, complaintsLoading])
+
   const discordFiles = (drafts.discord.attachments ?? []).filter(
     (file) =>
       file.filename.trim().length > 0 &&
@@ -722,6 +744,7 @@ function ContentStudio() {
   const prepareWorkflowContent = (chosenMessage?: WorkflowMessage) => {
     const message = chosenMessage ?? selectedWorkflowMessage
     if (!message) return
+    setActiveWorkbenchMessage(message)
     const source = message.content.trim()
 
     if (!source) return
@@ -1011,6 +1034,33 @@ function ContentStudio() {
     }
   }, [pipelineData])
 
+  const publishedPlatformNames = useMemo<string[]>(() => {
+    const set = new Set<string>()
+    if (activeWorkbenchMessage?.publishedPlatforms) {
+      activeWorkbenchMessage.publishedPlatforms.forEach((p) => {
+        const pNorm = p.toLowerCase()
+        if (pNorm === 'discord') set.add('Discord')
+        if (pNorm === 'linkedin') set.add('LinkedIn')
+        if (pNorm === 'x' || pNorm === 'twitter') set.add('X')
+      })
+    }
+    if (pipelineData?.plataformas_publicadas) {
+      pipelineData.plataformas_publicadas.forEach((p) => {
+        const pNorm = p.toLowerCase()
+        if (pNorm === 'discord') set.add('Discord')
+        if (pNorm === 'linkedin') set.add('LinkedIn')
+        if (pNorm === 'x' || pNorm === 'twitter') set.add('X')
+      })
+    }
+    if (drafts.discord.submitted) set.add('Discord')
+    if (drafts.linkedin.submitted) set.add('LinkedIn')
+    if (drafts.x.submitted) set.add('X')
+
+    return ['Discord', 'LinkedIn', 'X'].filter((p) => set.has(p))
+  }, [activeWorkbenchMessage, pipelineData, drafts])
+
+  const isCurrentlyPublished = publishedPlatformNames.length > 0
+
   // Carga reactiva del Checkpoint de Mototradis al seleccionar un mensaje
   useEffect(() => {
     if (!selectedMessageId) {
@@ -1059,21 +1109,22 @@ function ContentStudio() {
             if (bui.discord.canal_seleccionado) setDiscordSelectedChannel(bui.discord.canal_seleccionado)
           }
 
+          const plataformasPub = (checkpoint.plataformas_publicadas || []).map((p) => p.toLowerCase())
           setDrafts({
             linkedin: {
               interactionId: selectedMessageId,
               content: liText,
-              submitted: checkpoint.estado_pipeline === 'publicado',
+              submitted: plataformasPub.includes('linkedin'),
             },
             x: {
               interactionId: selectedMessageId,
               content: xText,
-              submitted: checkpoint.estado_pipeline === 'publicado',
+              submitted: plataformasPub.includes('x') || plataformasPub.includes('twitter'),
             },
             discord: {
               interactionId: selectedMessageId,
               content: discordText,
-              submitted: checkpoint.estado_pipeline === 'publicado',
+              submitted: plataformasPub.includes('discord'),
             },
           })
         } else {
@@ -1279,6 +1330,31 @@ function ContentStudio() {
           [canal]: { ...prev[canal], submitted: true },
         }))
         setPipelineActionMessage(`✓ Publicación en ${canal.toUpperCase()} exitosa: ${res.detalle}`)
+
+        // Excluir de la bandeja de mensajes pero conservar en la mesa de trabajo
+        setWorkflowMessages((prev) => prev.filter((m) => m.interactionId !== selectedMessageId))
+        const canonName = canal === 'linkedin' ? 'LinkedIn' : canal === 'x' ? 'X' : 'Discord'
+        setActiveWorkbenchMessage((prev) => {
+          if (!prev) return prev
+          const existing = prev.publishedPlatforms || []
+          const updated = existing.includes(canonName) ? existing : [...existing, canonName]
+          return {
+            ...prev,
+            isPublished: true,
+            publishedPlatforms: updated,
+          }
+        })
+        setPipelineData((prev) => {
+          if (!prev) return prev
+          const existing = prev.plataformas_publicadas || []
+          const canalLower = canal.toLowerCase()
+          const updated = existing.includes(canalLower) ? existing : [...existing, canalLower]
+          return {
+            ...prev,
+            is_published: true,
+            plataformas_publicadas: updated,
+          }
+        })
       } else {
         setPipelineActionError(`Error al publicar en ${canal.toUpperCase()}: ${res.detalle}`)
       }
@@ -1347,6 +1423,35 @@ function ContentStudio() {
           x: { ...prev.x, submitted: resCanales.x?.estado_canal === 'enviado' },
           discord: { ...prev.discord, submitted: resCanales.discord?.estado_canal === 'enviado' },
         }))
+
+        if (enviados.length > 0) {
+          // Excluir de la bandeja de mensajes pero conservar en la mesa de trabajo
+          setWorkflowMessages((prev) => prev.filter((m) => m.interactionId !== selectedMessageId))
+          const canonEnviados = enviados.map((e) =>
+            e === 'LINKEDIN' ? 'LinkedIn' : e === 'X' ? 'X' : 'Discord'
+          )
+          setActiveWorkbenchMessage((prev) => {
+            if (!prev) return prev
+            const existing = prev.publishedPlatforms || []
+            const combined = Array.from(new Set([...existing, ...canonEnviados]))
+            return {
+              ...prev,
+              isPublished: true,
+              publishedPlatforms: combined,
+            }
+          })
+          setPipelineData((prev) => {
+            if (!prev) return prev
+            const existing = prev.plataformas_publicadas || []
+            const lowerEnviados = canonEnviados.map((c) => c.toLowerCase())
+            const combined = Array.from(new Set([...existing, ...lowerEnviados]))
+            return {
+              ...prev,
+              is_published: true,
+              plataformas_publicadas: combined,
+            }
+          })
+        }
       } else {
         setPipelineActionMessage(
           `✓ Lote ${res.decision || 'desaprobado'} y checkpoint limpiado correctamente. El hilo queda listo para reintento.`
@@ -1355,6 +1460,13 @@ function ContentStudio() {
 
       const updatedCheckpoint = await getMototradisCheckpoint(selectedMessageId)
       setPipelineData(updatedCheckpoint)
+      if (updatedCheckpoint.is_published && updatedCheckpoint.plataformas_publicadas) {
+        const canonList = updatedCheckpoint.plataformas_publicadas.map((p) => {
+          const pl = p.toLowerCase()
+          return pl === 'linkedin' ? 'LinkedIn' : pl === 'x' || pl === 'twitter' ? 'X' : 'Discord'
+        })
+        setActiveWorkbenchMessage((prev) => prev ? { ...prev, isPublished: true, publishedPlatforms: canonList } : prev)
+      }
     } catch (error) {
       setPipelineActionError(
         error instanceof Error ? error.message : 'Error al registrar decisión HITL.'
@@ -1384,32 +1496,6 @@ function ContentStudio() {
       setMassProcessing(false)
     }
   }
-
-  const formats: Array<{
-    id: ContentFormat
-    name: string
-    description: string
-    icon: typeof BriefcaseBusiness
-  }> = [
-      {
-        id: 'linkedin',
-        name: 'LinkedIn',
-        description: 'Publicación profesional',
-        icon: BriefcaseBusiness,
-      },
-      {
-        id: 'x',
-        name: 'X',
-        description: 'Publicación breve para X',
-        icon: MessageCircle,
-      },
-      {
-        id: 'discord',
-        name: 'Discord',
-        description: 'Mensaje para la comunidad',
-        icon: MessageCircle,
-      },
-    ]
 
   return (
     <div>
@@ -1919,6 +2005,13 @@ function ContentStudio() {
                 <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
                   Mesa de trabajo
                 </span>
+
+                {isCurrentlyPublished && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                    <CheckCircle size={13} className="text-emerald-600" />
+                    ✓ Publicado en: {publishedPlatformNames.join(', ')}
+                  </span>
+                )}
               </div>
 
               <p className="mt-1 text-xs text-slate-400">
@@ -1981,6 +2074,13 @@ function ContentStudio() {
                   Mesa de Trabajo Multicanal (Orquestador LangGraph)
                 </h3>
 
+                {isCurrentlyPublished && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                    <CheckCircle size={13} className="text-emerald-600" />
+                    ✓ Publicado en: {publishedPlatformNames.join(', ')}
+                  </span>
+                )}
+
                 <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
                   <Cpu size={12} />
                   🤖 Orquestador IA: {modelosUtilizados.orquestador}
@@ -2041,46 +2141,6 @@ function ContentStudio() {
         {pipelineLoading && (
           <p className="mt-3 text-xs text-indigo-600">Sincronizando checkpoint del orquestador...</p>
         )}
-
-        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-          {formats.map((format) => {
-            const Icon = format.icon
-            const selected = activeFormat === format.id
-
-            return (
-              <button
-                key={format.id}
-                type="button"
-                onClick={() => setActiveFormat(format.id)}
-                className={`flex items-center gap-3 rounded-xl border p-4 text-left transition ${
-                  selected
-                    ? 'border-orange-300 bg-orange-50'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-                    selected
-                      ? 'bg-orange-500 text-white'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  <Icon size={19} />
-                </div>
-
-                <div>
-                  <p className="font-semibold text-slate-900">
-                    {format.name}
-                  </p>
-
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {format.description}
-                  </p>
-                </div>
-              </button>
-            )
-          })}
-        </div>
       </section>
 
       {/* Tarjetas Especializadas Multicanal con Trazabilidad de Modelos de IA */}
@@ -2110,14 +2170,14 @@ function ContentStudio() {
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                   drafts.linkedin.submitted
-                    ? 'bg-green-50 text-green-700'
+                    ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
                     : isOmittedByOrchestrator(drafts.linkedin.content)
                     ? 'border border-amber-200 bg-amber-50 text-amber-800'
                     : 'bg-amber-50 text-amber-700'
                 }`}
               >
                 {drafts.linkedin.submitted
-                  ? 'En aprobación'
+                  ? '✓ Publicado en LinkedIn'
                   : isOmittedByOrchestrator(drafts.linkedin.content)
                   ? 'Omitido por orquestador'
                   : 'Borrador'}
@@ -2272,20 +2332,36 @@ function ContentStudio() {
             <button
               type="button"
               disabled={
+                drafts.linkedin.submitted ||
                 channelPublishing['linkedin'] ||
                 !drafts.linkedin.content.trim() ||
                 isOmittedByOrchestrator(drafts.linkedin.content)
               }
               title={
-                isOmittedByOrchestrator(drafts.linkedin.content)
+                drafts.linkedin.submitted
+                  ? 'Este contenido ya fue publicado exitosamente en LinkedIn'
+                  : isOmittedByOrchestrator(drafts.linkedin.content)
                   ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
                   : undefined
               }
               onClick={() => handlePublishChannelIndividual('linkedin')}
-              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200"
+              className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
+                drafts.linkedin.submitted
+                  ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200'
+              }`}
             >
-              <Send size={14} />
-              {channelPublishing['linkedin'] ? 'Publicando...' : 'Publicar en LinkedIn'}
+              {drafts.linkedin.submitted ? (
+                <>
+                  <CheckCircle size={14} className="text-emerald-600" />
+                  ✓ Publicado en LinkedIn
+                </>
+              ) : (
+                <>
+                  <Send size={14} />
+                  {channelPublishing['linkedin'] ? 'Publicando...' : 'Publicar en LinkedIn'}
+                </>
+              )}
             </button>
 
             {/* Guardar en base de datos */}
@@ -2361,14 +2437,14 @@ function ContentStudio() {
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                   drafts.x.submitted
-                    ? 'bg-green-50 text-green-700'
+                    ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
                     : isOmittedByOrchestrator(drafts.x.content)
                     ? 'border border-amber-200 bg-amber-50 text-amber-800'
                     : 'bg-amber-50 text-amber-700'
                 }`}
               >
                 {drafts.x.submitted
-                  ? 'En aprobación'
+                  ? '✓ Publicado en X'
                   : isOmittedByOrchestrator(drafts.x.content)
                   ? 'Omitido por orquestador'
                   : 'Borrador'}
@@ -2485,21 +2561,37 @@ function ContentStudio() {
                 <button
                   type="button"
                   disabled={
+                    drafts.x.submitted ||
                     channelPublishing['x'] ||
                     !drafts.x.content.trim() ||
                     isOverLimit ||
                     isOmittedByOrchestrator(drafts.x.content)
                   }
                   title={
-                    isOmittedByOrchestrator(drafts.x.content)
+                    drafts.x.submitted
+                      ? 'Este tweet ya fue publicado exitosamente en X'
+                      : isOmittedByOrchestrator(drafts.x.content)
                       ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
                       : undefined
                   }
                   onClick={() => handlePublishChannelIndividual('x')}
-                  className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-400"
+                  className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
+                    drafts.x.submitted
+                      ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'bg-slate-900 text-white hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-400'
+                  }`}
                 >
-                  <Send size={14} />
-                  {channelPublishing['x'] ? 'Publicando...' : 'Publicar en X'}
+                  {drafts.x.submitted ? (
+                    <>
+                      <CheckCircle size={14} className="text-emerald-600" />
+                      ✓ Publicado en X
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      {channelPublishing['x'] ? 'Publicando...' : 'Publicar en X'}
+                    </>
+                  )}
                 </button>
               )
             })()}
@@ -2578,14 +2670,14 @@ function ContentStudio() {
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                   drafts.discord.submitted
-                    ? 'bg-green-50 text-green-700'
+                    ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
                     : isOmittedByOrchestrator(drafts.discord.content)
                     ? 'border border-amber-200 bg-amber-50 text-amber-800'
                     : 'bg-amber-50 text-amber-700'
                 }`}
               >
                 {drafts.discord.submitted
-                  ? 'En aprobación'
+                  ? '✓ Publicado en Discord'
                   : isOmittedByOrchestrator(drafts.discord.content)
                   ? 'Omitido por orquestador'
                   : 'Borrador'}
@@ -2748,20 +2840,36 @@ function ContentStudio() {
             <button
               type="button"
               disabled={
+                drafts.discord.submitted ||
                 channelPublishing['discord'] ||
                 !drafts.discord.content.trim() ||
                 isOmittedByOrchestrator(drafts.discord.content)
               }
               title={
-                isOmittedByOrchestrator(drafts.discord.content)
+                drafts.discord.submitted
+                  ? 'Este contenido ya fue publicado exitosamente en Discord'
+                  : isOmittedByOrchestrator(drafts.discord.content)
                   ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
                   : undefined
               }
               onClick={() => handlePublishChannelIndividual('discord')}
-              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
+              className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
+                drafts.discord.submitted
+                  ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200'
+              }`}
             >
-              <Send size={14} />
-              {channelPublishing['discord'] ? 'Publicando...' : 'Publicar en Discord'}
+              {drafts.discord.submitted ? (
+                <>
+                  <CheckCircle size={14} className="text-emerald-600" />
+                  ✓ Publicado en Discord
+                </>
+              ) : (
+                <>
+                  <Send size={14} />
+                  {channelPublishing['discord'] ? 'Publicando...' : 'Publicar en Discord'}
+                </>
+              )}
             </button>
 
             {/* Guardar en base de datos */}
@@ -2957,7 +3065,7 @@ function ContentStudio() {
       </section>
 
       {/* Quejas, reclamos y soporte crítico */}
-      <section className="mt-6 rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
+      <section id="panel-quejas" className="mt-6 rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
@@ -3165,7 +3273,7 @@ function ContentStudio() {
                       typeof data.respuesta !== 'string' ||
                       !data.respuesta.trim()
                     ) {
-                      throw new Error('El servidor no devolvio una respuesta valida.')
+                      throw new Error('El servidor no devolvió una respuesta válida.')
                     }
 
                     if (
@@ -3363,12 +3471,12 @@ function ContentStudio() {
                   ) return
 
                   const confirmado = window.confirm(
-                    `PUBLICAR RESPUESTA REAL EN DISCORD?\n\n` +
+                    `¿PUBLICAR RESPUESTA REAL EN DISCORD?\n\n` +
                     `Canal: #${destination.channel_name}\n` +
                     `ID del canal: ${destination.channel_id}\n` +
-                    `Interaccion: ${interactionId}\n\n` +
+                    `Interacción: ${interactionId}\n\n` +
                     `TEXTO EXACTO:\n${respuesta}\n\n` +
-                    `Aceptar enviara este mensaje a Discord.`
+                    `Aceptar enviará este mensaje a Discord.`
                   )
 
                   if (!confirmado) return
@@ -3396,8 +3504,8 @@ function ContentStudio() {
                     )
                   } catch (error) {
                     setComplaintPublishError(
-                      (error instanceof Error ? error.message : 'Error de publicacion.') +
-                      ' Verifica Discord y Auditoria antes de volver a intentarlo.'
+                      (error instanceof Error ? error.message : 'Error de publicación.') +
+                      ' Verifica Discord y Auditoría antes de volver a intentarlo.'
                     )
                   } finally {
                     complaintPublishingRef.current = false

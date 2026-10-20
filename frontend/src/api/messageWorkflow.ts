@@ -37,7 +37,7 @@ export async function updateMessageWorkflow(
         result.updated !== true
     ) {
         throw new Error(
-            'El Motor IA no confirmo el cambio de etapa'
+            'El Motor IA no confirmó el cambio de etapa'
         )
     }
 

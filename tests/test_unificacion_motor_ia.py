@@ -2496,7 +2496,7 @@ def test_featured_stories_frontend_contract_and_static_spec():
     assert "is_published" in codigo, "Debe evaluar is_published"
     assert "published_platforms" in codigo, "Debe evaluar published_platforms"
     assert "✓ Publicado en" in codigo, "Debe desplegar la insignia '✓ Publicado en ...'"
-    assert "Volver a publicar" in codigo, "El botón debe alternar a 'Volver a publicar'"
+    assert "Publicar en demás redes" in codigo or "Volver a publicar" in codigo, "El botón debe alternar a 'Publicar en demás redes' o 'Volver a publicar'"
     assert "Generar publicación" in codigo, "El botón debe mostrar 'Generar publicación' si no está publicado"
 
 
@@ -2999,3 +2999,309 @@ def test_mototradis_hitl_decision_omite_canales_no_generados_y_solo_publica_acti
     data_ind = resp_ind.json()
     assert data_ind["ok"] is False
     assert data_ind["estado_canal"] == "omitido"
+
+
+def test_publish_channel_persiste_en_sqlite_y_actualiza_interaccion(client):
+    """
+    Spec 016 - RF-001:
+    Verifica que la publicación individual por canal (POST /api/v1/mototradis/publish-channel)
+    persista de forma inmediata en SQLite contenidos_generados e interacciones:
+    1. contenidos_generados: estado = 'publicado', estado_publicacion = 'publicado', plataforma = canal.
+    2. interacciones: etapa_flujo = 'publicado', estado_curaduria = 'curated'.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, etapa_flujo, estado_curaduria)
+            VALUES (2010, 'hash_mt_2010', 'Discord', 'Semana_01', 'laura_dev', '#general', 'mensaje', 'Publicación individual exitosa', '2026-10-19T14:00:00+00:00', 'en_redaccion', 'pending')
+            """
+        )
+        conn.commit()
+
+    payload = {
+        "id_mensaje": 2010,
+        "canal": "discord",
+        "canal_seleccionado": "#general",
+        "titulo": "Aporte Técnico de Laura",
+        "texto_copy": "Copy verificado y listo para despacho en canal oficial.",
+    }
+
+    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/test"}, clear=False):
+        resp = client.post("/api/v1/mototradis/publish-channel", json=payload)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["estado_canal"] == "enviado"
+
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        row_cg = conn.execute(
+            "SELECT estado, estado_publicacion, plataforma, publicado_en FROM contenidos_generados WHERE interaccion_id = 2010 AND plataforma = 'discord'"
+        ).fetchone()
+        assert row_cg is not None, "No se encontró registro en contenidos_generados tras publicación individual"
+        assert row_cg[0] == "publicado"
+        assert row_cg[1] == "publicado"
+        assert row_cg[2] == "discord"
+        assert row_cg[3] is not None
+
+        row_int = conn.execute(
+            "SELECT etapa_flujo, estado_curaduria FROM interacciones WHERE id = 2010"
+        ).fetchone()
+        assert row_int is not None
+        assert row_int[0] == "publicado"
+        assert row_int[1] == "curated"
+
+
+def test_checkpoint_retorna_plataformas_publicadas_y_preserva_borradores(client):
+    """
+    Spec 016 - RF-002:
+    Verifica que GET /api/v1/mototradis/checkpoint/{id}:
+    1. Retorne 'plataformas_publicadas: list[str]' con las plataformas ya enviadas.
+    2. Retorne 'is_published: bool' como True si tiene al menos una red publicada.
+    3. Conserve intactos 'borradores_ui' y 'copys_generados' sin vaciarlos.
+    """
+    from datetime import datetime, timezone
+    ahora = puente_motor_ia.a_utc_iso(datetime.now(timezone.utc))
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, etapa_flujo, estado_curaduria)
+            VALUES (2011, 'hash_mt_2011', 'Discord', 'Semana_01', 'carlos_ai', '#general', 'mensaje', 'Mensaje con Discord ya publicado', '2026-10-19T14:10:00+00:00', 'publicado', 'curated')
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO contenidos_generados (id, interaccion_id, formato, plataforma, titulo, contenido, estado, estado_publicacion, publicado_en, creado_en, actualizado_en)
+            VALUES (201103, 2011, 'post', 'discord', 'Título Discord', 'Copy Discord Publicado', 'publicado', 'publicado', ?, ?, ?)
+            """,
+            (ahora, ahora, ahora)
+        )
+        # Borrador existente en SQLite para LinkedIn aún sin publicar
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO contenidos_generados (id, interaccion_id, formato, plataforma, titulo, contenido, estado, estado_publicacion, creado_en, actualizado_en)
+            VALUES (201101, 2011, 'post', 'linkedin', 'Título LinkedIn', 'Copy LinkedIn Pendiente', 'pendiente_revision', 'no_publicado', ?, ?)
+            """,
+            (ahora, ahora)
+        )
+        conn.commit()
+
+    resp = client.get("/api/v1/mototradis/checkpoint/2011")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["is_published"] is True
+    assert "discord" in data["plataformas_publicadas"]
+    assert "linkedin" not in data["plataformas_publicadas"]
+    # Los borradores UI no deben estar vacíos
+    assert "borradores_ui" in data
+    assert len(data["borradores_ui"]) > 0
+    assert "linkedin" in data["borradores_ui"]
+
+
+def test_community_messages_enriquecido_con_is_published_y_plataformas(client):
+    """
+    Spec 016 - RF-003, RF-007:
+    Verifica que GET /api/community/messages exponga en 'analysis':
+    1. 'is_published: bool' y 'published_platforms: list[str]' ('Discord', 'LinkedIn', 'X').
+    2. Si tiene publicación, 'workflow_stage = publicado' y 'curation_status = curated'.
+    """
+    from datetime import datetime, timezone
+    ahora = puente_motor_ia.a_utc_iso(datetime.now(timezone.utc))
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, etapa_flujo, estado_curaduria, relevancia, sentimiento)
+            VALUES (2012, 'hash_mt_2012', 'Discord', 'Semana_01', 'ana_data', '#general', 'mensaje', 'Mensaje multicanal de Ana', '2026-10-19T14:20:00+00:00', '2026-10-19T14:20:00+00:00', 'publicado', 'curated', 88, 'Positivo')
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO contenidos_generados (id, interaccion_id, formato, plataforma, titulo, contenido, estado, estado_publicacion, publicado_en, creado_en, actualizado_en)
+            VALUES (201201, 2012, 'post', 'linkedin', 'Título LinkedIn Ana', 'Copy Ana LinkedIn', 'publicado', 'publicado', ?, ?, ?)
+            """,
+            (ahora, ahora, ahora)
+        )
+        conn.commit()
+
+    resp = client.get("/api/community/messages?limite=500")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "messages" in data
+    msg_2012 = next((m for m in data["messages"] if m["message"]["interaction_id"] == 2012), None)
+    assert msg_2012 is not None, "El mensaje 2012 no apareció en /api/community/messages"
+
+    analysis = msg_2012["analysis"]
+    assert analysis["is_published"] is True
+    assert "LinkedIn" in analysis["published_platforms"]
+    assert analysis["workflow_stage"] == "publicado"
+    assert analysis["curation_status"] == "curated"
+
+
+# ==============================================================================
+# 28. Spec 017: Telemetría de Bots y Respeto Estricto de Límite en Evaluación
+# ==============================================================================
+
+def test_community_messages_incluye_telemetria_bots_y_reales(client):
+    """
+    Spec 017 - RF-004, RF-005, RF-010:
+    Valida que GET /api/community/messages y su alias /api/community/messages/ retornen 200 OK con:
+    - 'omitted_bots_count: int' y 'real_messages_count: int' además de 'total' y 'messages'.
+    - 'omitted_bots_count >= 0' y 'real_messages_count >= 0'.
+    - Conteo exacto de bots (Spidey Boy#0000, tipo webhook) y mensajes humanos reales.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        # 2 mensajes humanos reales
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, etapa_flujo)
+            VALUES (9301, 'hash_9301', 'Discord', 'Semana_01', 'humano_ana', '#general', 'mensaje', 'Hola, consulta humana 1', '2026-10-19T10:00:00+00:00', '2026-10-19T10:00:00+00:00', 'ingesta')
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, etapa_flujo)
+            VALUES (9302, 'hash_9302', 'Discord', 'Semana_01', 'humano_beto', '#general', 'mensaje', 'Hola, consulta humana 2', '2026-10-19T10:05:00+00:00', '2026-10-19T10:05:00+00:00', 'ingesta')
+            """
+        )
+        # 2 mensajes de bots
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, etapa_flujo)
+            VALUES (9303, 'hash_9303', 'Discord', 'Semana_01', 'Spidey Boy#0000', '#anuncios', 'mensaje', 'Alerta bot', '2026-10-19T10:10:00+00:00', '2026-10-19T10:10:00+00:00', 'ingesta')
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, etapa_flujo)
+            VALUES (9304, 'hash_9304', 'Discord', 'Semana_01', 'github_bot', '#commits', 'webhook', 'Commit push webhook', '2026-10-19T10:15:00+00:00', '2026-10-19T10:15:00+00:00', 'ingesta')
+            """
+        )
+        conn.commit()
+
+    for endpoint in ("/api/community/messages", "/api/community/messages/"):
+        resp = client.get(endpoint)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total" in data, f"Falta 'total' en {endpoint}"
+        assert "messages" in data, f"Falta 'messages' en {endpoint}"
+        assert "omitted_bots_count" in data, f"Falta 'omitted_bots_count' en la respuesta de {endpoint}"
+        assert "real_messages_count" in data, f"Falta 'real_messages_count' en la respuesta de {endpoint}"
+        assert isinstance(data["omitted_bots_count"], int), f"'omitted_bots_count' debe ser int en {endpoint}"
+        assert isinstance(data["real_messages_count"], int), f"'real_messages_count' debe ser int en {endpoint}"
+        assert data["omitted_bots_count"] >= 0
+        assert data["real_messages_count"] >= 0
+        assert data["omitted_bots_count"] == 2
+        assert data["real_messages_count"] == 2
+
+
+def test_post_evaluate_batch_respeto_estricto_limite_sobre_pendientes(client):
+    """
+    Spec 017 - RF-004, RF-005, RF-010:
+    Valida que POST /api/v1/ai/evaluate-batch con payload {"limite": 1, "solo_pendientes": true}
+    evalúe exactamente 1 mensaje pendiente aunque existan mensajes ya analizados al inicio de la tabla,
+    y verifique que 'evaluados == 1'.
+    """
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        # Mensaje ya analizado con fecha más reciente (aparecerá primero en ver_json)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, estado, etapa_flujo, relevancia)
+            VALUES (9401, 'hash_9401', 'Discord', 'Semana_01', 'carlos_analizado', '#general', 'mensaje', 'Ya fue analizado previamente', '2026-10-19T12:00:00+00:00', '2026-10-19T12:00:00+00:00', 'analizado', 'analizado', 85)
+            """
+        )
+        # Mensaje pendiente 1 (más antiguo que el analizado)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, estado, etapa_flujo)
+            VALUES (9402, 'hash_9402', 'Discord', 'Semana_01', 'laura_pendiente_1', '#general', 'mensaje', 'Mensaje pendiente de evaluar 1', '2026-10-19T11:00:00+00:00', '2026-10-19T11:00:00+00:00', 'pendiente', 'ingesta')
+            """
+        )
+        # Mensaje pendiente 2
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, estado, etapa_flujo)
+            VALUES (9403, 'hash_9403', 'Discord', 'Semana_01', 'miguel_pendiente_2', '#general', 'mensaje', 'Mensaje pendiente de evaluar 2', '2026-10-19T10:00:00+00:00', '2026-10-19T10:00:00+00:00', 'pendiente', 'ingesta')
+            """
+        )
+        conn.commit()
+
+    mock_eval = MagicMock(return_value={
+        "exito": True,
+        "total_evaluados": 1,
+        "exitosos": 1,
+        "fallidos": 0,
+        "guardados_supabase": 1,
+        "errores": [],
+        "aprobados": [{"id_mensaje": 9402, "kpis": {"relevancia": 88}}],
+        "descartados": [],
+        "resultados": {},
+    })
+
+    with patch("evaluador_lotes.evaluar_lote", mock_eval), \
+         patch.object(puente_motor_ia, "_sincronizar_supabase_a_sqlite", return_value=1, create=True), \
+         patch.object(puente_motor_ia, "obtener_datos_supabase", return_value={"kpis": [{"id_mensaje": 9401}]}):
+
+        payload = {
+            "proveedor": "Groq (Llama 3.3)",
+            "limite": 1,
+            "solo_pendientes": True,
+        }
+        resp = client.post("/api/v1/ai/evaluate-batch", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("exito") is True
+        assert data.get("evaluados") == 1, (
+            f"Se esperaba evaluar exactamente 1 mensaje pendiente, pero se reportó evaluados={data.get('evaluados')}"
+        )
+
+        assert mock_eval.call_count == 1, "evaluar_lote debía ser invocado para evaluar exactamente 1 mensaje pendiente"
+        _, kwargs_eval = mock_eval.call_args
+        mensajes_enviados = kwargs_eval.get("mensajes", [])
+        assert len(mensajes_enviados) == 1
+        assert mensajes_enviados[0]["id"] == 9402
+
+
+def test_frontend_saneamiento_utf8_global_sin_secuencias_corruptas():
+    """
+    Spec 017 - RF-001:
+    Verifica que no existan secuencias corruptas con signo de interrogación
+    ni errores tipográficos en textos estáticos de frontend/src/.
+    """
+    import os
+    import re
+    frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "src")
+    patrones_corruptos = [
+        re.compile(r"curadur\?a", re.IGNORECASE),
+        re.compile(r"interacci\?n", re.IGNORECASE),
+        re.compile(r"v\?lida", re.IGNORECASE),
+        re.compile(r"inv\?lido", re.IGNORECASE),
+        re.compile(r"inv\?lida", re.IGNORECASE),
+        re.compile(r"confirm\?", re.IGNORECASE),
+        re.compile(r"Atenci\?n", re.IGNORECASE),
+        re.compile(r"cr\?tico", re.IGNORECASE),
+        re.compile(r"Cr\?tico", re.IGNORECASE),
+        re.compile(r"Se\?ales", re.IGNORECASE),
+        re.compile(r"revisi\?n", re.IGNORECASE),
+        re.compile(r"aqu\?", re.IGNORECASE),
+        re.compile(r"env\?an", re.IGNORECASE),
+        re.compile(r"telemetr\?a", re.IGNORECASE),
+        re.compile(r"sem\?ntica", re.IGNORECASE),
+    ]
+
+    coincidencias = []
+    for root, _, files in os.walk(frontend_dir):
+        for f in files:
+            if f.endswith((".ts", ".tsx")):
+                ruta = os.path.join(root, f)
+                with open(ruta, "r", encoding="utf-8", errors="replace") as fp:
+                    for num_linea, linea in enumerate(fp, 1):
+                        for patron in patrones_corruptos:
+                            if patron.search(linea):
+                                coincidencias.append(f"{f}:{num_linea}: {linea.strip()}")
+
+    assert not coincidencias, (
+        f"Se encontraron {len(coincidencias)} secuencias corruptas UTF-8 en frontend/src:\n"
+        + "\n".join(coincidencias[:10])
+    )
+
