@@ -423,7 +423,7 @@ export async function publishMototradisChannel(
   texto: string,
   canalSeleccionado?: string,
   titulo?: string,
-): Promise<{ canal: string; ok: boolean; detalle: string; estado_canal: string }> {
+): Promise<{ canal: string; ok: boolean; detalle: string; estado_canal: string; url?: string; tweet_id?: string; urn?: string; message_id?: string }> {
   return (await apiRequest('/api/v1/content-workflow/publish-channel', {
     method: 'POST',
     body: JSON.stringify({

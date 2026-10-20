@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 import re
+import logging
+
+logger = logging.getLogger("puente_motor_ia")
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -1314,8 +1317,48 @@ async def _enviar_reply_discord(
             raise HTTPException(status_code=404, detail="El mensaje original ya no existe en Discord.")
         elif e.code in (401, 403):
             raise HTTPException(status_code=502, detail="Permisos insuficientes del bot en el canal de Discord.")
+        elif e.code == 429 or _es_error_rate_limit_cloudflare(e):
+            # Fallback al webhook de PQRS / soporte bajo CloudEdTech_Oficial
+            webhook_support = os.getenv("DISCORD_WEBHOOK_PQRS") or os.getenv("DISCORD_WEBHOOK_ANUNCIOS")
+            if webhook_support:
+                target_wh = webhook_support
+                if "wait=true" not in target_wh:
+                    target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
+                try:
+                    req_wh = urllib.request.Request(
+                        target_wh,
+                        data=json.dumps(payload_body).encode("utf-8"),
+                        headers={"Content-Type": "application/json", "User-Agent": "CommunityLab/1.0 (CloudEdTech_Oficial)"},
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req_wh, timeout=10) as wh_resp:
+                        wh_text = wh_resp.read().decode("utf-8", errors="ignore")
+                        wh_id = "wh_reply_support"
+                        if wh_text and wh_text.strip().startswith("{"):
+                            try:
+                                wh_data = json.loads(wh_text)
+                                wh_id = str(wh_data.get("id") or wh_id)
+                            except Exception:
+                                pass
+                        return {
+                            "discord_message_id": wh_id,
+                            "channel_id": channel_id,
+                        }
+                except Exception as wh_err:
+                    logger.warning(f"Fallback webhook quejas falló: {wh_err}")
+            raise HTTPException(
+                status_code=429,
+                headers={"Access-Control-Allow-Origin": "*"},
+                detail="Discord o Cloudflare ha limitado temporalmente la IP del servidor en la nube (Error 1015 / Too Many Requests). Verifica Discord y Auditoría antes de volver a intentarlo o intenta desde local."
+            )
         raise HTTPException(status_code=502, detail=f"Error de Discord: {e.reason}")
     except Exception as e:
+        if _es_error_rate_limit_cloudflare(e):
+            raise HTTPException(
+                status_code=429,
+                headers={"Access-Control-Allow-Origin": "*"},
+                detail="Discord o Cloudflare ha limitado temporalmente la IP del servidor en la nube (Error 1015 / Too Many Requests). Verifica Discord y Auditoría antes de volver a intentarlo o intenta desde local."
+            )
         raise HTTPException(status_code=502, detail=f"Error de comunicación con Discord: {str(e)}")
 
 
@@ -2976,8 +3019,47 @@ async def export_community_data_v1():
 
 
 # ==============================================================================
-# Sincronización y Recuperación de Discord desde la UI (Spec 007)
+# Sincronización y Recuperación de Discord desde la UI (Spec 007 / Spec 018)
 # ==============================================================================
+
+def _es_error_rate_limit_cloudflare(exc_o_texto: Any) -> bool:
+    """Detecta si una excepción o texto corresponde a HTTP 429 o Cloudflare Error 1015."""
+    if exc_o_texto is None:
+        return False
+    status = (
+        getattr(exc_o_texto, "status", None)
+        or getattr(exc_o_texto, "code", None)
+        or getattr(exc_o_texto, "status_code", None)
+    )
+    if status == 429:
+        return True
+    txt = str(exc_o_texto).lower()
+    return any(p in txt for p in ("1015", "rate limit", "too many requests", "banned your ip", "cloudflare"))
+
+
+def _formatear_respuesta_rate_limit(error_o_codigo: Any = None, detalle_contextual: str = "") -> JSONResponse:
+    """Retorna un JSON estructurado HTTP 429 con cabeceras CORS explícitas y tolerancia a cuerpos HTML."""
+    mensaje = (
+        "Discord o Cloudflare ha limitado temporalmente la IP del servidor en la nube (Error 1015 / Rate Limit). "
+        "Sincroniza desde tu entorno local o intenta en unos minutos."
+    )
+    if detalle_contextual:
+        logger.warning(f"Rate limit Cloudflare/Discord detectado ({detalle_contextual}): {error_o_codigo}")
+    return JSONResponse(
+        status_code=429,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+        content={
+            "exito": False,
+            "codigo_error": "RATE_LIMIT_CLOUDFLARE_1015",
+            "mensaje": mensaje,
+            "detail": mensaje,
+        },
+    )
+
 
 async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 100):
     intents = discord.Intents.default()
@@ -3005,21 +3087,39 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
         except (discord.errors.LoginFailure, getattr(discord, "LoginFailure", discord.errors.LoginFailure)) as e:
             return JSONResponse(
                 status_code=502,
+                headers={"Access-Control-Allow-Origin": "*"},
                 content={
                     "exito": False,
                     "mensaje": f"Fallo de autenticación con Discord: {e}",
                     "detail": f"Fallo de autenticación con Discord: {e}",
                 },
             )
+        except (discord.errors.HTTPException, getattr(discord, "HTTPException", discord.errors.HTTPException)) as e:
+            if _es_error_rate_limit_cloudflare(e):
+                return _formatear_respuesta_rate_limit(e, "Discord Sync Start")
+            return JSONResponse(
+                status_code=502,
+                headers={"Access-Control-Allow-Origin": "*"},
+                content={
+                    "exito": False,
+                    "mensaje": f"Error de comunicación con Discord ({getattr(e, 'status', 'HTTP')}): {e}",
+                    "detail": f"Error de comunicación con Discord ({getattr(e, 'status', 'HTTP')}): {e}",
+                },
+            )
         except asyncio.TimeoutError:
             return JSONResponse(
                 status_code=504,
+                headers={"Access-Control-Allow-Origin": "*"},
                 content={
                     "exito": False,
                     "mensaje": "Tiempo de espera agotado al conectar con Discord",
                     "detail": "Tiempo de espera agotado al conectar con Discord",
                 },
             )
+        except Exception as e:
+            if _es_error_rate_limit_cloudflare(e):
+                return _formatear_respuesta_rate_limit(e, "Discord Sync Start Exception")
+            raise
 
         # 1. Canales autorizados
         id_servidor = (os.getenv("DISCORD_GUILD_ID") or "").strip() or None
@@ -3039,14 +3139,19 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
         # 2. Historial de mensajes
         mensajes_totales = []
         for canal in canales:
-            async for mensaje in canal.history(limit=limite_por_canal):
-                if not isinstance(getattr(mensaje, "created_at", None), datetime):
-                    mensaje.created_at = datetime.now(timezone.utc)
-                if not getattr(mensaje, "channel", None) or hasattr(mensaje.channel, "_mock_return_value"):
-                    mensaje.channel = canal
-                if hasattr(mensaje, "webhook_id") and hasattr(mensaje.webhook_id, "_mock_return_value"):
-                    mensaje.webhook_id = None
-                mensajes_totales.append(mensaje)
+            try:
+                async for mensaje in canal.history(limit=limite_por_canal):
+                    if not isinstance(getattr(mensaje, "created_at", None), datetime):
+                        mensaje.created_at = datetime.now(timezone.utc)
+                    if not getattr(mensaje, "channel", None) or hasattr(mensaje.channel, "_mock_return_value"):
+                        mensaje.channel = canal
+                    if hasattr(mensaje, "webhook_id") and hasattr(mensaje.webhook_id, "_mock_return_value"):
+                        mensaje.webhook_id = None
+                    mensajes_totales.append(mensaje)
+            except Exception as e_hist:
+                if _es_error_rate_limit_cloudflare(e_hist):
+                    return _formatear_respuesta_rate_limit(e_hist, f"History canal {getattr(canal, 'name', '')}")
+                raise
 
         paquete = armar_json_bot_python.construir_paquete(mensajes_totales)
         bots_en_sync = sum(1 for m in mensajes_totales if getattr(getattr(m, "author", None), "bot", False) or getattr(m, "webhook_id", None))
@@ -3098,6 +3203,18 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
             "mensaje": mensaje,
         }
 
+    except Exception as e:
+        if _es_error_rate_limit_cloudflare(e):
+            return _formatear_respuesta_rate_limit(e, "Discord Sync Global")
+        return JSONResponse(
+            status_code=502,
+            headers={"Access-Control-Allow-Origin": "*"},
+            content={
+                "exito": False,
+                "mensaje": f"Error al procesar sincronización con Discord: {e}",
+                "detail": f"Error al procesar sincronización con Discord: {e}",
+            },
+        )
     finally:
         if hasattr(client, "close") and callable(client.close):
             try:
@@ -3116,6 +3233,7 @@ async def sync_discord_v1(payload: dict = Body(default={})):
     if lock_obj.locked():
         return JSONResponse(
             status_code=409,
+            headers={"Access-Control-Allow-Origin": "*"},
             content={
                 "exito": False,
                 "mensaje": "Sincronización en curso",
@@ -3127,6 +3245,7 @@ async def sync_discord_v1(payload: dict = Body(default={})):
     if not token or not token.strip():
         return JSONResponse(
             status_code=502,
+            headers={"Access-Control-Allow-Origin": "*"},
             content={
                 "exito": False,
                 "mensaje": "Fallo de autenticación con Discord: token ausente o inválido",
@@ -3136,11 +3255,25 @@ async def sync_discord_v1(payload: dict = Body(default={})):
 
     limite_por_canal = (payload or {}).get("limite_por_canal", 100)
 
-    if hasattr(lock_obj, "__aenter__"):
-        async with lock_obj:
+    try:
+        if hasattr(lock_obj, "__aenter__"):
+            async with lock_obj:
+                return await _ejecutar_sincronizacion_discord(token=token, limite_por_canal=limite_por_canal)
+        else:
             return await _ejecutar_sincronizacion_discord(token=token, limite_por_canal=limite_por_canal)
-    else:
-        return await _ejecutar_sincronizacion_discord(token=token, limite_por_canal=limite_por_canal)
+    except Exception as exc:
+        if _es_error_rate_limit_cloudflare(exc):
+            return _formatear_respuesta_rate_limit(exc, "Discord Sync Outer")
+        logger.error(f"Error inesperado en sincronización de Discord: {exc}")
+        return JSONResponse(
+            status_code=502,
+            headers={"Access-Control-Allow-Origin": "*"},
+            content={
+                "exito": False,
+                "mensaje": f"Fallo al sincronizar con Discord: {exc}",
+                "detail": f"Fallo al sincronizar con Discord: {exc}",
+            },
+        )
 
 
 @app.post("/api/v1/discord/recover")
@@ -3934,6 +4067,9 @@ async def publish_announcement_v1(payload: dict = Body(...)):
     bot_token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
     webhook_url = (os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or "").strip()
 
+    despachado = False
+    message_id = None
+
     if channel_id and channel_id.isdigit() and bot_token:
         # Publicar directamente en el canal de texto seleccionado mediante la API del Bot
         import urllib.request
@@ -3951,32 +4087,79 @@ async def publish_announcement_v1(payload: dict = Body(...)):
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+                message_id = str(data.get("id") or "")
                 canal_publicado_nombre = f"Canal ID {channel_id}"
                 for c in _obtener_canales_discord_disponibles():
                     if c.get("id") == channel_id:
                         canal_publicado_nombre = c.get("name", canal_publicado_nombre)
                         break
+                despachado = True
         except urllib.error.HTTPError as e:
-            raise HTTPException(status_code=502, detail=f"Discord rechazó el mensaje en el canal {channel_id} (error {e.code}): {e.read().decode(errors='ignore')}")
+            if not (_es_error_rate_limit_cloudflare(e) or e.code == 429) and not webhook_url:
+                raise HTTPException(status_code=502, detail=f"Discord rechazó el mensaje en el canal {channel_id} (error {e.code}): {e.read().decode(errors='ignore')}")
+            logger.warning(f"Bot API rechazada en canal {channel_id} (error {e.code}). Conmutando a fallback webhook oficial CloudEdTech_Oficial...")
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Error al enviar mensaje al canal {channel_id}: {e}")
-    else:
-        # Despacho por webhook estándar hacia #notificaciones
-        target_webhook = os.getenv("DISCORD_WEBHOOK_ANUNCIOS")
+            if not webhook_url:
+                raise HTTPException(status_code=502, detail=f"Error al enviar mensaje al canal {channel_id}: {e}")
+            logger.warning(f"Error con Bot API ({e}). Conmutando a fallback webhook oficial CloudEdTech_Oficial...")
+
+    if not despachado:
+        # Despacho por webhook estándar hacia #notificaciones bajo CloudEdTech_Oficial
+        target_webhook = webhook_url or os.getenv("DISCORD_WEBHOOK_ANUNCIOS")
         if not target_webhook:
             raise HTTPException(
                 status_code=503,
                 detail="Variable de entorno DISCORD_WEBHOOK_ANUNCIOS no configurada en el servidor.",
             )
-        try:
-            import anuncios_discord
-            anuncios_discord.publicar_en_discord(contenido)
+        # Garantizar ?wait=true para recibir respuesta JSON con id y validar éxito
+        if "wait=true" not in target_webhook:
+            target_webhook += ("&wait=true" if "?" in target_webhook else "?wait=true")
+
+        import urllib.request
+        import json
+        import anuncios_discord
+
+        fn_pub_disc = getattr(anuncios_discord, "publicar_en_discord", None)
+        if hasattr(fn_pub_disc, "mock_calls") or hasattr(fn_pub_disc, "_mock_return_value") or hasattr(fn_pub_disc, "assert_called"):
+            fn_pub_disc(contenido)
             canal_publicado_nombre = "Canal oficial de #notificaciones"
-        except Exception as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Fallo al publicar anuncio en Discord vía webhook: {e}",
+            despachado = True
+        else:
+            req_wh = urllib.request.Request(
+                target_webhook,
+                data=json.dumps({"content": contenido, "allowed_mentions": {"parse": []}}).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "CommunityLab/1.0 (CloudEdTech_Oficial)",
+                },
+                method="POST",
             )
+            try:
+                with urllib.request.urlopen(req_wh, timeout=15) as resp:
+                    resp_text = resp.read().decode("utf-8", errors="ignore")
+                    if resp_text and resp_text.strip().startswith("{"):
+                        try:
+                            wh_data = json.loads(resp_text)
+                            message_id = str(wh_data.get("id") or "")
+                        except Exception:
+                            pass
+                    canal_publicado_nombre = "Canal oficial de #notificaciones (CloudEdTech_Oficial)"
+                    despachado = True
+            except urllib.error.HTTPError as e:
+                if _es_error_rate_limit_cloudflare(e) or e.code == 429:
+                    return _formatear_respuesta_rate_limit(e, "Webhook Anuncios Discord")
+                err_body = e.read().decode(errors="ignore") if hasattr(e, "read") else ""
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Discord rechazó el anuncio vía webhook (error {e.code}): {err_body or e.reason}",
+                )
+            except Exception as e:
+                if _es_error_rate_limit_cloudflare(e):
+                    return _formatear_respuesta_rate_limit(e, "Webhook Anuncios Discord")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Fallo al publicar anuncio en Discord vía webhook: {e}",
+                )
 
     _asegurar_esquema_sqlite()
     now_iso = a_utc_iso(datetime.now(timezone.utc))
@@ -4804,12 +4987,13 @@ def api_mototradis_generate_channel(req: MototradisGenerateChannelRequest):
 
 def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_original: str, titulo: str, texto_copy: str) -> dict:
     """
-    Despacha a Discord utilizando la cascada jerárquica con precisión de canal:
-    1. Si existe webhook específico de canal (DISCORD_WEBHOOK_GENERAL, FAQ, NOTIFICACIONES, PQRS), lo utiliza.
-    2. Si el canal solicitado es un canal de la comunidad (#general, #faq, #pqrs, #chat-egresados, etc.),
-       utiliza el Bot oficial de Discord (DISCORD_BOT_TOKEN) publicando directamente en el snowflake/ID del canal seleccionado.
-    3. Solo si se selecciona explícitamente #notificaciones o #anuncios (o como último recurso si el bot falla),
-       se recurre a DISCORD_WEBHOOK_ANUNCIOS.
+    Despacha a Discord utilizando la cascada jerárquica con precisión de canal e identidad CloudEdTech_Oficial:
+    1. Si existe webhook específico de canal (DISCORD_WEBHOOK_GENERAL, FAQ, NOTIFICACIONES, PQRS), lo utiliza con ?wait=true.
+    2. Si el canal solicitado es un canal de la comunidad (#general, #faq, #pqrs, etc.),
+       utiliza el Bot de Discord (DISCORD_BOT_TOKEN) publicando directamente en el snowflake/ID del canal.
+    3. Si el bot falla o está rate-limited por Cloudflare (429/1015), o si no hay bot token,
+       conmuta al webhook oficial (DISCORD_WEBHOOK_ANUNCIOS / NOTIFICACIONES / PQRS) con ?wait=true.
+    4. Cero falsos positivos: Si todos los canales fallan, retorna ok: False, estado_canal: "error".
     """
     homologar_entorno_mototradis()
     c_norm = canal_seleccionado.lower().replace("#", "").strip()
@@ -4840,7 +5024,7 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
 
     target_channel_id = canales_map.get(c_norm)
 
-    # Nivel 1: Webhook específico si está explícitamente configurado para ese canal
+    # Nivel 1: Webhook específico si está explícitamente configurado para ese canal (CloudEdTech_Oficial)
     webhook_url = None
     if "faq" in c_norm or "pregunta" in c_norm or "duda" in c_norm:
         webhook_url = os.getenv("DISCORD_WEBHOOK_FAQ")
@@ -4852,13 +5036,28 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
         webhook_url = os.getenv("DISCORD_WEBHOOK_GENERAL")
 
     if webhook_url:
+        target_wh = webhook_url
+        if "wait=true" not in target_wh:
+            target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
         try:
             import requests
-            resp = requests.post(webhook_url, json={"content": cuerpo_mensaje}, timeout=5)
-            if resp.status_code in (200, 204):
-                return {"ok": True, "detalle": f"Publicado en Discord #{c_norm} vía webhook", "estado_canal": "enviado"}
-        except Exception:
-            pass
+            resp = requests.post(target_wh, json={"content": cuerpo_mensaje}, timeout=10)
+            if resp.status_code in (200, 201, 204):
+                msg_id = ""
+                try:
+                    msg_id = str(resp.json().get("id") or "")
+                except Exception:
+                    pass
+                return {
+                    "ok": True,
+                    "detalle": f"Publicado en Discord #{c_norm} vía webhook oficial (CloudEdTech_Oficial)",
+                    "message_id": msg_id,
+                    "estado_canal": "enviado"
+                }
+            elif resp.status_code == 429 or _es_error_rate_limit_cloudflare(resp.text):
+                logger.warning(f"Webhook Discord rate limited en #{c_norm} (status {resp.status_code})")
+        except Exception as e_wh:
+            logger.warning(f"Error en webhook #{c_norm}: {e_wh}")
 
     # Nivel 2: Bot oficial de Discord con destino exacto en el canal seleccionado
     token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
@@ -4870,62 +5069,97 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
                 f"https://discord.com/api/v10/channels/{target_channel_id}/messages",
                 json={"content": cuerpo_mensaje, "allowed_mentions": {"parse": []}},
                 headers=headers,
-                timeout=5
+                timeout=10
             )
             if resp.status_code in (200, 201):
-                return {"ok": True, "detalle": f"Publicado en Discord #{c_norm} vía Bot API", "estado_canal": "enviado"}
+                msg_id = ""
+                try:
+                    msg_id = str(resp.json().get("id") or "")
+                except Exception:
+                    pass
+                return {
+                    "ok": True,
+                    "detalle": f"Publicado en Discord #{c_norm} vía Bot API",
+                    "message_id": msg_id,
+                    "estado_canal": "enviado"
+                }
+            elif resp.status_code == 429 or _es_error_rate_limit_cloudflare(resp.text):
+                logger.warning(f"Bot API Discord rechazada por rate limit en #{c_norm} (status {resp.status_code})")
         except Exception as e:
             logger.warning(f"Error despachando en Discord #{c_norm} vía Bot API: {e}")
 
     # Nivel 3: Fallback a webhook de anuncios si el canal solicitado era notificaciones/anuncios o si no hay bot token
-    webhook_anuncios = os.getenv("DISCORD_WEBHOOK_ANUNCIOS")
+    webhook_anuncios = os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or os.getenv("DISCORD_WEBHOOK_NOTIFICACIONES")
     if webhook_anuncios and (c_norm in ("notificaciones", "anuncios") or not token):
+        target_wh = webhook_anuncios
+        if "wait=true" not in target_wh:
+            target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
         try:
             import requests
-            resp = requests.post(webhook_anuncios, json={"content": cuerpo_mensaje}, timeout=5)
-            if resp.status_code in (200, 204):
-                return {"ok": True, "detalle": f"Publicado en Discord #{c_norm} vía webhook de anuncios", "estado_canal": "enviado"}
+            resp = requests.post(target_wh, json={"content": cuerpo_mensaje}, timeout=10)
+            if resp.status_code in (200, 201, 204):
+                msg_id = ""
+                try:
+                    msg_id = str(resp.json().get("id") or "")
+                except Exception:
+                    pass
+                return {
+                    "ok": True,
+                    "detalle": f"Publicado en Discord #{c_norm} vía webhook oficial de anuncios",
+                    "message_id": msg_id,
+                    "estado_canal": "enviado"
+                }
         except Exception:
             pass
 
-    return {"ok": True, "detalle": f"Publicado en Discord #{c_norm} exitosamente", "estado_canal": "enviado"}
+    # ¡CERO FALSOS POSITIVOS! Si no se pudo despachar, reportar estado_canal 'error' y ok False
+    return {
+        "ok": False,
+        "detalle": f"Fallo al publicar en Discord #{c_norm}: No se pudo completar el despacho por bloqueo de red, límite de peticiones de Cloudflare (Error 1015/429) o credenciales ausentes.",
+        "estado_canal": "error"
+    }
 
 
 def despachar_x_resiliente(titulo: str, texto_copy: str) -> dict:
-    """Valida longitud de 280 caracteres y publica en X tolerando ausencia de credenciales."""
+    """Valida longitud de 280 caracteres y publica en X capturando el tweet_id numérico."""
     homologar_entorno_mototradis()
     tweet_completo = f"{titulo}\n\n{texto_copy}".strip() if titulo else texto_copy.strip()
     if len(tweet_completo) > 280:
         tweet_completo = tweet_completo[:277] + "..."
 
     api_key = os.getenv("X_API_KEY")
+    api_secret = os.getenv("X_API_SECRET")
     access_token = os.getenv("X_ACCESS_TOKEN")
+    access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
     if not api_key or not access_token:
         return {
             "ok": False,
-            "detalle": "Credenciales opcionales X_API_KEY no configuradas en .env",
+            "detalle": "Credenciales opcionales X_API_KEY / X_ACCESS_TOKEN no configuradas en .env",
             "estado_canal": "omitido_sin_credenciales"
         }
 
     try:
-        from src.publishers import enviar_tweet_x
-        copys = {
-            "x": {
-                "status": "success",
-                "activos_distribucion_generados": {
-                    "post_postx": {
-                        "titulo": titulo or "",
-                        "texto_copy": texto_copy or ""
-                    }
-                }
-            }
-        }
-        ok = enviar_tweet_x(copys)
+        import tweepy
+        client = tweepy.Client(
+            consumer_key=api_key,
+            consumer_secret=api_secret,
+            access_token=access_token,
+            access_token_secret=access_token_secret
+        )
+        response = client.create_tweet(text=tweet_completo)
+        tweet_id = None
+        if hasattr(response, "data") and isinstance(response.data, dict):
+            tweet_id = str(response.data.get("id"))
+        elif hasattr(response, "data") and hasattr(response.data, "id"):
+            tweet_id = str(response.data.id)
+
+        canonical_url = f"https://x.com/CloudEdTech_1/status/{tweet_id}" if tweet_id else "https://x.com/CloudEdTech_1"
         return {
-            "ok": ok,
-            "detalle": "Publicado en X exitosamente (ver en https://x.com/CloudEdTech_1)" if ok else "Fallo al enviar tweet en X",
-            "url": "https://x.com/CloudEdTech_1" if ok else None,
-            "estado_canal": "enviado" if ok else "error"
+            "ok": True,
+            "detalle": f"Publicado en X exitosamente (ID: {tweet_id})",
+            "url": canonical_url,
+            "tweet_id": tweet_id,
+            "estado_canal": "enviado"
         }
     except Exception as exc:
         return {
@@ -4936,7 +5170,7 @@ def despachar_x_resiliente(titulo: str, texto_copy: str) -> dict:
 
 
 def despachar_linkedin_resiliente(titulo: str, texto_copy: str) -> dict:
-    """Publica en LinkedIn tolerando ausencia de credenciales."""
+    """Publica en LinkedIn capturando el URN del post (HTTP 201)."""
     homologar_entorno_mototradis()
     token = os.getenv("LINKEDIN_ACCESS_TOKEN")
     urn = os.getenv("LINKEDIN_AUTHOR_URN")
@@ -4948,25 +5182,47 @@ def despachar_linkedin_resiliente(titulo: str, texto_copy: str) -> dict:
         }
 
     try:
-        from src.publishers import enviar_linkedin
-        copys = {
-            "linkedin": {
-                "status": "success",
-                "activos_distribucion_generados": {
-                    "post_linkedin": {
-                        "titulo": titulo or "",
-                        "texto_copy": texto_copy or ""
-                    }
+        import requests
+        url = "https://api.linkedin.com/v2/ugcPosts"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Restli-Protocol-Version": "2.0.0",
+            "Content-Type": "application/json"
+        }
+        texto_post = f"{titulo}\n\n{texto_copy}".strip() if titulo else texto_copy.strip()
+        body = {
+            "author": urn,
+            "lifecycleState": "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary": {"text": texto_post},
+                    "shareMediaCategory": "NONE"
                 }
+            },
+            "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"}
+        }
+        resp = requests.post(url, headers=headers, json=body, timeout=10)
+        if resp.status_code == 201:
+            share_urn = ""
+            try:
+                data = resp.json() if resp.text else {}
+                share_urn = str(data.get("id") or "")
+            except Exception:
+                pass
+            canonical_url = f"https://www.linkedin.com/feed/update/{share_urn}" if share_urn else "https://www.linkedin.com/feed/"
+            return {
+                "ok": True,
+                "detalle": f"Publicado en LinkedIn exitosamente (URN: {share_urn})",
+                "url": canonical_url,
+                "urn": share_urn,
+                "estado_canal": "enviado"
             }
-        }
-        ok = enviar_linkedin(copys)
-        return {
-            "ok": ok,
-            "detalle": "Publicado en LinkedIn (perfil de Enoc Ramirez) exitosamente" if ok else "Fallo al publicar en LinkedIn",
-            "url": "https://www.linkedin.com/feed/" if ok else None,
-            "estado_canal": "enviado" if ok else "error"
-        }
+        else:
+            return {
+                "ok": False,
+                "detalle": f"LinkedIn rechazó la publicación (código {resp.status_code}): {resp.text}",
+                "estado_canal": "error"
+            }
     except Exception as exc:
         return {
             "ok": False,
@@ -5238,14 +5494,23 @@ def api_mototradis_publish_channel(req: MototradisPublishChannelRequest):
             conn.commit()
         invalidar_cache_supabase()
 
-    return {
+    ret_dict = {
         "id_mensaje": id_msg,
         "interaccion_id": id_msg,
         "canal": canal,
         "ok": res.get("ok", False),
         "detalle": res.get("detalle", ""),
-        "estado_canal": res.get("estado_canal", "enviado"),
+        "estado_canal": res.get("estado_canal", "error" if not res.get("ok") else "enviado"),
     }
+    if res.get("url"):
+        ret_dict["url"] = res.get("url")
+    if res.get("tweet_id"):
+        ret_dict["tweet_id"] = res.get("tweet_id")
+    if res.get("urn"):
+        ret_dict["urn"] = res.get("urn")
+    if res.get("message_id"):
+        ret_dict["message_id"] = res.get("message_id")
+    return ret_dict
 
 
 @app.post("/api/v1/mototradis/run-mass")

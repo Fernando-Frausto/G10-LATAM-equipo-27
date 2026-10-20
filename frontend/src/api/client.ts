@@ -32,15 +32,23 @@ export async function apiRequest(
 
     if (!response.ok) {
         let message = "Error al comunicarse con el servidor";
+        const status = response.status;
+        let codigoError = "";
 
         try {
             const error = await response.json();
-            message = error.detail || message;
+            message = error.detail || error.mensaje || error.message || message;
+            codigoError = error.codigo_error || "";
         } catch {
-            // La respuesta no contenía JSON
+            if (response.status === 429) {
+                message = "Discord o Cloudflare ha limitado temporalmente la IP del servidor en la nube (Error 1015 / Rate Limit). Sincroniza desde tu entorno local o intenta en unos minutos.";
+            }
         }
 
-        throw new Error(message);
+        const err = new Error(message) as Error & { status?: number; codigoError?: string };
+        err.status = status;
+        err.codigoError = codigoError;
+        throw err;
     }
 
     return response.json();

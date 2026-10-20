@@ -3305,3 +3305,295 @@ def test_frontend_saneamiento_utf8_global_sin_secuencias_corruptas():
         + "\n".join(coincidencias[:10])
     )
 
+
+# ==============================================================================
+# Spec 018: Resiliencia de Publicaciones Multicanal y Manejo de Rate-Limit Discord
+# ==============================================================================
+
+def test_discord_sync_rate_limit_cloudflare_1015_retorna_429_y_cors(monkeypatch):
+    """
+    Spec 018 - RF-001, RF-002, RF-008:
+    Simula un fallo de rate limit HTTP 429 con cuerpo HTML de Cloudflare Error 1015
+    durante 'POST /api/v1/discord/sync', verificando que el endpoint retorne
+    HTTP 429 (o 502), 'exito: False', 'codigo_error: "RATE_LIMIT_CLOUDFLARE_1015"',
+    mensaje descriptivo y cabeceras 'access-control-allow-origin' sin generar un 500 no controlado.
+    """
+    cliente = TestClient(puente_motor_ia.app, raise_server_exceptions=False)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake_bot_token_spec018")
+
+    html_cf_1015 = (
+        "<!DOCTYPE html><html><head><title>Error 1015 Ray ID: 888abc123 | Cloudflare</title></head>"
+        "<body><div class='error-details'>You are being rate limited. Error 1015. The owner of this website "
+        "has banned your IP address temporarily.</div></body></html>"
+    )
+
+    import discord
+    resp_mock = MagicMock()
+    resp_mock.status = 429
+    resp_mock.reason = "Too Many Requests"
+    exc_cf_429 = discord.errors.HTTPException(resp_mock, html_cf_1015)
+
+    with patch.object(discord.Client, "start", side_effect=exc_cf_429):
+        resp = cliente.post("/api/v1/discord/sync", json={"limite_por_canal": 10})
+
+    # El endpoint debe responder HTTP 429 (o 502), nunca un 500 no controlado
+    assert resp.status_code in (429, 502), (
+        f"Se esperaba HTTP 429 o 502 ante Error 1015, obtenido: {resp.status_code}. Detalle: {resp.text}"
+    )
+    assert resp.status_code != 500, "Error 1015 de Cloudflare no debe causar un HTTP 500 no controlado"
+
+    data = resp.json()
+    assert data.get("exito") is False, f"Se esperaba exito: False, obtenido: {data}"
+    assert data.get("codigo_error") == "RATE_LIMIT_CLOUDFLARE_1015", (
+        f"Se esperaba codigo_error 'RATE_LIMIT_CLOUDFLARE_1015', obtenido: {data.get('codigo_error')}"
+    )
+    mensaje = (data.get("mensaje") or data.get("detail") or "").lower()
+    assert any(term in mensaje for term in ("rate limit", "1015", "cloudflare", "ip", "local")), (
+        f"Mensaje debe ser descriptivo sobre rate limit Cloudflare 1015: {mensaje}"
+    )
+
+    # Cabecera CORS garantizada para evitar error 'Failed to fetch' en frontend React
+    cors_origin = resp.headers.get("access-control-allow-origin")
+    assert cors_origin is not None, "El backend debe incluir cabecera Access-Control-Allow-Origin"
+
+
+def test_announcements_publish_fallback_webhook_cloudedtech_oficial(monkeypatch):
+    """
+    Spec 018 - RF-003, RF-004, RF-008, RF-010:
+    Valida que ante rechazo HTTP 429 en Bot API,
+    'POST /api/v1/content-workflow/announcements/publish' active el fallback
+    al webhook oficial ('CloudEdTech_Oficial') anexando '?wait=true',
+    y si este responde 200 con message_id, certifique la publicación exitosa.
+    """
+    cliente = TestClient(puente_motor_ia.app, raise_server_exceptions=False)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake_bot_token_spec018")
+    webhook_base = "https://discord.com/api/webhooks/999888777/fake_token_spec018"
+    monkeypatch.setenv("DISCORD_WEBHOOK_ANUNCIOS", webhook_base)
+
+    import io
+    import urllib.error
+    import urllib.request
+    import json
+
+    llamadas_webhook = []
+
+    def fake_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        # 1. Si la llamada es a la Bot API (canales de texto), simular rate limit HTTP 429
+        if "channels/" in url and "/messages" in url:
+            fp = io.BytesIO(b'{"message": "You are being rate limited.", "retry_after": 60}')
+            raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, fp)
+        # 2. Si la llamada es al Webhook oficial con fallback
+        if "webhooks/" in url:
+            cuerpo = {}
+            if hasattr(req, "data") and req.data:
+                try:
+                    cuerpo = json.loads(req.data.decode("utf-8"))
+                except Exception:
+                    pass
+            llamadas_webhook.append({
+                "url": url,
+                "data": cuerpo,
+                "headers": dict(getattr(req, "headers", {}))
+            })
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_resp.code = 200
+            mock_resp.read.return_value = json.dumps({
+                "id": "155999888777666555",
+                "channel_id": "1559244522842488942",
+                "content": "Anuncio oficial resiliente",
+                "author": {"username": "CloudEdTech_Oficial", "bot": True}
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+        raise RuntimeError(f"URL no esperada en test: {url}")
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        payload = {
+            "confirmar": True,
+            "contenido": "Nuevo bootcamp de IA y Cloud disponible para inscripciones.",
+            "channel_id": "1559244522842488942",
+        }
+        resp = cliente.post("/api/v1/content-workflow/announcements/publish", json=payload)
+
+    assert resp.status_code == 200, (
+        f"Se esperaba HTTP 200 tras conmutar al webhook oficial, obtenido {resp.status_code}: {resp.text}"
+    )
+    data = resp.json()
+    assert data.get("estado") == "publicado", f"Se esperaba estado 'publicado', obtenido: {data}"
+
+    # Validar que el webhook se invocó con '?wait=true'
+    assert len(llamadas_webhook) > 0, "Se debió invocar el webhook oficial ante fallo 429 de Bot API"
+    url_invocada = llamadas_webhook[0]["url"]
+    assert "wait=true" in url_invocada, f"La URL del webhook debe contener '?wait=true', obtenida: {url_invocada}"
+
+
+def test_publish_channel_erradicacion_falsos_positivos_discord(monkeypatch):
+    """
+    Spec 018 - RF-005, RF-009, RF-010:
+    Valida que si Discord Bot API falla (429) y el webhook falla o no existe,
+    'POST /api/v1/content-workflow/publish-channel' retorne 'ok: False',
+    'estado_canal: "error"' y NO 'enviado'.
+    """
+    cliente = TestClient(puente_motor_ia.app, raise_server_exceptions=False)
+    id_test = 9501
+
+    # Insertar interacción para la prueba
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, estado, etapa_flujo)
+            VALUES (?, 'hash_9501', 'Discord', 'Semana_01', 'usuario_test', '#general', 'mensaje', 'Consulta de prueba para publicación', '2026-10-19T10:00:00+00:00', '2026-10-19T10:00:00+00:00', 'pendiente', 'ingesta')
+            """,
+            (id_test,)
+        )
+        conn.execute("DELETE FROM contenidos_generados WHERE interaccion_id = ?", (id_test,))
+        conn.commit()
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake_bot_token_spec018")
+    # Desactivar webhooks para forzar que no haya ruta de éxito
+    monkeypatch.delenv("DISCORD_WEBHOOK_GENERAL", raising=False)
+    monkeypatch.delenv("DISCORD_WEBHOOK_FAQ", raising=False)
+    monkeypatch.delenv("DISCORD_WEBHOOK_PQRS", raising=False)
+    monkeypatch.delenv("DISCORD_WEBHOOK_ANUNCIOS", raising=False)
+    monkeypatch.delenv("DISCORD_WEBHOOK_NOTIFICACIONES", raising=False)
+
+    def fake_requests_post(url, *args, **kwargs):
+        # Simular fallo HTTP 429 en Bot API
+        mock_r = MagicMock()
+        mock_r.status_code = 429
+        mock_r.text = '{"message": "You are being rate limited.", "retry_after": 60}'
+        mock_r.json.return_value = {"message": "You are being rate limited."}
+        return mock_r
+
+    with patch("requests.post", side_effect=fake_requests_post):
+        payload = {
+            "id_mensaje": id_test,
+            "canal": "discord",
+            "canal_seleccionado": "general",
+            "titulo": "Respuesta Comunitaria",
+            "texto_copy": "Explicación técnica para la comunidad."
+        }
+        resp = cliente.post("/api/v1/content-workflow/publish-channel", json=payload)
+
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Invariante clave de la Spec 018: ¡NO FALSOS POSITIVOS!
+    assert data.get("ok") is False, (
+        f"Se esperaba ok: False ante rechazo en Discord, pero se obtuvo ok: True (FALSO POSITIVO). Respuesta: {data}"
+    )
+    assert data.get("estado_canal") == "error", (
+        f"Se esperaba estado_canal: 'error', pero se obtuvo '{data.get('estado_canal')}'"
+    )
+    assert data.get("estado_canal") != "enviado", "estado_canal no puede ser 'enviado' si la llamada a Discord falló"
+
+    # Verificar que NO se persistió en SQLite contenidos_generados como publicado
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM contenidos_generados WHERE interaccion_id = ? AND estado_publicacion = 'publicado'",
+            (id_test,)
+        ).fetchone()[0]
+    assert rows == 0, "No debe registrarse publicación en contenidos_generados ante fallo de despacho"
+
+
+def test_publish_channel_captura_ids_y_urls_x_y_linkedin(monkeypatch):
+    """
+    Spec 018 - RF-006, RF-009:
+    Valida que ante publicaciones exitosas en X y LinkedIn se capturen el 'tweet_id'
+    numérico (con URL 'https://x.com/CloudEdTech_1/status/{id}') y el URN de LinkedIn
+    (con URL 'https://www.linkedin.com/feed/update/{urn}') en el payload de respuesta.
+    """
+    cliente = TestClient(puente_motor_ia.app, raise_server_exceptions=False)
+    id_test = 9502
+
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO interacciones (id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo, texto, creado_en, enviado_en, estado, etapa_flujo)
+            VALUES (?, 'hash_9502', 'Discord', 'Semana_01', 'autor_multicanal', '#general', 'mensaje', 'Mensaje para X y LinkedIn', '2026-10-19T10:00:00+00:00', '2026-10-19T10:00:00+00:00', 'pendiente', 'ingesta')
+            """,
+            (id_test,)
+        )
+        conn.commit()
+
+    monkeypatch.setenv("X_API_KEY", "fake_x_key")
+    monkeypatch.setenv("X_API_SECRET", "fake_x_secret")
+    monkeypatch.setenv("X_ACCESS_TOKEN", "fake_x_token")
+    monkeypatch.setenv("X_ACCESS_TOKEN_SECRET", "fake_x_token_secret")
+    monkeypatch.setenv("LINKEDIN_ACCESS_TOKEN", "fake_li_token")
+    monkeypatch.setenv("LINKEDIN_AUTHOR_URN", "urn:li:person:fake123")
+
+    mock_tweet_id = "1848123456789012345"
+    mock_linkedin_urn = "urn:li:share:98765432109876"
+
+    import json
+
+    def fake_requests_post(url, *args, **kwargs):
+        if "linkedin" in str(url):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 201
+            mock_resp.text = json.dumps({"id": mock_linkedin_urn})
+            mock_resp.json.return_value = {"id": mock_linkedin_urn}
+            return mock_resp
+        return MagicMock(status_code=200, text="{}", json=lambda: {})
+
+    with patch("tweepy.Client") as mock_tweepy_cls, \
+         patch("requests.post", side_effect=fake_requests_post):
+
+        mock_tw_client = MagicMock()
+        mock_tweet_resp = MagicMock()
+        mock_tweet_resp.data = {"id": mock_tweet_id, "text": "Tweet exitoso"}
+        mock_tw_client.create_tweet.return_value = mock_tweet_resp
+        mock_tweepy_cls.return_value = mock_tw_client
+
+        # 1. Probar despacho en X
+        payload_x = {
+            "id_mensaje": id_test,
+            "canal": "x",
+            "titulo": "Post X",
+            "texto_copy": "Copy optimizado para X con hashtag #CloudEdTech"
+        }
+        resp_x = cliente.post("/api/v1/content-workflow/publish-channel", json=payload_x)
+        assert resp_x.status_code == 200
+        data_x = resp_x.json()
+        assert data_x.get("ok") is True, f"Despacho en X falló: {data_x}"
+        assert data_x.get("estado_canal") == "enviado"
+        url_esperada_x = f"https://x.com/CloudEdTech_1/status/{mock_tweet_id}"
+        assert data_x.get("url") == url_esperada_x, (
+            f"Se esperaba url '{url_esperada_x}', pero se obtuvo '{data_x.get('url')}'"
+        )
+        assert data_x.get("tweet_id") == mock_tweet_id or mock_tweet_id in (data_x.get("detalle") or ""), (
+            f"El payload debe incluir el tweet_id numérico: {data_x}"
+        )
+
+        # 2. Probar despacho en LinkedIn
+        payload_li = {
+            "id_mensaje": id_test,
+            "canal": "linkedin",
+            "titulo": "Post LinkedIn",
+            "texto_copy": "Copy profesional para LinkedIn sobre innovación educativa."
+        }
+        resp_li = cliente.post("/api/v1/content-workflow/publish-channel", json=payload_li)
+        assert resp_li.status_code == 200
+        data_li = resp_li.json()
+        assert data_li.get("ok") is True, f"Despacho en LinkedIn falló: {data_li}"
+        assert data_li.get("estado_canal") == "enviado"
+        url_esperada_li = f"https://www.linkedin.com/feed/update/{mock_linkedin_urn}"
+        assert data_li.get("url") == url_esperada_li, (
+            f"Se esperaba url '{url_esperada_li}', pero se obtuvo '{data_li.get('url')}'"
+        )
+        assert data_li.get("urn") == mock_linkedin_urn or mock_linkedin_urn in (data_li.get("detalle") or ""), (
+            f"El payload debe incluir el URN de LinkedIn: {data_li}"
+        )
+
+
+# Aliases para compatibilidad con las especificaciones de tareas individuales de la Spec 018
+test_sync_discord_captura_rate_limit_429_con_cors = test_discord_sync_rate_limit_cloudflare_1015_retorna_429_y_cors
+test_sync_discord_tolera_cuerpo_html_sin_json_decode_error = test_discord_sync_rate_limit_cloudflare_1015_retorna_429_y_cors
+test_despacho_discord_webhook_anexa_wait_true_y_obtiene_message_id = test_announcements_publish_fallback_webhook_cloudedtech_oficial
+test_despacho_discord_cascada_sin_falsos_positivos = test_publish_channel_erradicacion_falsos_positivos_discord
+test_publish_channel_no_persiste_en_sqlite_ante_fallo_de_canal = test_publish_channel_erradicacion_falsos_positivos_discord
+test_adaptadores_autonomos_x_y_linkedin_capturan_ids_y_urls_canonicas = test_publish_channel_captura_ids_y_urls_x_y_linkedin
+

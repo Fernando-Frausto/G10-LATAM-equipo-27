@@ -541,10 +541,16 @@ function ContentStudio() {
       )
       setFinalAnnouncement('')
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Error al publicar anuncio en Discord.'
+      const isRateLimit =
+        errMsg.includes('429') ||
+        errMsg.includes('1015') ||
+        errMsg.toLowerCase().includes('rate limit') ||
+        errMsg.toLowerCase().includes('too many requests')
       setAnnouncementPublishError(
-        error instanceof Error
-          ? error.message
-          : 'Error al publicar anuncio en Discord.',
+        isRateLimit
+          ? '⚠️ Discord ha limitado temporalmente el envío por límite de peticiones de Cloudflare (Error 1015 / 429). Tu borrador se mantiene intacto. Intenta en unos minutos o realiza la publicación desde tu entorno local.'
+          : errMsg
       )
       setShowConfirmModal(false)
     } finally {
@@ -990,7 +996,7 @@ function ContentStudio() {
 
   // Publicación individual por canal
   const [channelPublishing, setChannelPublishing] = useState<Record<string, boolean>>({})
-  const [channelPublishResult, setChannelPublishResult] = useState<Record<string, { ok: boolean; detalle: string }>>({})
+  const [channelPublishResult, setChannelPublishResult] = useState<Record<string, { ok: boolean; detalle: string; url?: string }>>({})
 
   // Procesamiento masivo con Gemma 4
   const [massProcessing, setMassProcessing] = useState(false)
@@ -1321,15 +1327,16 @@ function ContentStudio() {
       )
       setChannelPublishResult((prev) => ({
         ...prev,
-        [canal]: { ok: res.ok, detalle: res.detalle },
+        [canal]: { ok: res.ok, detalle: res.detalle, url: res.url },
       }))
 
-      if (res.ok) {
+      if (res.ok && res.estado_canal === 'enviado') {
         setDrafts((prev) => ({
           ...prev,
           [canal]: { ...prev[canal], submitted: true },
         }))
-        setPipelineActionMessage(`✓ Publicación en ${canal.toUpperCase()} exitosa: ${res.detalle}`)
+        const urlSuffix = res.url ? ` (${res.url})` : ''
+        setPipelineActionMessage(`✓ Publicación en ${canal.toUpperCase()} exitosa: ${res.detalle}${urlSuffix}`)
 
         // Excluir de la bandeja de mensajes pero conservar en la mesa de trabajo
         setWorkflowMessages((prev) => prev.filter((m) => m.interactionId !== selectedMessageId))
@@ -1356,6 +1363,10 @@ function ContentStudio() {
           }
         })
       } else {
+        setDrafts((prev) => ({
+          ...prev,
+          [canal]: { ...prev[canal], submitted: false },
+        }))
         setPipelineActionError(`Error al publicar en ${canal.toUpperCase()}: ${res.detalle}`)
       }
     } catch (error) {
@@ -1405,19 +1416,35 @@ function ContentStudio() {
         const enviados: string[] = []
         const omitidos: string[] = []
 
+        const fallidos: string[] = []
         Object.entries(resCanales).forEach(([ch, val]: [string, any]) => {
           if (val?.estado_canal === 'enviado') {
             enviados.push(ch.toUpperCase())
           } else if (val?.estado_canal === 'omitido' || val?.estado_canal === 'omitido_sin_credenciales') {
             omitidos.push(ch.toUpperCase())
+          } else {
+            fallidos.push(`${ch.toUpperCase()}: ${val?.detalle || 'Error'}`)
           }
         })
 
-        const feedback = enviados.length > 0
-          ? `✓ Lote aprobado. Publicado en: ${enviados.join(', ')}.${omitidos.length > 0 ? ` Omitido en: ${omitidos.join(', ')} (no seleccionados por el orquestador).` : ''}`
-          : `✓ Lote aprobado (sin canales activos despachados).`
+        let feedback = enviados.length > 0
+          ? `✓ Publicado en: ${enviados.join(', ')}.`
+          : `Lote procesado.`
+        if (omitidos.length > 0) {
+          feedback += ` Omitido en: ${omitidos.join(', ')}.`
+        }
+        if (fallidos.length > 0) {
+          feedback += ` Falló en: ${fallidos.join('; ')}.`
+        }
 
-        setPipelineActionMessage(feedback)
+        if (fallidos.length > 0 && enviados.length === 0) {
+          setPipelineActionError(feedback)
+        } else {
+          setPipelineActionMessage(feedback)
+          if (fallidos.length > 0) {
+            setPipelineActionError(`Atención: Falló la publicación en: ${fallidos.join('; ')}`)
+          }
+        }
         setDrafts((prev) => ({
           linkedin: { ...prev.linkedin, submitted: resCanales.linkedin?.estado_canal === 'enviado' },
           x: { ...prev.x, submitted: resCanales.x?.estado_canal === 'enviado' },
@@ -2399,12 +2426,12 @@ function ContentStudio() {
                 <p>{channelPublishResult['linkedin'].detalle}</p>
                 {channelPublishResult['linkedin'].ok && (
                   <a
-                    href="https://www.linkedin.com/feed/"
+                    href={channelPublishResult['linkedin'].url || "https://www.linkedin.com/feed/"}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
                   >
-                    ↗ Ver en LinkedIn (Feed / Actividad)
+                    ↗ Ver publicación en LinkedIn
                   </a>
                 )}
               </div>
@@ -2632,12 +2659,12 @@ function ContentStudio() {
                 <p>{channelPublishResult['x'].detalle}</p>
                 {channelPublishResult['x'].ok && (
                   <a
-                    href="https://x.com/CloudEdTech_1"
+                    href={channelPublishResult['x'].url || "https://x.com/CloudEdTech_1"}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
                   >
-                    ↗ Ver tweets en @CloudEdTech_1
+                    ↗ Ver publicación en X
                   </a>
                 )}
               </div>
@@ -3503,9 +3530,17 @@ function ContentStudio() {
                       current.filter((item) => item.id !== interactionId)
                     )
                   } catch (error) {
+                    complaintPublishLockedIds.current.delete(interactionId)
+                    const errMsg = error instanceof Error ? error.message : 'Error de publicación.'
+                    const isRateLimit =
+                      errMsg.includes('429') ||
+                      errMsg.includes('1015') ||
+                      errMsg.toLowerCase().includes('rate limit') ||
+                      errMsg.toLowerCase().includes('too many requests')
                     setComplaintPublishError(
-                      (error instanceof Error ? error.message : 'Error de publicación.') +
-                      ' Verifica Discord y Auditoría antes de volver a intentarlo.'
+                      isRateLimit
+                        ? '⚠️ Discord ha limitado temporalmente el envío por límite de peticiones de Cloudflare (Error 1015 / 429). Tu respuesta se conserva en el editor. Intenta nuevamente en unos minutos o realiza el despacho desde local.'
+                        : `${errMsg} Verifica Discord y Auditoría antes de volver a intentarlo.`
                     )
                   } finally {
                     complaintPublishingRef.current = false

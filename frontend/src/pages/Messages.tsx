@@ -619,14 +619,33 @@ function Messages() {
                 })
             }
         } catch (error) {
-            const errMsg = error instanceof Error ? error.message : 'Error desconocido al sincronizar Discord'
-            const isConflict = errMsg.includes('409') || errMsg.includes('Sincronización en curso')
-            setSyncFeedbackMessage({
-                type: isConflict ? 'warning' : 'error',
-                text: isConflict
-                    ? '⏳ Sincronización en curso. Por favor espera a que finalice el proceso anterior.'
-                    : `Error al sincronizar Discord: ${errMsg}`,
-            })
+            const err = error as Error & { status?: number; codigoError?: string }
+            const errMsg = err.message || 'Error desconocido al sincronizar Discord'
+            const isConflict = err.status === 409 || errMsg.includes('409') || errMsg.includes('Sincronizaci')
+            const isRateLimit =
+                err.status === 429 ||
+                err.codigoError === 'RATE_LIMIT_CLOUDFLARE_1015' ||
+                errMsg.includes('429') ||
+                errMsg.includes('1015') ||
+                errMsg.toLowerCase().includes('rate limit') ||
+                errMsg.toLowerCase().includes('too many requests')
+
+            if (isConflict) {
+                setSyncFeedbackMessage({
+                    type: 'warning',
+                    text: '⏳ Sincronización en curso. Por favor espera a que finalice el proceso anterior.',
+                })
+            } else if (isRateLimit) {
+                setSyncFeedbackMessage({
+                    type: 'warning',
+                    text: '⚠️ Discord o Cloudflare ha limitado temporalmente la IP del servidor en la nube (Error 1015 / Rate Limit). Sincroniza desde tu entorno local o intenta en unos minutos.',
+                })
+            } else {
+                setSyncFeedbackMessage({
+                    type: 'error',
+                    text: `Error al sincronizar Discord: ${errMsg}`,
+                })
+            }
         } finally {
             setIsSyncingDiscord(false)
         }
