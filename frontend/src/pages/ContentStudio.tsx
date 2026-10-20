@@ -12,6 +12,7 @@ import {
   MessageCircle,
   Pencil,
   RotateCcw,
+  Search,
   Send,
   Sparkles,
   Upload,
@@ -146,7 +147,9 @@ function isOmittedByOrchestrator(text?: string): boolean {
 
 function ContentStudio() {
   const location = useLocation()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [manualIdInput, setManualIdInput] = useState('')
+  const [manualIdError, setManualIdError] = useState<string | null>(null)
 
   const interactionParam =
     searchParams.get('interaction') ||
@@ -373,6 +376,7 @@ function ContentStudio() {
           if (initialMsg) {
             setDrafts(buildDefaultDrafts(initialMsg))
             if (targetMsg) {
+              setManualIdError(null)
               setTimeout(() => {
                 originalMessageRef.current?.scrollIntoView({
                   behavior: 'smooth',
@@ -380,6 +384,9 @@ function ContentStudio() {
                 })
               }, 100)
             }
+          }
+          if (targetInteractionId && !targetMsg) {
+            setManualIdError(`Mensaje #${targetInteractionId} no encontrado`)
           }
         }
       } catch (error) {
@@ -404,6 +411,7 @@ function ContentStudio() {
 
   useEffect(() => {
     if (!targetInteractionId || Number.isNaN(targetInteractionId)) return
+    setManualIdInput(String(targetInteractionId))
     if (activeWorkbenchMessage?.interactionId === targetInteractionId) return
     const targetMsg = workflowMessages.find(
       (m) => m.interactionId === targetInteractionId,
@@ -770,6 +778,19 @@ function ContentStudio() {
     setTimeout(() => {
       setCopiedFormat(null)
     }, 2000)
+  }
+
+  const handleSearchById = (e: React.FormEvent) => {
+    e.preventDefault()
+    const raw = manualIdInput.trim()
+    if (!raw) return
+    const idNum = parseInt(raw, 10)
+    if (Number.isNaN(idNum) || idNum <= 0) {
+      setManualIdError('Ingresa un número de ID válido')
+      return
+    }
+    setManualIdError(null)
+    setSearchParams({ interaction: String(idNum) })
   }
 
   const submittingRef = useRef<Set<ContentFormat>>(new Set())
@@ -1923,7 +1944,7 @@ function ContentStudio() {
 
       {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
       <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5">
               <h3 className="font-bold text-slate-900">
@@ -1937,6 +1958,39 @@ function ContentStudio() {
               Interacciones de la comunidad analizadas por la IA con alta relevancia. Haz clic en cualquiera para cargarla en la mesa de trabajo.
             </p>
           </div>
+
+          {/* Buscador y Carga directa por ID específico (Estilo Enoc / HITL) */}
+          <form
+            onSubmit={handleSearchById}
+            className="flex flex-col sm:items-end gap-1"
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="1"
+                placeholder="ID ej: 42"
+                value={manualIdInput}
+                onChange={(e) => {
+                  setManualIdInput(e.target.value)
+                  setManualIdError(null)
+                }}
+                className="w-28 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
+              <button
+                type="submit"
+                disabled={!manualIdInput.trim() || workflowLoading}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Search size={13} />
+                Cargar ID
+              </button>
+            </div>
+            {manualIdError && (
+              <span className="text-[11px] font-medium text-rose-600">
+                {manualIdError}
+              </span>
+            )}
+          </form>
         </div>
 
         {workflowLoading && (
