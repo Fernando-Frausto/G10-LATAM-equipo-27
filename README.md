@@ -1,111 +1,64 @@
-# 📋 Informe de Sprint Review — Sesión del 15 de octubre
+# 📋 Informe de Sprint Review — Sesión del 19 de octubre
 
 ## ℹ️ Información General
 
-* **Fecha:** 15 de octubre.
+- **Fecha:** 19 de octubre.
 
+- **Próxima sesión:** Entre martes y miércoles (meta: consolidar ideas para el pitch, ajustar márgenes/colores y revisar el video/presentación final).
 
-* **Próxima sesión:** Lunes (meta: definir ideas de presentación y presentadores para el Demo Day).
+- **Fase actual:** Unificación exitosa de las ramas de desarrollo, enriquecimiento de la base de datos (testing real), y preparación de entregables para el Demo Day.
 
-
-* **Fase actual:** Integración de frontend/backend, depuración de base de datos, ajustes del orquestador y preparación para Demo Day.
-
-
-* **Objetivo principal:** Revisar el estado de la unificación de la rama `main`, resolver los bloqueos de persistencia de datos en el flujo de mensajes, mostrar las pruebas del orquestador en redes sociales y establecer la estrategia del pitch final.
-
-
+- **Objetivo principal:** Elevar las métricas de participación del equipo en No Country, revisar el proyecto unificado presentado por Fernando, y definir la estrategia de *storytelling* y roles para la presentación del Demo Day.
 
 ## 📌 Resumen Ejecutivo
 
-La sesión se centró en la integración del sistema y la planificación del evento de cierre. Se logró la unificación de todas las ramas en el repositorio `main`, aunque el despliegue del frontend presentó pérdidas de variables de entorno y bloqueos de estado en la base de datos durante la transición de mensajes, los cuales ya están siendo abordados. El flujo del orquestador está estructurado y realizando publicaciones coherentes de prueba en plataformas como LinkedIn, aplicando filtros de relevancia mediante modelos de IA. Finalmente, se introdujo la dinámica de evaluación para el Demo Day, acordando utilizar una técnica de *storytelling* de 5 minutos y delegando la definición de presentadores (y sus respaldos) para la sesión del lunes.
+La sesión se centró en la estrategia para mejorar las métricas de contribución del equipo y la preparación del material para el Demo Day. Se confirmó la unificación exitosa de todas las ramas del proyecto en un solo flujo de trabajo funcional, conectado a Supabase y OCI, integrando el esfuerzo de todo el equipo sin perder código. Además, se presentaron propuestas sólidas para el Pitch: Patricia aportó casos de uso mediante *storytelling* centrados en el dolor del usuario, mientras que Cristian expuso la estructura gráfica y un demo en video. Se acordó unificar ambas propuestas bajo la narrativa de que el equipo de IT de "Cloud Detech" desarrolló "Cloud Solution". Finalmente, se asignaron las tareas de cierre administrativo y de despliegue para tener todos los entregables listos antes del viernes 23 de octubre.
 
 ## 💬 Temas Clave y Discusiones
 
-### ⚙️ Integración de Frontend y Base de Datos
+### 📈 Estrategia de Métricas y Enriquecimiento de Datos
 
-* **Unificación:** Se consolidaron todas las ramas en `main` utilizando auditorías asistidas por IA para evitar pérdida de datos o exposición de claves de seguridad.
+- **Métricas de No Country:** Se identificó que varios integrantes están por debajo del puntaje requerido (9 o más). Es crítico aumentar la participación para equilibrar el esfuerzo del equipo.
 
+- **Testing y Nutrición de BD:** Se determinó usar el canal "Byte Coder" en Discord para enviar mensajes controlados (simulando casos reales). Cada persona asignada deberá enviar 5 mensajes específicos: notificaciones, reclamos fuertes, agradecimientos, mensajes multirred (LinkedIn, X) y mensajes de spam (relevancia menor a 35).
 
-* **Problemas de Despliegue:** Al cambiar de rama en Netlify, se perdieron las variables de conexión a la base de datos. Se está migrando el despliegue a Google Cloud para aprovechar los créditos y restaurar la conexión.
+- **Unificación de Webhooks:** Para evitar errores y mantener coherencia, se eliminaron los webhooks redundantes, dejando únicamente el webhook oficial que fue elegido previamente por votación.
 
+### ⚙️ Integración del Proyecto y Despliegue
 
-* **Bloqueos de Estado:** Los mensajes transferidos entre ingesta y *copywriting* desaparecían de la interfaz debido a bloqueos de memoria en la base de datos. Se resolvieron creando estados y variables específicas en las tablas para encapsular y retener el mensaje durante todo el flujo.
+- **Consolidación de Ramas:** Fernando presentó el proyecto totalmente integrado. Las funcionalidades de ingesta, redacción asistida por IA, reportes en OCI (desarrollado por Tania), conexión de Discord (Eduardo) y frontend (Andrés) están unificadas y 100% funcionales.
 
+- **Estabilidad en Render:** Se implementó una solución (pings cada 10 minutos) para evitar que el backend alojado en Render entre en modo de suspensión o *sleep*.
 
-* **Tablero OCI:** Es el único módulo pendiente de integración en el frontend. Se solicitó apoyo del equipo para completarlo, requiriendo que quien ayude descargue el proyecto en local desde `main` y modifique exclusivamente la vista de OCI sin alterar otras variables.
+- **Respaldo del Trabajo:** Se aclaró que ningún esfuerzo se ha perdido; todos los aportes previos del equipo fueron integrados al repositorio que ahora todos pueden usar como portafolio personal.
 
+### 🎬 Preparación para el Demo Day y Pitch
 
+- **Propuestas de Storytelling:** Patricia presentó 3 historias de usuario (Matías el Community Manager abrumado, Marisol con emprendedoras, y Marco el estudiante atascado en un Bootcamp) para ilustrar el problema que resuelve la herramienta.
 
-### 🧠 Avances del Orquestador y Flujo de Publicación
+- **Propuesta Gráfica y Demo:** Cristian exhibió una propuesta de PPT manteniendo la identidad de marca, acompañada de un demo en video de 50 segundos para evitar depender de la carga en vivo de la web.
 
-```mermaid
-flowchart LR
-    A[(Supabase)] --> B{Orquestador}
-    B --> C1[Nodo LinkedIn]
-    B --> C2[Nodo X]
-    B --> C3[Nodo Discord]
-    C1 & C2 & C3 --> D[Validador]
-    D --> E[HITL: Intervención Humana]
-    E --> F[Publicador / Actualización BD]
+- **Estructura Final:** Se decidió fusionar el *storytelling* del "problema" propuesto por Patricia (enfocado en el caso de Matías) con la "solución" y esquema gráfico de Cristian. Se definirá el producto bajo el concepto de "Cloud Solution" como una herramienta interna creada por "Cloud Detech" que ahora se ofrece al público.
 
-```
-
-* **Manejo de Nodos:** El orquestador extrae datos de la tabla de lotes/historial y decide la distribución a redes sociales basándose en la relevancia del mensaje.
-
-
-* **Modelos de IA:** Se están implementando modelos de respaldo (ej. Llama 3.1 y Gemma) para gestionar automáticamente peticiones de menor impacto (puntaje menor a 35) o descartar spam.
-
-
-* **Pruebas en vivo:** Las interacciones automáticas del bot en LinkedIn han demostrado ser muy coherentes y contextuales.
-
-
-* **Ajuste de Marca:** Se acordó eliminar validaciones secundarias para dejar un solo perfil oficial ("club de hecho oficial") publicando, unificando la identidad de la marca.
-
-
-
-### 🎬 Preparación para el Demo Day
-
-* **Formato y Evaluación:** El pitch dura estrictamente 5 minutos. La calificación se divide en: 50% trabajo en equipo (métricas previas), 35% integración de la solución y 15% calidad del pitch.
-
-
-* **Estrategia Recomendada:** Se sugiere fuertemente utilizar *storytelling*, presentando un problema inicial, mostrando la herramienta por ~3 minutos y concluyendo con el impacto generado.
-
-
-* **Respaldos Técnicos:** Es obligatorio designar presentadores secundarios o "backups" organizados en lista, para evitar la descalificación en caso de fallos de internet o energía del presentador principal.
-
-
+- **Presentadores:** Serán Patricia y Cristian, apoyados por Eduardo García y una cuarta persona por confirmar, quienes actuarán como presentadores y respaldos (backups) para el Demo Day del 27 de octubre.
 
 ## 🤝 Acuerdos y Decisiones
 
-* Organizar una sesión extraordinaria de trabajo en equipo (Front/Back) para ayudar a finalizar el tablero OCI.
+- Adoptar la estrategia de envío de mensajes en Discord (5 mensajes por persona) para nutrir la base de datos y elevar la métrica de actividad del equipo.
 
+- Centralizar la narrativa del Demo Day fusionando el *storytelling* del problema de un Community Manager con una demostración guiada de la plataforma.
 
-* Centralizar la identidad del bot en un solo perfil validador oficial ("club de hecho oficial") para mantener la cohesión de marca.
+- Tener listos los entregables principales (video de max. 2 minutos y PPT de apoyo) a más tardar el jueves, para hacer un ensayo y revisión antes del cierre el viernes 23 de octubre.
 
-
-* Cada miembro del equipo deberá llevar ideas de presentación estructuradas como historias para la reunión del lunes.
-
-
-* Elegir a un presentador principal y al menos dos personas de respaldo técnico para el día del Demo Day.
-
-
+- Ensayar para asegurar que la demostración en vivo durante el evento del 27 de octubre tome un máximo estricto de 3 a 4 minutos.
 
 ## 🚀 Plan de Acción / Tareas Pendientes
 
 | Tarea / Acción a realizar | Responsable | Contexto o detalles clave |
 | --- | --- | --- |
-| Completar integración del tablero OCI en el frontend | Andrés (y voluntarios) | Descargar `main` localmente e integrar solo OCI sin tocar variables de otros módulos.
-
- |
-| Coordinar reunión técnica de apoyo para el frontend | Equipo | Para distribuir la carga de trabajo actual.
-
- |
-| Limpiar perfiles de prueba y dejar un solo publicador oficial | Enoc | Uniformar la salida de información en redes sociales.
-
- |
-| Elaborar propuestas de *storytelling* para el Pitch | Todos | Preparar ideas de casos de uso reales para la próxima sesión.
-
- |
-| Definir lista de presentadores (Principal y Backups) | Equipo | Se decidirá el lunes para mitigar riesgos de conexión el día de la presentación.
-
- |
+| **Enviar 5 mensajes de prueba a Discord** | Miembros con métricas bajas (Samuel, Eduardo, Francisco, Miguel S., Miguel V.) | Mandar quejas, felicitaciones y spam en el canal "Byte Coder" para subir las métricas en No Country. |
+| **Generar y editar el Video Demo / Presentación** | Patricia y Cristian | Fusionar el *storytelling* y el diseño UI para tener un borrador el miércoles y versión final el jueves. |
+| **Actualizar el Repositorio de GitHub** | Eduardo García | Consolidar la documentación técnica del proyecto unificado. |
+| **Elaborar y subir la Minuta de la sesión** | Samuel | Redactar un archivo (txt o md) y subirlo a la plataforma para contar como aporte. |
+| **Actualizar plataforma de No Country** | Miguel Sierra | Actualizar los enlaces de entregables finales (Drive, Repo, Demo). |
+| **Ensayos para el Demo Day** | Patricia, Cristian, Eduardo G., (4to integrante) | Reuniones técnicas para practicar y ajustar el tiempo límite a 3 minutos. |
