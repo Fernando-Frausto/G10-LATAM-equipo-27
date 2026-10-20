@@ -47,6 +47,19 @@ function FeaturedStories() {
     const targetId = Number(currentStory.id_mensaje || currentStory.id)
     const isActionDisabled = stories.length === 0 || !targetId || targetId === 0
     const isPublished = Boolean(currentStory.is_published)
+    const relevanceScore = Math.max(
+        0,
+        Math.min(
+            100,
+            Math.round(
+                typeof currentStory.relevance === 'number'
+                    ? currentStory.relevance <= 1 && currentStory.relevance > 0
+                        ? currentStory.relevance * 100
+                        : currentStory.relevance
+                    : 0
+            )
+        )
+    )
 
     const ALL_PLATFORMS = ['Discord', 'LinkedIn', 'X']
     const rawPublishedList = (currentStory.published_platforms || []).map((p) => {
@@ -171,8 +184,8 @@ function FeaturedStories() {
 
                     </div>
 
-                    {/* Métricas */}
-                    <div className="hidden gap-4 md:flex">
+                    {/* Métricas y Score Ring */}
+                    <div className="hidden items-center gap-4 md:flex">
 
                         <div className="rounded-xl bg-slate-50 p-4 text-center">
                             <Sparkles
@@ -180,7 +193,7 @@ function FeaturedStories() {
                                 className="mx-auto text-orange-500"
                             />
 
-                            <p className="mt-2 text-lg font-bold text-slate-900">
+                            <p className="mt-2 text-lg font-bold text-slate-900 tabular-nums">
                                 {currentStory.sentiment}%
                             </p>
 
@@ -189,18 +202,18 @@ function FeaturedStories() {
                             </p>
                         </div>
 
-                        <div className="rounded-xl bg-slate-50 p-4 text-center">
-                            <ThumbsUp
-                                size={18}
-                                className="mx-auto text-orange-500"
-                            />
+                        <div className="flex flex-col items-center justify-center rounded-xl bg-slate-50 px-4 py-3 text-center">
+                            <div
+                                className="score-ring"
+                                style={{ '--p': relevanceScore } as React.CSSProperties}
+                                title={`Relevancia IA: ${relevanceScore}%`}
+                            >
+                                <span className="tabular-nums">{relevanceScore}%</span>
+                            </div>
 
-                            <p className="mt-2 text-lg font-bold text-slate-900">
-                                {currentStory.relevance}%
-                            </p>
-
-                            <p className="text-xs text-slate-400">
-                                Relevancia
+                            <p className="mt-1.5 flex items-center gap-1 text-xs text-slate-400">
+                                <ThumbsUp size={12} className="text-orange-500" />
+                                <span>Relevancia</span>
                             </p>
                         </div>
 

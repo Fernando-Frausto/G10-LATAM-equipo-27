@@ -116,9 +116,15 @@ function Dashboard() {
       {/* Encabezado */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">
-            Dashboard
-          </h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-2xl font-bold text-slate-900">
+              Dashboard
+            </h2>
+            <span className="c-live rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
+              <span className="c-live__dot" />
+              <span>En vivo</span>
+            </span>
+          </div>
           <p className="mt-1 text-slate-500">
             Resumen de tu comunidad
           </p>
@@ -146,7 +152,7 @@ function Dashboard() {
 
 
       {/* KPIs */}
-      <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 tabular-nums">
 
         <KpiCard
           title="Mensajes procesados"

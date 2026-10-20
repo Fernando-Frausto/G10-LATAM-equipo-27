@@ -278,8 +278,8 @@ function OCIStorage() {
                 </p>
             </div>
 
-            {/* Cabecera de Estado OCI y 4 Contadores Reales (RF-01) */}
-            <div className="mt-8 overflow-hidden rounded-2xl bg-[#080A27] p-6 text-white shadow-sm">
+            {/* Cabecera de Estado OCI y 4 Contadores Reales (RF-01 / Spec 019 RF-08, RF-10) */}
+            <div className="c-card--brand mt-8 overflow-hidden rounded-2xl bg-[#080A27] p-6 text-white shadow-sm">
                 <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-start">
                     <div className="flex items-start gap-4">
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
@@ -293,19 +293,23 @@ function OCIStorage() {
                                 </h3>
 
                                 <span
-                                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                    className={`c-live rounded-full px-3 py-1 text-xs font-semibold ${
                                         !isServiceConnected
                                             ? "bg-slate-500/20 text-slate-300"
                                             : isOciOnline
                                               ? "bg-emerald-500/15 text-emerald-300"
                                               : "bg-amber-500/15 text-amber-300"
                                     }`}
+                                    role="status"
                                 >
-                                    {!isServiceConnected
-                                        ? "Verificando..."
-                                        : isOciOnline
-                                          ? "Conectado a OCI (Modo Online)"
-                                          : "Modo Respaldo Local / Offline"}
+                                    <span className="c-live__dot" aria-hidden="true" />
+                                    <span>
+                                        {!isServiceConnected
+                                            ? "Verificando..."
+                                            : isOciOnline
+                                              ? "Conectado a OCI (Modo Online)"
+                                              : "Modo Respaldo Local / Offline"}
+                                    </span>
                                 </span>
                             </div>
 
@@ -314,16 +318,29 @@ function OCIStorage() {
                                     "Consultando el estado del módulo OCI Object Storage..."}
                             </p>
 
-                            <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-400">
-                                <span className="inline-flex items-center gap-1.5">
+                            <dl className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+                                <div className="inline-flex items-center gap-1.5">
                                     <MapPin size={15} className="text-orange-400" />
-                                    Región: <strong className="text-slate-200">{regionName}</strong>
-                                </span>
-                                <span className="inline-flex items-center gap-1.5">
+                                    <dt className="text-slate-400">Región:</dt>
+                                    <dd className="font-mono font-semibold tabular-nums text-slate-200">
+                                        {regionName}
+                                    </dd>
+                                </div>
+                                <div className="inline-flex items-center gap-1.5">
                                     <FolderOpen size={15} className="text-orange-400" />
-                                    Bucket: <strong className="text-slate-200">{bucketName}</strong>
-                                </span>
-                            </div>
+                                    <dt className="text-slate-400">Bucket:</dt>
+                                    <dd className="font-mono font-semibold tabular-nums text-slate-200">
+                                        {bucketName}
+                                    </dd>
+                                </div>
+                                <div className="inline-flex items-center gap-1.5">
+                                    <Server size={15} className="text-orange-400" />
+                                    <dt className="text-slate-400">Modo:</dt>
+                                    <dd className="font-mono font-semibold tabular-nums text-slate-200">
+                                        {isOciOnline ? "Online (OCI)" : "Local / Offline"}
+                                    </dd>
+                                </div>
+                            </dl>
                         </div>
                     </div>
 
@@ -334,7 +351,7 @@ function OCIStorage() {
                                 Oracle Cloud Infrastructure
                             </span>
                         </div>
-                        <p className="mt-1 text-xs text-slate-400">
+                        <p className="mt-1 font-mono text-xs tabular-nums text-slate-400">
                             {isOciOnline
                                 ? `Sincronización directa activa en ${bucketName}`
                                 : "Respaldo local garantizado en reportes/*.json"}
@@ -345,26 +362,26 @@ function OCIStorage() {
                 <div className="mt-6 grid grid-cols-2 gap-3 border-t border-white/10 pt-5 md:grid-cols-4">
                     <div className="rounded-xl bg-white/5 p-4">
                         <p className="text-xs text-slate-400">Reportes Semanales</p>
-                        <p className="mt-1 text-xl font-bold">{reports.length}</p>
+                        <p className="mt-1 text-xl font-bold tabular-nums">{reports.length}</p>
                     </div>
 
                     <div className="rounded-xl bg-white/5 p-4">
                         <p className="text-xs text-slate-400">Mensajes Consolidados</p>
-                        <p className="mt-1 text-xl font-bold">
+                        <p className="mt-1 text-xl font-bold tabular-nums">
                             {activeReport?.resumen_metricas?.total_mensajes ?? 0}
                         </p>
                     </div>
 
                     <div className="rounded-xl bg-white/5 p-4">
                         <p className="text-xs text-slate-400">Activos Aprobados</p>
-                        <p className="mt-1 text-xl font-bold text-emerald-300">
+                        <p className="mt-1 text-xl font-bold tabular-nums text-emerald-300">
                             {activeReport?.resumen_metricas?.total_aprobados ?? 0}
                         </p>
                     </div>
 
                     <div className="rounded-xl bg-white/5 p-4">
                         <p className="text-xs text-slate-400">Estado Almacenamiento</p>
-                        <p className="mt-1 text-base font-bold sm:text-lg">
+                        <p className="mt-1 text-base font-bold tabular-nums sm:text-lg">
                             {ociSyncedCount} en OCI · {localSavedCount} Local
                         </p>
                     </div>

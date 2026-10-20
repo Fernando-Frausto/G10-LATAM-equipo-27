@@ -369,19 +369,21 @@ function Analytics() {
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
                         {motorAnalytics.emojis.map((item, idx) => {
                             const isNegative = item.trend.startsWith('-')
+                            const numericPct = parseFloat(String(item.trend).replace(/[^0-9.]/g, '')) || 0
+                            const meterWidth = Math.min(100, Math.max(4, numericPct))
 
                             return (
                                 <div
                                     key={`${item.emoji}-${item.label}-${idx}`}
-                                    className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-slate-300"
+                                    className="emoji-card rounded-xl border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-slate-300"
                                 >
                                     <div className="flex items-start justify-between">
-                                        <span className="text-2xl" role="img" aria-label={item.label}>
+                                        <span className="text-[2rem] leading-none" role="img" aria-label={item.label}>
                                             {item.emoji}
                                         </span>
 
                                         <span
-                                            className={`rounded-md px-2 py-1 text-[10px] font-bold ${
+                                            className={`tabular-nums rounded-md px-2 py-1 text-[10px] font-bold ${
                                                 isNegative
                                                     ? 'bg-rose-50 text-rose-600'
                                                     : 'bg-emerald-50 text-emerald-600'
@@ -392,7 +394,7 @@ function Analytics() {
                                         </span>
                                     </div>
 
-                                    <p className="mt-3 text-xl font-black text-slate-900">
+                                    <p className="mt-3 text-xl font-black tabular-nums text-slate-900">
                                         {item.count}
                                     </p>
 
@@ -403,6 +405,13 @@ function Analytics() {
                                     <p className="mt-1 text-[11px] text-slate-400">
                                         {item.description}
                                     </p>
+
+                                    <div className="c-meter mt-3">
+                                        <div
+                                            className="c-meter__bar"
+                                            style={{ width: `${meterWidth}%` }}
+                                        />
+                                    </div>
                                 </div>
                             )
                         })}
@@ -423,7 +432,7 @@ function Analytics() {
                             </h2>
                         </div>
 
-                        <span className="text-[11px] text-slate-400">
+                        <span className="text-[11px] tabular-nums text-slate-400">
                             Top 15
                         </span>
                     </div>
@@ -443,7 +452,7 @@ function Analytics() {
                                     className="rounded-xl border border-slate-100 px-3 py-3"
                                 >
                                     <div className="grid grid-cols-[28px_minmax(0,1fr)_120px_50px] items-center gap-2">
-                                        <span className="text-[10px] font-bold text-slate-400">
+                                        <span className="text-[10px] font-bold tabular-nums text-slate-400">
                                             {String(index + 1).padStart(2, '0')}
                                         </span>
 
@@ -452,21 +461,21 @@ function Analytics() {
                                         </span>
 
                                         <div className="flex items-center gap-2">
-                                            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                                            <div className="c-meter flex-1">
                                                 <div
-                                                    className="h-full rounded-full bg-orange-500"
+                                                    className="c-meter__bar"
                                                     style={{
                                                         width: `${percentage}%`,
                                                     }}
                                                 />
                                             </div>
 
-                                            <span className="w-7 text-right text-[10px] font-semibold text-slate-500">
+                                            <span className="w-7 text-right text-[10px] font-semibold tabular-nums text-slate-500">
                                                 {hashtag.value}
                                             </span>
                                         </div>
 
-                                        <span className="rounded-md bg-emerald-50 px-1.5 py-1 text-center text-[9px] font-bold text-emerald-600">
+                                        <span className="rounded-md bg-emerald-50 px-1.5 py-1 text-center text-[9px] font-bold tabular-nums text-emerald-600">
                                             {hashtag.trend}
                                         </span>
                                     </div>
@@ -531,7 +540,7 @@ function Analytics() {
                                             </h3>
                                         </div>
 
-                                        <span className="shrink-0 text-sm font-black text-slate-900">
+                                        <span className="shrink-0 text-sm font-black tabular-nums text-slate-900">
                                             {topic.percentage}%
                                         </span>
                                     </div>
@@ -540,9 +549,9 @@ function Analytics() {
                                         {topic.description}
                                     </p>
 
-                                    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                                    <div className="c-meter mt-4">
                                         <div
-                                            className="h-full rounded-full bg-orange-500"
+                                            className="c-meter__bar"
                                             style={{
                                                 width: `${topic.percentage}%`,
                                             }}
@@ -558,10 +567,11 @@ function Analytics() {
             {/* INSIGHTS */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                 <InsightCard
+                    variant="brand"
                     icon={<Lightbulb size={20} />}
-                    iconClass="bg-orange-100 text-orange-500"
+                    iconClass="bg-orange-500/20 text-orange-400 border border-orange-500/30"
                     title="Insight principal"
-                    subtitle="Detectado por IA"
+                    subtitle="Detectado por IA · Señal dominante"
                     content={analyticsData.insights.main}
                 />
 
@@ -641,7 +651,7 @@ function MetricCard({
                         {label}
                     </p>
 
-                    <p className={`mt-3 text-2xl font-black ${accent}`}>
+                    <p className={`mt-3 text-2xl font-black tabular-nums ${accent}`}>
                         {value}
                     </p>
 
@@ -667,6 +677,7 @@ function InsightCard({
     subtitle,
     content,
     action,
+    variant = 'default',
 }: {
     icon: React.ReactNode
     iconClass: string
@@ -674,9 +685,18 @@ function InsightCard({
     subtitle: string
     content: string
     action?: React.ReactNode
+    variant?: 'default' | 'brand'
 }) {
+    const isBrand = variant === 'brand'
+
     return (
-        <div className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div
+            className={
+                isBrand
+                    ? 'c-card--brand flex flex-col justify-between rounded-2xl border border-slate-800 p-6 shadow-sm'
+                    : 'flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm'
+            }
+        >
             <div>
                 <div className="mb-4 flex items-center gap-3">
                     <div
@@ -686,23 +706,23 @@ function InsightCard({
                     </div>
 
                     <div>
-                        <h3 className="font-semibold text-slate-900">
+                        <h3 className={`font-semibold ${isBrand ? 'text-white' : 'text-slate-900'}`}>
                             {title}
                         </h3>
 
-                        <p className="text-xs text-slate-400">
+                        <p className={`text-xs ${isBrand ? 'text-orange-300' : 'text-slate-400'}`}>
                             {subtitle}
                         </p>
                     </div>
                 </div>
 
-                <p className="text-sm leading-6 text-slate-600">
+                <p className={`text-sm leading-6 tabular-nums ${isBrand ? 'text-slate-200' : 'text-slate-600'}`}>
                     {content}
                 </p>
             </div>
 
             {action && (
-                <div className="mt-4 pt-4 border-t border-slate-100">
+                <div className={`mt-4 pt-4 border-t ${isBrand ? 'border-white/10' : 'border-slate-100'}`}>
                     {action}
                 </div>
             )}

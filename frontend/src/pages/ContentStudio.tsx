@@ -170,6 +170,10 @@ function ContentStudio() {
 
   const [workflowMessages, setWorkflowMessages] =
     useState<WorkflowMessage[]>([])
+  const [allFetchedMessages, setAllFetchedMessages] =
+    useState<WorkflowMessage[]>([])
+  const [pinnedSearchMessage, setPinnedSearchMessage] =
+    useState<WorkflowMessage | null>(null)
   const [activeWorkbenchMessage, setActiveWorkbenchMessage] =
     useState<WorkflowMessage | null>(null)
   const [selectedMessageId, setSelectedMessageId] =
@@ -181,6 +185,32 @@ function ContentStudio() {
   const [workflowError, setWorkflowError] = useState('')
 
   const originalMessageRef = useRef<HTMLElement | null>(null)
+  const trayCardRefs = useRef<Record<number, HTMLButtonElement | null>>({})
+
+  const displayedTrayMessages = useMemo<WorkflowMessage[]>(() => {
+    if (
+      pinnedSearchMessage &&
+      !workflowMessages.some(
+        (m) => m.interactionId === pinnedSearchMessage.interactionId,
+      )
+    ) {
+      return [pinnedSearchMessage, ...workflowMessages]
+    }
+    return workflowMessages
+  }, [pinnedSearchMessage, workflowMessages])
+
+  const scrollTrayCardIntoView = (interactionId: number) => {
+    setTimeout(() => {
+      const cardEl = trayCardRefs.current[interactionId]
+      if (cardEl && typeof cardEl.scrollIntoView === 'function') {
+        cardEl.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'center',
+        })
+      }
+    }, 80)
+  }
 
   // Estados de Anuncios Oficiales (Discord Webhook)
   const [announcementStatus, setAnnouncementStatus] =
@@ -268,6 +298,21 @@ function ContentStudio() {
 
         const data: WorkflowMessagesResponse = await response.json()
 
+        const allMapped: WorkflowMessage[] = data.messages.map((item) => ({
+          interactionId: item.message.interaction_id,
+          author: item.message.author_name || 'Usuario',
+          channel: item.message.channel_name,
+          content: item.message.content,
+          attachments: Array.isArray(item.message.attachments)
+            ? item.message.attachments
+            : [],
+          topic: item.analysis.topic,
+          sentiment: item.analysis.sentiment,
+          relevance: item.analysis.relevance,
+          isPublished: Boolean(item.analysis.is_published),
+          publishedPlatforms: item.analysis.published_platforms || [],
+        }))
+
         let messages = data.messages
           .filter(
             (item) =>
@@ -294,6 +339,7 @@ function ContentStudio() {
           .sort((a, b) => b.interactionId - a.interactionId)
 
         let targetMsg: WorkflowMessage | null = null
+        let isPinnedTarget = false
         if (targetInteractionId && !Number.isNaN(targetInteractionId)) {
           const foundInTray = messages.find(
             (m) => m.interactionId === targetInteractionId,
@@ -301,25 +347,14 @@ function ContentStudio() {
 
           if (foundInTray) {
             targetMsg = foundInTray
+            isPinnedTarget = false
           } else {
-            const foundInAll = data.messages.find(
-              (item) => item.message.interaction_id === targetInteractionId,
+            const foundInAll = allMapped.find(
+              (item) => item.interactionId === targetInteractionId,
             )
             if (foundInAll) {
-              targetMsg = {
-                interactionId: foundInAll.message.interaction_id,
-                author: foundInAll.message.author_name || 'Usuario',
-                channel: foundInAll.message.channel_name,
-                content: foundInAll.message.content,
-                attachments: Array.isArray(foundInAll.message.attachments)
-                  ? foundInAll.message.attachments
-                  : [],
-                topic: foundInAll.analysis.topic,
-                sentiment: foundInAll.analysis.sentiment,
-                relevance: foundInAll.analysis.relevance,
-                isPublished: Boolean(foundInAll.analysis.is_published),
-                publishedPlatforms: foundInAll.analysis.published_platforms || [],
-              }
+              targetMsg = foundInAll
+              isPinnedTarget = true
             } else {
               try {
                 const liveSummary = await getCommunityLiveSummary()
@@ -353,6 +388,7 @@ function ContentStudio() {
                     isPublished: Boolean(highlight.is_published),
                     publishedPlatforms: highlight.published_platforms || [],
                   }
+                  isPinnedTarget = true
                 }
               } catch (err) {
                 console.error(
@@ -365,7 +401,9 @@ function ContentStudio() {
         }
 
         if (!controller.signal.aborted) {
+          setAllFetchedMessages(allMapped)
           setWorkflowMessages(messages)
+          setPinnedSearchMessage(isPinnedTarget ? targetMsg : null)
 
           const initialMsg = targetMsg || messages[0] || null
           const initialSelectedId = initialMsg?.interactionId ?? null
@@ -377,6 +415,7 @@ function ContentStudio() {
             setDrafts(buildDefaultDrafts(initialMsg))
             if (targetMsg) {
               setManualIdError(null)
+              scrollTrayCardIntoView(targetMsg.interactionId)
               setTimeout(() => {
                 originalMessageRef.current?.scrollIntoView({
                   behavior: 'smooth',
@@ -412,22 +451,7 @@ function ContentStudio() {
   useEffect(() => {
     if (!targetInteractionId || Number.isNaN(targetInteractionId)) return
     setManualIdInput(String(targetInteractionId))
-    if (activeWorkbenchMessage?.interactionId === targetInteractionId) return
-    const targetMsg = workflowMessages.find(
-      (m) => m.interactionId === targetInteractionId,
-    )
-    if (targetMsg) {
-      setSelectedMessageId(targetMsg.interactionId)
-      setActiveWorkbenchMessage(targetMsg)
-      setDrafts(buildDefaultDrafts(targetMsg))
-      setTimeout(() => {
-        originalMessageRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        })
-      }, 100)
-    }
-  }, [targetInteractionId, workflowMessages, activeWorkbenchMessage])
+  }, [targetInteractionId])
 
   const PREFERRED_ANNOUNCEMENT_CHANNELS_ORDER = useMemo(
     () => [
@@ -780,8 +804,8 @@ function ContentStudio() {
     }, 2000)
   }
 
-  const handleSearchById = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleLoadById = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
     const raw = manualIdInput.trim()
     if (!raw) return
     const idNum = parseInt(raw, 10)
@@ -790,8 +814,87 @@ function ContentStudio() {
       return
     }
     setManualIdError(null)
-    setSearchParams({ interaction: String(idNum) })
+
+    const inNaturalQueue = workflowMessages.find(
+      (m) => m.interactionId === idNum,
+    )
+    if (inNaturalQueue) {
+      setPinnedSearchMessage(null)
+      setSelectedMessageId(inNaturalQueue.interactionId)
+      setActiveWorkbenchMessage(inNaturalQueue)
+      setDrafts(buildDefaultDrafts(inNaturalQueue))
+      setSearchParams({ interaction: String(idNum) })
+      scrollTrayCardIntoView(inNaturalQueue.interactionId)
+      setTimeout(() => {
+        originalMessageRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        })
+      }, 100)
+      return
+    }
+
+    let resolved: WorkflowMessage | null =
+      allFetchedMessages.find((m) => m.interactionId === idNum) ?? null
+
+    if (!resolved) {
+      try {
+        const liveSummary = await getCommunityLiveSummary()
+        const highlight = liveSummary.highlights?.find(
+          (h) => (h.id_mensaje ?? Number(h.id)) === idNum,
+        )
+        if (highlight) {
+          resolved = {
+            interactionId: highlight.id_mensaje ?? Number(highlight.id),
+            author: highlight.author || 'Usuario',
+            channel: (highlight.channel || 'general').replace(/^#/, ''),
+            content: highlight.message || '',
+            attachments: [],
+            topic: highlight.title || 'Historia destacada',
+            sentiment:
+              typeof highlight.sentiment === 'number'
+                ? highlight.sentiment >= 0.5
+                  ? 'positive'
+                  : highlight.sentiment <= -0.5
+                  ? 'negative'
+                  : 'neutral'
+                : String(highlight.sentiment || 'neutral'),
+            relevance:
+              typeof highlight.relevance === 'number'
+                ? Math.round(
+                    highlight.relevance <= 1
+                      ? highlight.relevance * 100
+                      : highlight.relevance,
+                  )
+                : 80,
+            isPublished: Boolean(highlight.is_published),
+            publishedPlatforms: highlight.published_platforms || [],
+          }
+        }
+      } catch (err) {
+        console.error('Error al consultar live-summary por ID:', err)
+      }
+    }
+
+    if (resolved) {
+      setPinnedSearchMessage(resolved)
+      setSelectedMessageId(resolved.interactionId)
+      setActiveWorkbenchMessage(resolved)
+      setDrafts(buildDefaultDrafts(resolved))
+      setSearchParams({ interaction: String(idNum) })
+      scrollTrayCardIntoView(resolved.interactionId)
+      setTimeout(() => {
+        originalMessageRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        })
+      }, 100)
+    } else {
+      setManualIdError(`Mensaje #${idNum} no encontrado`)
+    }
   }
+
+  const handleSearchById = handleLoadById
 
   const submittingRef = useRef<Set<ContentFormat>>(new Set())
 
@@ -904,9 +1007,13 @@ function ContentStudio() {
       regeneratingRef.current.has(format)
     ) return
 
-    const message = workflowMessages.find(
-      (item) => item.interactionId === draft.interactionId,
-    )
+    const message =
+      displayedTrayMessages.find(
+        (item) => item.interactionId === draft.interactionId,
+      ) ??
+      (activeWorkbenchMessage?.interactionId === draft.interactionId
+        ? activeWorkbenchMessage
+        : undefined)
 
     if (!message || !message.content.trim()) {
       setDrafts((current) => ({
@@ -1545,6 +1652,8 @@ function ContentStudio() {
     }
   }
 
+  const announcementDraft = finalAnnouncement.trim() || draftText.trim()
+
   return (
     <div>
       {/* Encabezado */}
@@ -1566,12 +1675,12 @@ function ContentStudio() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-3 py-2">
-          <span className="h-2 w-2 rounded-full bg-green-500" />
-
-          <span className="text-xs font-semibold text-green-700">
-            Discord conectado
-          </span>
+        <div
+          className="c-live rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-700"
+          role="status"
+        >
+          <span className="c-live__dot" aria-hidden="true" />
+          <span>Webhook Discord conectado</span>
         </div>
       </div>
 
@@ -1610,9 +1719,9 @@ function ContentStudio() {
             {announcementStatusLoading ? (
               <span className="text-xs text-slate-400">Consultando webhook...</span>
             ) : announcementStatus?.configured ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Webhook configurado
+              <span className="c-live rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                <span className="c-live__dot" aria-hidden="true" />
+                <span>Webhook configurado</span>
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
@@ -1705,7 +1814,7 @@ function ContentStudio() {
                 </span>
 
                 <span
-                  className={`text-xs font-medium ${
+                  className={`text-xs font-medium tabular-nums ${
                     draftText.length > 10000 ? 'font-bold text-rose-600' : 'text-slate-500'
                   }`}
                 >
@@ -1833,7 +1942,7 @@ function ContentStudio() {
                     ? 'Extenso pero permitido por Discord'
                     : 'Excede el límite máximo de 2000 caracteres de Discord'}
                 </span>
-                <span className="text-xs font-bold text-slate-700">
+                <span className="text-xs font-bold tabular-nums text-slate-700">
                   {finalAnnouncement.length} / 2000
                 </span>
               </div>
@@ -1940,6 +2049,43 @@ function ContentStudio() {
             </div>
           </div>
         </div>
+
+        {/* Vista Previa en vivo estilo Discord Embed (Spec 019 RF-09) */}
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/40 p-4">
+          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-bold uppercase tracking-wide text-slate-700">
+              Vista previa en vivo · Discord Embed
+            </span>
+            <span className="rounded-md bg-indigo-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-indigo-700">
+              Canal destino: {selectedTargetChannelName}
+            </span>
+          </div>
+
+          <div className="discord-embed">
+            <div className="discord-embed__header discord-embed__bot">
+              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#080a27] text-[10px] font-black text-white">
+                CE
+              </span>
+              <span className="text-xs font-bold text-slate-900">
+                CloudEdTech_Oficial
+              </span>
+              <span className="discord-embed__pill">BOT</span>
+              <span className="text-[11px] font-normal tabular-nums text-slate-400">
+                Hoy · {selectedTargetChannelName}
+              </span>
+            </div>
+
+            <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+              {announcementDraft ? (
+                announcementDraft
+              ) : (
+                <span className="italic text-slate-400">
+                  Escribe o genera con IA el anuncio oficial para visualizar cómo se verá en el canal #anuncios de Discord...
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
@@ -1950,7 +2096,7 @@ function ContentStudio() {
               <h3 className="font-bold text-slate-900">
                 Bandeja de mensajes en Redacción
               </h3>
-              <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-0.5 text-xs font-bold text-orange-600">
+              <span className="tabular-nums rounded-full border border-orange-200 bg-orange-50 px-3 py-0.5 text-xs font-bold text-orange-600">
                 {workflowMessages.length} listos para copy
               </span>
             </div>
@@ -1971,10 +2117,24 @@ function ContentStudio() {
                 placeholder="ID ej: 42"
                 value={manualIdInput}
                 onChange={(e) => {
-                  setManualIdInput(e.target.value)
+                  const nextVal = e.target.value
+                  setManualIdInput(nextVal)
                   setManualIdError(null)
+                  if (pinnedSearchMessage !== null) {
+                    const pinnedId = pinnedSearchMessage.interactionId
+                    setPinnedSearchMessage(null)
+                    if (
+                      selectedMessageId === pinnedId ||
+                      activeWorkbenchMessage?.interactionId === pinnedId
+                    ) {
+                      const firstNatural = workflowMessages[0] ?? null
+                      setSelectedMessageId(firstNatural?.interactionId ?? null)
+                      setActiveWorkbenchMessage(firstNatural)
+                      setDrafts(buildDefaultDrafts(firstNatural))
+                    }
+                  }
                 }}
-                className="w-28 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+                className="w-28 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold tabular-nums text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
               />
               <button
                 type="submit"
@@ -2003,7 +2163,7 @@ function ContentStudio() {
           </p>
         )}
 
-        {!workflowLoading && !workflowError && workflowMessages.length === 0 && (
+        {!workflowLoading && !workflowError && displayedTrayMessages.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center">
             <p className="text-xs text-slate-500">
               No hay mensajes pendientes de redacción en este momento.
@@ -2011,14 +2171,24 @@ function ContentStudio() {
           </div>
         )}
 
-        {!workflowLoading && !workflowError && workflowMessages.length > 0 && (
+        {!workflowLoading && !workflowError && displayedTrayMessages.length > 0 && (
           <div className="flex gap-3 overflow-x-auto pb-3 pt-1 scrollbar-thin">
-            {workflowMessages.map((item) => {
+            {displayedTrayMessages.map((item) => {
               const isActive = selectedWorkflowId === item.interactionId
+              const isPinnedById =
+                pinnedSearchMessage !== null &&
+                pinnedSearchMessage.interactionId === item.interactionId &&
+                !workflowMessages.some(
+                  (m) => m.interactionId === item.interactionId,
+                )
 
               return (
                 <button
                   key={item.interactionId}
+                  id={`tray-card-${item.interactionId}`}
+                  ref={(el) => {
+                    trayCardRefs.current[item.interactionId] = el
+                  }}
                   type="button"
                   onClick={() => {
                     setSelectedWorkflowId(item.interactionId)
@@ -2026,15 +2196,26 @@ function ContentStudio() {
                   }}
                   className={`min-w-[280px] max-w-[320px] shrink-0 rounded-xl border p-4 text-left transition ${
                     isActive
-                      ? 'border-orange-500 bg-orange-50/70 shadow-sm ring-1 ring-orange-400'
+                      ? 'c-tray-card--active border-orange-500 bg-orange-50/70 shadow-sm ring-1 ring-orange-400'
                       : 'border-slate-200 bg-white hover:border-orange-300 hover:bg-slate-50/60'
                   }`}
                 >
+                  {isPinnedById && (
+                    <div className="mb-2 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-100/80 px-2.5 py-1 text-[10px] font-bold text-orange-800">
+                      <span className="tabular-nums">
+                        📌 Cargado por ID #{item.interactionId}
+                      </span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-600">
+                        Temporal
+                      </span>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs font-bold text-slate-900">
                       @{item.author}
                     </span>
-                    <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">
+                    <span className="tabular-nums shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">
                       {item.relevance}% rel.
                     </span>
                   </div>
@@ -2057,7 +2238,9 @@ function ContentStudio() {
                     >
                       {isActive ? '● En mesa de trabajo' : 'Click para cargar'}
                     </span>
-                    <span className="text-[10px] text-slate-400">ID #{item.interactionId}</span>
+                    <span className="tabular-nums text-[10px] text-slate-400">
+                      ID #{item.interactionId}
+                    </span>
                   </div>
                 </button>
               )

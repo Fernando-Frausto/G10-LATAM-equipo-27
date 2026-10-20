@@ -1,5 +1,98 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   CloudEdTech CommunityLab — Design System Tokens & Utilities (Spec 019)
+   ========================================================================== */
+:root {
+  /* Primitivos: marca */
+  --orange-50:  #fff7ed;
+  --orange-100: #ffedd4;
+  --orange-200: #ffd6a7;
+  --orange-300: #ffb86a;
+  --orange-400: #ff8904;
+  --orange-500: #ff7400;   /* #FF7400 — color oficial de marca */
+  --orange-600: #f54900;
+  --orange-700: #ca3500;
+  --navy-800:   #1e293b;
+  --navy-900:   #0f172a;
+  --navy-950:   #080a27;   /* fondo oficial del isotipo CloudEdTech */
+
+  /* Tokens semánticos de marca */
+  --color-brand:          var(--orange-500);
+  --color-brand-hover:    var(--orange-600);
+  --color-brand-soft:     var(--orange-100);
+  --color-brand-subtle:   var(--orange-50);
+  --color-brand-ring:     rgb(255 116 0 / 0.22);
+  --color-on-brand:       #ffffff;
+
+  /* Superficies y bordes */
+  --surface-app:          #f8fafc;
+  --surface-card:         #ffffff;
+  --surface-muted:        #f1f5f9;
+  --surface-sunken:       #f1f5f9;
+  --surface-inverse:      #020617;
+  --surface-inverse-2:    #0f172a;
+  --surface-inverse-3:    #1e293b;
+  --surface-auth:         #050816;
+
+  --text-strong:          #0f172a;
+  --text-body:            #334155;
+  --text-muted:           #64748b;
+  --text-subtle:          #94a3b8;
+  --text-inverse:         #ffffff;
+  --text-brand:           var(--orange-500);
+
+  --border-default:       #e2e8f0;
+  --border-subtle:        #f1f5f9;
+  --border-strong:        #cbd5e1;
+  --border-inverse:       #1e293b;
+
+  /* Estados semánticos */
+  --success-bg:           #ecfdf5;
+  --success-fg:           #047857;
+  --success-border:       #a7f3d0;
+  --success-solid:        #10b981;
+  --warning-bg:           #fffbeb;
+  --warning-fg:           #b45309;
+  --warning-border:       #fde68a;
+  --warning-solid:        #f59e0b;
+  --danger-bg:            #fff1f2;
+  --danger-fg:            #be123c;
+  --danger-border:        #fecdd3;
+  --danger-solid:         #f43f5e;
+  --info-bg:              #eef2ff;
+  --info-fg:              #4338ca;
+  --info-solid:           #6366f1;
+
+  /* Radios y sombras estratificadas */
+  --radius-sm:            0.375rem;
+  --radius-md:            0.5rem;
+  --radius-lg:            0.75rem;
+  --radius-xl:            1rem;
+  --radius-full:          9999px;
+
+  --shadow-xs:            0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-sm:            0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-md:            0 4px 12px -2px rgb(15 23 42 / 0.08), 0 2px 4px -2px rgb(15 23 42 / 0.05);
+  --shadow-lg:            0 18px 40px -12px rgb(15 23 42 / 0.25);
+  --shadow-xl:            0 25px 50px -12px rgb(0 0 0 / 0.45);
+  --shadow-focus:         0 0 0 3px rgb(255 116 0 / 0.22);
+
+  /* Movimiento */
+  --ease-out:             cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast:        150ms;
+  --duration-base:        220ms;
+  --duration-slow:        300ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -14,4 +107,123 @@ body,
 
 body {
   font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--surface-app);
+  color: var(--text-body);
+  -webkit-font-smoothing: antialiased;
 }
+
+:focus-visible {
+  outline: 2px solid var(--color-brand, #ff7400);
+  outline-offset: 2px;
+}
+
+/* ---------- Números Tabulares ---------- */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Tarjeta de Marca (c-card--brand) ---------- */
+.c-card--brand {
+  background:
+    radial-gradient(circle at 88% 18%, rgb(255 116 0 / 0.18), transparent 55%),
+    linear-gradient(135deg, #020617 0%, #0f172a 100%);
+  color: var(--text-inverse, #ffffff);
+  border: 1px solid #1e293b;
+  box-shadow: var(--shadow-md);
+}
+
+/* ---------- Anillo Circular de Relevancia (score-ring) ---------- */
+.score-ring {
+  --p: 80;
+  width: 2.85rem;
+  height: 2.85rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(var(--color-brand, #ff7400) calc(var(--p, 80) * 1%), #f1f5f9 0);
+  flex-shrink: 0;
+}
+
+.score-ring span {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  background: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-strong, #0f172a);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Indicador Semántico en Vivo (c-live) ---------- */
+.c-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--success-fg, #047857);
+}
+
+.c-live__dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success-solid, #10b981);
+  box-shadow: 0 0 0 3px rgb(16 185 129 / 0.2);
+  flex-shrink: 0;
+}
+
+/* ---------- Medidor de Progreso con Gradiente de Marca (c-meter) ---------- */
+.c-meter {
+  width: 100%;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.c-meter__bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff7400 0%, #ea580c 100%);
+  transition: width 600ms var(--ease-out);
+}
+
+/* ---------- Vista Previa en Vivo Discord Embed ---------- */
+.discord-embed {
+  border-left: 4px solid var(--color-brand, #ff7400);
+  background: #f1f5f9;
+  border-radius: var(--radius-md, 0.5rem);
+  padding: 1rem;
+  font-size: 0.875rem;
+  color: var(--text-body, #334155);
+}
+
+.discord-embed__bot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: var(--text-strong, #0f172a);
+  margin-bottom: 0.5rem;
+}
+
+.discord-embed__pill {
+  padding: 0.05rem 0.38rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 4px;
+  background: #6366f1;
+  color: #ffffff;
+}
+
+/* ---------- Tarjeta Activa en Bandeja de Redacción ---------- */
+.c-tray-card--active {
+  box-shadow: inset 3px 0 0 var(--color-brand, #ff7400), var(--shadow-sm);
+  border-color: var(--color-brand, #ff7400) !important;
+}

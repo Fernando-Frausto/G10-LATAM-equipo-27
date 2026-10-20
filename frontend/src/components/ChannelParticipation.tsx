@@ -76,13 +76,13 @@ function ChannelParticipation() {
                 <span className="font-semibold text-slate-700">
                   {item.channel}
                 </span>
-                <span className="font-medium text-slate-500">
+                <span className="font-medium text-slate-500 tabular-nums">
                   {item.percentage.toFixed(1)}% · {item.count}
                 </span>
               </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="c-meter h-2 w-full overflow-hidden rounded-full bg-slate-100">
                 <div
-                  className="h-full rounded-full bg-orange-500 transition-all duration-500 ease-out"
+                  className="c-meter__bar h-full rounded-full bg-orange-500 transition-all duration-500 ease-out"
                   style={{ width: `${safePercentage}%` }}
                 />
               </div>

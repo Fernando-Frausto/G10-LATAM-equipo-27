@@ -858,7 +858,7 @@ function Messages() {
 
                         <div>
                             <div className="flex flex-wrap items-baseline gap-2">
-                                <span className="text-3xl font-black tracking-tight text-slate-950">
+                                <span className="text-3xl font-black tracking-tight text-slate-950 tabular-nums">
                                     {apiData.total || messageItems.length}
                                 </span>
 
@@ -896,17 +896,17 @@ function Messages() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex divide-x divide-slate-200 rounded-xl border border-slate-100">
+                        <div className="flex divide-x divide-slate-200 rounded-xl border border-slate-100 tabular-nums">
                             <div className="px-6 py-2 text-center">
                                 <p className="text-xs font-medium text-slate-500">Mensajes omitidos de bots</p>
-                                <p className="mt-1 text-lg font-bold text-slate-600">
+                                <p className="mt-1 text-lg font-bold text-slate-600 tabular-nums">
                                     {apiData.omitted_bots_count ?? 0}
                                 </p>
                             </div>
 
                             <div className="px-6 py-2 text-center">
                                 <p className="text-xs font-medium text-slate-500">Mensajes reales detectados</p>
-                                <p className="mt-1 text-lg font-bold text-emerald-600">
+                                <p className="mt-1 text-lg font-bold text-emerald-600 tabular-nums">
                                     {apiData.real_messages_count ?? apiData.total ?? messageItems.length}
                                 </p>
                             </div>
@@ -946,12 +946,53 @@ function Messages() {
                     </div>
 
                     {aiModels.length > 0 && (
-                        <div className="flex items-center gap-1.5 rounded-lg bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">
+                        <div className="flex items-center gap-1.5 rounded-lg bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 tabular-nums">
                             <span className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
                             {aiModels.length} cerebros IA disponibles
                         </div>
                     )}
                 </div>
+
+                {/* Medidor de Progreso de Evaluación (.c-meter) */}
+                {!batchEvalMetrics.isDateRangeInverted && (
+                    <div className="mb-4 rounded-xl border border-slate-100 bg-slate-50/70 px-4 py-3">
+                        <div className="mb-1.5 flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-600">
+                                Cobertura de evaluación IA en el rango seleccionado
+                            </span>
+                            <span className="font-bold text-slate-800 tabular-nums">
+                                {Math.max(0, batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange)} / {batchEvalMetrics.totalInRange} evaluados (
+                                {batchEvalMetrics.totalInRange > 0
+                                    ? Math.round(
+                                          ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
+                                              batchEvalMetrics.totalInRange) *
+                                              100
+                                      )
+                                    : 0}
+                                %)
+                            </span>
+                        </div>
+                        <div className="c-meter">
+                            <div
+                                className="c-meter__bar"
+                                style={{
+                                    width: `${
+                                        batchEvalMetrics.totalInRange > 0
+                                            ? Math.min(
+                                                  100,
+                                                  Math.round(
+                                                      ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
+                                                          batchEvalMetrics.totalInRange) *
+                                                          100
+                                                  )
+                                              )
+                                            : 0
+                                    }%`,
+                                }}
+                            />
+                        </div>
+                    </div>
+                )}
 
                 {/* Contador reactivo e indicadores de estado */}
                 <div className="mb-4 space-y-2">
@@ -965,7 +1006,7 @@ function Messages() {
                         </div>
                     ) : (
                         <div className="flex flex-wrap items-center gap-2">
-                            <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-purple-100 bg-purple-50/80 px-3.5 py-2 text-xs text-slate-700">
+                            <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-purple-100 bg-purple-50/80 px-3.5 py-2 text-xs text-slate-700 tabular-nums">
                                 <span className="font-bold text-purple-950">
                                     📊 {batchEvalMetrics.totalInRange} mensajes en este rango:
                                 </span>
@@ -1329,7 +1370,7 @@ function Messages() {
             <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs font-medium text-slate-500">
                     Mostrando{' '}
-                    <span className="font-bold text-slate-700">
+                    <span className="font-bold text-slate-700 tabular-nums">
                         {filteredMessages.length}
                     </span>{' '}
                     {curationFilter === 'descartados'
@@ -1422,6 +1463,8 @@ function Messages() {
                             ? `Publicar en demás redes (${missingPlatforms.join(', ')})`
                             : 'Ver en mesa de trabajo'
 
+                    const relevanceScore = message.relevance
+
                     return (
                         <article
                             key={message.id}
@@ -1436,51 +1479,63 @@ function Messages() {
                                         </div>
 
                                         <div className="min-w-0 flex-1">
-                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                                <p className="font-bold text-slate-900">
-                                                    {message.author}
-                                                </p>
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                                    <p className="font-bold text-slate-900">
+                                                        {message.author}
+                                                    </p>
 
-                                                <span className="text-xs text-slate-400">
-                                                    @{message.author
-                                                        .toLowerCase()
-                                                        .replace(
-                                                            /\s+/g,
-                                                            '_'
-                                                        )}
-                                                </span>
+                                                    <span className="text-xs text-slate-400">
+                                                        @{message.author
+                                                            .toLowerCase()
+                                                            .replace(
+                                                                /\s+/g,
+                                                                '_'
+                                                            )}
+                                                    </span>
 
-                                                <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">
-                                                    {message.classification}
-                                                </span>
+                                                    <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">
+                                                        {message.classification}
+                                                    </span>
 
-                                                <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
-                                                    isMsgPublished
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
-                                                        ? 'bg-amber-100 text-amber-700'
-                                                        : 'bg-indigo-100 text-indigo-700'
-                                                }`}>
-                                                    {isMsgPublished
-                                                        ? 'Publicado'
-                                                        : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
-                                                        ? 'Completo'
-                                                        : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
-                                                        ? 'Ingesta / IA'
-                                                        : 'Publicar'}
-                                                </span>
+                                                    <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                                                        isMsgPublished
+                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                            : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
+                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                            : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : 'bg-indigo-100 text-indigo-700'
+                                                    }`}>
+                                                        {isMsgPublished
+                                                            ? 'Publicado'
+                                                            : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
+                                                            ? 'Completo'
+                                                            : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
+                                                            ? 'Ingesta / IA'
+                                                            : 'Publicar'}
+                                                    </span>
 
-                                                <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600">
-                                                    <Hash size={11} />
-                                                    {message.channel}
-                                                </span>
+                                                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600">
+                                                        <Hash size={11} />
+                                                        {message.channel}
+                                                    </span>
 
-                                                <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
-                                                    <Clock3 size={11} />
-                                                    {message.time}
-                                                </span>
+                                                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 tabular-nums">
+                                                        <Clock3 size={11} />
+                                                        {message.time}
+                                                    </span>
+                                                </div>
+
+                                                {message.isAnalyzed && (
+                                                    <div
+                                                        className="score-ring"
+                                                        style={{ '--p': relevanceScore } as React.CSSProperties}
+                                                        title={`Relevancia IA: ${relevanceScore}%`}
+                                                    >
+                                                        <span className="tabular-nums">{relevanceScore}%</span>
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <p className="mt-3 text-sm leading-6 text-slate-700">
@@ -1555,9 +1610,9 @@ function Messages() {
                                                             </strong>
                                                         </span>
 
-                                                        <span className="text-slate-500">
+                                                        <span className="text-slate-500 tabular-nums">
                                                             Relevancia:{' '}
-                                                            <strong className="text-slate-700">
+                                                            <strong className="text-slate-700 tabular-nums">
                                                                 {message.relevance}%
                                                             </strong>
                                                         </span>
@@ -1754,14 +1809,14 @@ function KpiCard({
     valueClass?: string
 }) {
     return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm tabular-nums">
             <p className="text-sm text-slate-500">{label}</p>
 
-            <p className={`mt-2 text-3xl font-bold ${valueClass}`}>
+            <p className={`mt-2 text-3xl font-bold tabular-nums ${valueClass}`}>
                 {value.toLocaleString('es-CO')}
             </p>
 
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1 text-xs text-slate-400 tabular-nums">
                 {helper}
             </p>
         </div>

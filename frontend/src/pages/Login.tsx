@@ -3,6 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { login } from "../api/auth";
 import { saveSession } from "../api/session";
+import { CloudEdTechBrandLogo } from "../components/Sidebar";
 
 export default function Login() {
     const [username, setUsername] = useState("");
@@ -60,18 +61,20 @@ export default function Login() {
     }
 
     return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+        <div
+            className="min-h-screen bg-[#050816] flex items-center justify-center px-4 py-6"
+            style={{
+                background:
+                    "radial-gradient(ellipse 60% 50% at 50% 0%, rgb(255 116 0 / 0.08), transparent 70%), radial-gradient(ellipse 50% 40% at 100% 100%, rgb(99 102 241 / 0.06), transparent 70%), #050816",
+            }}
+        >
             <div className="w-full max-w-md">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-8">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-8 sm:p-10">
 
-                    {/* Identidad */}
-                    <div className="text-center mb-6">
-                        <div className="mx-auto mb-2 flex h-24 w-28 items-center justify-center">
-                            <img
-                                src="/brand/cloudedtech-icon.svg"
-                                alt="CloudEdTech"
-                                className="h-full w-full object-contain"
-                            />
+                    {/* Identidad Vectorial Apilada (c-brand--stacked) */}
+                    <div className="c-brand--stacked flex flex-col items-center text-center mb-6">
+                        <div className="mx-auto mb-3 flex h-16 w-20 items-center justify-center">
+                            <CloudEdTechBrandLogo variant="dark" />
                         </div>
 
                         <h1 className="text-3xl font-bold tracking-tight">
@@ -80,11 +83,11 @@ export default function Login() {
                             <span className="text-white">Tech</span>
                         </h1>
 
-                        <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-500">
-                            Education &amp; Technology
+                        <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400">
+                            EDUCATION &amp; TECHNOLOGY
                         </p>
 
-                        <p className="mt-3 text-sm text-slate-400">
+                        <p className="mt-4 text-sm text-slate-400">
                             Inteligencia para comunidades digitales
                         </p>
                     </div>
@@ -115,7 +118,7 @@ export default function Login() {
                                 placeholder="Ingresa tu usuario"
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
-                                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white placeholder:text-slate-600 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white placeholder:text-slate-500 outline-none transition focus:border-[#FF7400] focus:ring-2 focus:ring-orange-500/20"
                             />
                         </div>
 
@@ -126,13 +129,13 @@ export default function Login() {
                                 placeholder="Ingresa tu contraseña"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 pr-12 text-white placeholder:text-slate-600 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 pr-12 text-white placeholder:text-slate-500 outline-none transition focus:border-[#FF7400] focus:ring-2 focus:ring-orange-500/20"
                             />
 
                             <button
                                 type="button"
                                 onClick={() => setShowPassword((value) => !value)}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-orange-500"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-[#FF7400]"
                                 aria-label={
                                     showPassword
                                         ? "Ocultar contraseña"
@@ -158,7 +161,7 @@ export default function Login() {
                         <button
                             type="submit"
                             disabled={loading || !username.trim() || !password}
-                            className="w-full rounded-xl bg-[#FF7400] px-4 py-3 font-semibold text-white transition hover:bg-[#E96800] disabled:cursor-not-allowed disabled:opacity-60"
+                            className="w-full rounded-xl bg-[#FF7400] px-4 py-3 font-semibold text-white transition hover:bg-[#f54900] disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {loading ? "Ingresando..." : "Iniciar sesión"}
                         </button>
@@ -174,4 +177,4 @@ export default function Login() {
             </div>
         </div>
     );
-}
+}

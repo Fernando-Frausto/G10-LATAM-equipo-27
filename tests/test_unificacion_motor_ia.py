@@ -3632,3 +3632,171 @@ def test_aplicar_parche_proxy_discord_variables_y_route_base(monkeypatch):
     assert discord.http.Route.BASE == f"{proxy_test}/api/v10"
 
 
+# ==============================================================================
+# Spec 019: Sincronización Dinámica de Bandeja por ID e Integración del Design
+# System CloudEdTech con Datos Reales (RF-01 a RF-11)
+# ==============================================================================
+from pathlib import Path
+
+
+def test_spec019_design_system_activos_referencia_cristian_presentes():
+    """
+    Spec 019 - RF-03, RF-11:
+    Verifica que el directorio de referencia 'cloudedtech-design-system/' de Cristian
+    exista íntegro en el repositorio con sus tokens, hojas de estilo, activos SVG y
+    prototipos HTML, y que ningún archivo productivo en 'frontend/src/' importe datos
+    mock ('CE_DATA' o 'cloudedtech-design-system').
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+    ds_dir = base_dir / "cloudedtech-design-system" / "cloudedtech-ds"
+    assert ds_dir.is_dir(), f"No existe el directorio del Design System: {ds_dir}"
+
+    archivos_requeridos = [
+        "README.md",
+        "design-system.html",
+        "login.html",
+        "app.html",
+        "css/tokens.css",
+        "css/components.css",
+        "css/layout.css",
+        "js/data.js",
+        "js/icons.js",
+        "js/charts.js",
+        "js/app.js",
+        "assets/logo.svg",
+        "assets/logo-dark.svg",
+    ]
+    for rel_path in archivos_requeridos:
+        archivo = ds_dir / rel_path
+        assert archivo.is_file(), f"Falta el activo del Design System: {rel_path}"
+
+    tokens_content = (ds_dir / "css/tokens.css").read_text(encoding="utf-8")
+    assert "--orange-500: #ff7400" in tokens_content.lower()
+    assert "--navy-950:" in tokens_content.lower() and "#080a27" in tokens_content.lower()
+
+    # RF-11: Prohibición absoluta de importar mocks de CE_DATA en frontend/src/
+    frontend_src = base_dir / "frontend" / "src"
+    for ts_file in list(frontend_src.rglob("*.ts")) + list(frontend_src.rglob("*.tsx")):
+        contenido = ts_file.read_text(encoding="utf-8")
+        assert "CE_DATA" not in contenido, f"Uso prohibido de mock CE_DATA en {ts_file}"
+        assert "cloudedtech-design-system" not in contenido, (
+            f"Importación prohibida desde cloudedtech-design-system en {ts_file}"
+        )
+
+
+def test_spec019_tokens_y_clases_design_system_en_index_css():
+    """
+    Spec 019 - RF-04:
+    Verifica que 'frontend/src/index.css' defina los tokens semánticos de Cristian
+    (--orange-500, --navy-950, --surface-app, --surface-card, --shadow-focus) y las
+    clases utilitarias del Design System (.tabular-nums, .c-card--brand, .score-ring,
+    .c-live, .c-meter, .discord-embed, .c-tray-card--active), además de soporte de
+    accesibilidad (:focus-visible y prefers-reduced-motion).
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+    index_css = (base_dir / "frontend" / "src" / "index.css").read_text(encoding="utf-8")
+    index_css_lower = index_css.lower()
+
+    tokens_esperados = [
+        "--orange-500",
+        "#ff7400",
+        "--navy-950",
+        "#080a27",
+        "--surface-app",
+        "--surface-card",
+        "--shadow-sm",
+        "--shadow-focus",
+    ]
+    for token in tokens_esperados:
+        assert token in index_css_lower, f"Falta el token '{token}' en frontend/src/index.css"
+
+    clases_esperadas = [
+        ".tabular-nums",
+        "tabular-nums",
+        ".c-card--brand",
+        ".score-ring",
+        ".c-live",
+        ".c-meter",
+        ".discord-embed",
+        ".c-tray-card--active",
+        ":focus-visible",
+        "prefers-reduced-motion",
+    ]
+    for clase in clases_esperadas:
+        assert clase in index_css_lower, f"Falta la regla o clase '{clase}' en frontend/src/index.css"
+
+
+def test_spec019_sincronizacion_bandeja_por_id_y_discord_embed_en_content_studio():
+    """
+    Spec 019 - RF-01, RF-02, RF-05 a RF-10:
+    Verifica en 'frontend/src/pages/ContentStudio.tsx':
+      1. El estado de inyección temporal 'pinnedSearchMessage' y la lista computada
+         'displayedTrayMessages' en la Bandeja de mensajes en Redacción.
+      2. La insignia '📌 Cargado por ID #' cuando un mensaje buscado por ID se inyecta
+         temporalmente en la bandeja.
+      3. La limpieza inmediata 'setPinnedSearchMessage(null)' cuando el usuario modifica
+         o borra el campo del buscador por ID.
+      4. La clase de selección '.c-tray-card--active' y la Vista Previa en vivo estilo
+         Discord Embed ('.discord-embed' con 'CloudEdTech_Oficial' y 'BOT').
+      5. La integración de '.c-card--brand', '.score-ring', '.c-live' e isotipo SVG en
+         las vistas principales del frontend productivo.
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+    content_studio = (
+        base_dir / "frontend" / "src" / "pages" / "ContentStudio.tsx"
+    ).read_text(encoding="utf-8")
+
+    # RF-01 y RF-02: Sincronización e inyección temporal por ID en Bandeja de Redacción
+    assert "pinnedSearchMessage" in content_studio, (
+        "Falta el estado 'pinnedSearchMessage' en ContentStudio.tsx"
+    )
+    assert "setPinnedSearchMessage(null)" in content_studio, (
+        "Falta la limpieza 'setPinnedSearchMessage(null)' al cambiar el buscador por ID en ContentStudio.tsx"
+    )
+    assert "displayedTrayMessages" in content_studio, (
+        "Falta la lista computada 'displayedTrayMessages' para la Bandeja de Redacción en ContentStudio.tsx"
+    )
+    assert "Cargado por ID #" in content_studio, (
+        "Falta la insignia '📌 Cargado por ID #' para mensajes inyectados temporalmente en ContentStudio.tsx"
+    )
+
+    # RF-09: Selección activa y Vista Previa Discord Embed en ContentStudio.tsx
+    assert "c-tray-card--active" in content_studio, (
+        "Falta la clase 'c-tray-card--active' en la Bandeja de Redacción de ContentStudio.tsx"
+    )
+    assert "discord-embed" in content_studio, (
+        "Falta la vista previa en vivo 'discord-embed' en el panel de Anuncios Oficiales de ContentStudio.tsx"
+    )
+    assert "CloudEdTech_Oficial" in content_studio, (
+        "Falta el autor 'CloudEdTech_Oficial' en la vista previa Discord Embed de ContentStudio.tsx"
+    )
+
+    # RF-05 a RF-08, RF-10: Verificación de patrones del Design System en vistas hermanas
+    sidebar_tsx = (
+        base_dir / "frontend" / "src" / "components" / "Sidebar.tsx"
+    ).read_text(encoding="utf-8")
+    assert "EDUCATION & TECHNOLOGY" in sidebar_tsx, (
+        "Falta el subtítulo de marca 'EDUCATION & TECHNOLOGY' junto al isotipo SVG en Sidebar.tsx"
+    )
+    assert "c-live" in sidebar_tsx, "Falta el indicador en vivo 'c-live' en Sidebar.tsx"
+
+    featured_stories = (
+        base_dir / "frontend" / "src" / "components" / "FeaturedStories.tsx"
+    ).read_text(encoding="utf-8")
+    assert "score-ring" in featured_stories, (
+        "Falta el anillo circular 'score-ring' en FeaturedStories.tsx"
+    )
+
+    analytics_tsx = (
+        base_dir / "frontend" / "src" / "pages" / "Analytics.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-card--brand" in analytics_tsx, (
+        "Falta el patrón 'c-card--brand' en el Insight Principal de Analytics.tsx"
+    )
+
+    oci_tsx = (
+        base_dir / "frontend" / "src" / "pages" / "OCIStorage.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-card--brand" in oci_tsx, (
+        "Falta el patrón 'c-card--brand' en el panel de estado de OCIStorage.tsx"
+    )
