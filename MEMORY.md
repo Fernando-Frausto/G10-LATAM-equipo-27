@@ -26,6 +26,7 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
   - **Análisis a Quejas (`Analytics.tsx` / `ContentStudio.tsx`):** Tarjetas de insights conectadas a métricas reales, botón "Gestionar quejas y reclamos" con navegación reactiva hacia `#panel-quejas` y desplazamiento suave resiliente a carga asíncrona.
   - **CI/CD Netlify:** Supresión definitiva de la política `[skip netlify]` en commits para asegurar compilación continua automática en producción.
 - **Tests y Calidad:** 84 pruebas al 100% en verde (`pytest tests/test_unificacion_motor_ia.py`). Compilación limpia sin errores de TypeScript (`npm run build`). Inmutabilidad estricta de los 17 archivos protegidos de la raíz, `src/` de Enoc, `backend/` y `motor-ia/`.
+- **Entorno Local Blindado para Demo:** Árbol de trabajo limpio en `beta-pruebas`, respaldo de base de datos SQLite (`communitylab_demo_backup.db`) y último commit local `18b9b09` sin push remoto preservando el entorno para presentación local sin dependencias de red externa.
 
 ## Decisiones (y por qué)
 - **Eliminación de Tecnicismos y Redundancias:** 'Curaduría' confunde a usuarios no técnicos. La insignia ahora describe el estado real del trabajo pendiente (IA o redacción de copy de Enoc). Se removió 'Actualizar' ya que el streaming de 5s y las acciones en la UI autorefrescan los datos.
