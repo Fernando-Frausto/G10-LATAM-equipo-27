@@ -366,8 +366,8 @@ function Dashboard() {
       {/* Page Header */}
       <div className="l-page-head">
         <div>
-          <h1 className="l-page-head__title t-h1">Dashboard</h1>
-          <p className="l-page-head__sub">
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight t-page t-page--xl">Dashboard</h1>
+          <p className="mt-1 text-sm text-slate-500">
             Resumen de la actividad de la comunidad CloudEdTech en Discord.
           </p>
         </div>
