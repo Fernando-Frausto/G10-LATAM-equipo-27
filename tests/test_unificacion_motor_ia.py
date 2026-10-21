@@ -3800,3 +3800,95 @@ def test_spec019_sincronizacion_bandeja_por_id_y_discord_embed_en_content_studio
     assert "c-card--brand" in oci_tsx, (
         "Falta el patrón 'c-card--brand' en el panel de estado de OCIStorage.tsx"
     )
+
+
+def test_spec020_dashboard_homologado_cristian_datos_reales():
+    """
+    Spec 020 (Parte 1 — Pestaña Dashboard):
+    Verifica la homologación 1:1 del Dashboard Ejecutivo con el Design System
+    de Cristian preservando datos reales y el botón 'Actualizar datos':
+      1. Clases estructurales en 'frontend/src/index.css'.
+      2. Tarjetas KPI ('.c-stat', '.c-iconbox', '.c-stat__spark', 'linearGradient') en 'KpiCard.tsx'.
+      3. Estructura, selector '.c-segmented' ('7d', '30d', '90d'), 'Actividad de mensajes' y
+         botón 'Actualizar datos' con 'c-btn--primary' en 'Dashboard.tsx'.
+      4. Dona interactiva ('.c-chart--donut', '.c-chart__center', '.c-legend--stack') en 'SentimentChart.tsx'.
+      5. Barras por hora con píldora 'Peak' y colores '#ff7400' / '#fdba74' en 'AudienceHeatmap.tsx'.
+      6. Barras horizontales con botón 'Ordenar por' y colores '#ff7400' / '#fdba74' en 'TopicsChart.tsx'.
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+
+    # 1. index.css
+    index_css = (base_dir / "frontend" / "src" / "index.css").read_text(encoding="utf-8")
+    for required_css_class in [
+        ".c-stat",
+        ".c-stat__spark",
+        ".c-iconbox",
+        ".c-segmented",
+        ".c-chart--donut",
+        ".c-chart__center",
+        ".c-btn--primary",
+        ".l-grid--main-side",
+        ".l-grid--halves",
+    ]:
+        assert required_css_class in index_css, (
+            f"Falta la clase '{required_css_class}' en frontend/src/index.css"
+        )
+
+    # 2. KpiCard.tsx
+    kpi_card = (
+        base_dir / "frontend" / "src" / "components" / "KpiCard.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-stat" in kpi_card, "Falta '.c-stat' en KpiCard.tsx"
+    assert "c-iconbox" in kpi_card, "Falta '.c-iconbox' en KpiCard.tsx"
+    assert "c-stat__spark" in kpi_card, "Falta '.c-stat__spark' en KpiCard.tsx"
+    assert "linearGradient" in kpi_card, "Falta el Sparkline SVG con 'linearGradient' en KpiCard.tsx"
+
+    # 3. Dashboard.tsx
+    dashboard = (
+        base_dir / "frontend" / "src" / "pages" / "Dashboard.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Actividad de mensajes" in dashboard, (
+        "Falta la tarjeta 'Actividad de mensajes' en Dashboard.tsx"
+    )
+    assert "Mensajes ingeridos y preguntas detectadas por día" in dashboard, (
+        "Falta la descripción 'Mensajes ingeridos y preguntas detectadas por día' en Dashboard.tsx"
+    )
+    assert "c-segmented" in dashboard, "Falta el selector '.c-segmented' en Dashboard.tsx"
+    for period_label in ["7d", "30d", "90d"]:
+        assert period_label in dashboard, f"Falta la opción de período '{period_label}' en Dashboard.tsx"
+    assert "Actualizar datos" in dashboard, "Falta el texto 'Actualizar datos' en el botón de Dashboard.tsx"
+    assert "c-btn--primary" in dashboard, "Falta la clase 'c-btn--primary' en el botón de Dashboard.tsx"
+    assert "l-grid--main-side" in dashboard, "Falta la grilla 'l-grid--main-side' en Dashboard.tsx"
+    assert "l-grid--halves" in dashboard, "Falta la grilla 'l-grid--halves' en Dashboard.tsx"
+
+    # 4. SentimentChart.tsx
+    sentiment_chart = (
+        base_dir / "frontend" / "src" / "charts" / "SentimentChart.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-chart--donut" in sentiment_chart, "Falta '.c-chart--donut' en SentimentChart.tsx"
+    assert "c-chart__center" in sentiment_chart, "Falta '.c-chart__center' en SentimentChart.tsx"
+    assert "c-legend--stack" in sentiment_chart, "Falta '.c-legend--stack' en SentimentChart.tsx"
+
+    # 5. AudienceHeatmap.tsx
+    audience_heatmap = (
+        base_dir / "frontend" / "src" / "charts" / "AudienceHeatmap.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Actividad de audiencia" in audience_heatmap, (
+        "Falta el título 'Actividad de audiencia' en AudienceHeatmap.tsx"
+    )
+    assert "Mensajes promedio por hora del día" in audience_heatmap, (
+        "Falta el subtítulo 'Mensajes promedio por hora del día' en AudienceHeatmap.tsx"
+    )
+    assert "Peak" in audience_heatmap, "Falta la píldora 'Peak' en AudienceHeatmap.tsx"
+    assert "#ff7400" in audience_heatmap.lower(), "Falta el color pico '#ff7400' en AudienceHeatmap.tsx"
+    assert "#fdba74" in audience_heatmap.lower(), "Falta el color base '#fdba74' en AudienceHeatmap.tsx"
+
+    # 6. TopicsChart.tsx
+    topics_chart = (
+        base_dir / "frontend" / "src" / "charts" / "TopicsChart.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Temas principales" in topics_chart, "Falta el título 'Temas principales' en TopicsChart.tsx"
+    assert "Ordenar por" in topics_chart, "Falta el botón 'Ordenar por' en TopicsChart.tsx"
+    assert "#ff7400" in topics_chart.lower(), "Falta el color máximo '#ff7400' en TopicsChart.tsx"
+    assert "#fdba74" in topics_chart.lower(), "Falta el color secundario '#fdba74' en TopicsChart.tsx"
+

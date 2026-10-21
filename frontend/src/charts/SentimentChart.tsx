@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-
 import {
     Cell,
     Pie,
@@ -7,9 +6,6 @@ import {
     ResponsiveContainer,
     Tooltip,
 } from 'recharts'
-
-
-const COLORS = ['#22c55e', '#94a3b8', '#ef4444']
 
 type SentimentItem = {
     name: string
@@ -22,138 +18,170 @@ type AnalyticsResponse = {
     }
 }
 
-function SentimentChart() {
+interface SentimentChartProps {
+    refreshKey?: number
+}
 
+const COLOR_BY_NAME: Record<string, string> = {
+    positivo: '#10b981',
+    positive: '#10b981',
+    neutral: '#94a3b8',
+    pregunta: '#6366f1',
+    preguntas: '#6366f1',
+    negativo: '#f43f5e',
+    negative: '#f43f5e',
+}
+
+const FALLBACK_COLORS = ['#10b981', '#94a3b8', '#6366f1', '#f43f5e']
+
+function getSegmentColor(name: string, index: number): string {
+    const key = (name || '').trim().toLowerCase()
+    return COLOR_BY_NAME[key] || FALLBACK_COLORS[index % FALLBACK_COLORS.length]
+}
+
+function SentimentChart({ refreshKey = 0 }: SentimentChartProps) {
     const [data, setData] = useState<SentimentItem[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [activeIndex, setActiveIndex] = useState<number>(0)
 
     useEffect(() => {
-
         const loadSentiment = async () => {
-
             try {
+                const baseUrl = (
+                    import.meta.env.VITE_API_URL ||
+                    import.meta.env.VITE_MOTOR_API_URL ||
+                    'http://127.0.0.1:8002'
+                ).replace(/\/$/, '')
 
-                const response = await fetch(
-                    (import.meta.env.VITE_API_URL || import.meta.env.VITE_MOTOR_API_URL || "http://127.0.0.1:8002").replace(/\/$/, "") + "/api/community/analytics"
-                )
+                const response = await fetch(`${baseUrl}/api/community/analytics`)
 
                 if (!response.ok) {
                     throw new Error('No fue posible cargar el sentimiento')
                 }
 
                 const result: AnalyticsResponse = await response.json()
-
-                setData(result?.sentiment?.distribution ?? [])
-
+                const dist = result?.sentiment?.distribution ?? []
+                setData(dist)
+                setActiveIndex(0)
+                setError(null)
             } catch (err) {
-
                 setError(
                     err instanceof Error
                         ? err.message
                         : 'Error desconocido al cargar el sentimiento'
                 )
-
             } finally {
-
                 setLoading(false)
-
             }
         }
 
-        loadSentiment()
+        void loadSentiment()
+    }, [refreshKey])
 
-    }, [])
+    const safeData =
+        data.length > 0
+            ? data
+            : [
+                  { name: 'Positivo', value: 0 },
+                  { name: 'Neutral', value: 0 },
+                  { name: 'Negativo', value: 0 },
+              ]
+
+    const currentItem = safeData[activeIndex] || safeData[0]
 
     return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-            <div>
-                <h3 className="text-lg font-bold text-slate-900">
-                    Sentimiento de la comunidad
-                </h3>
-
-                <p className="mt-1 text-sm text-slate-500">
-                    Distribución de las conversaciones analizadas
-                </p>
+        <article className="c-card">
+            <div className="c-card__header">
+                <div>
+                    <div className="c-card__title">Sentimiento de la comunidad</div>
+                    <div className="c-card__desc">Pasa el mouse por cada segmento.</div>
+                </div>
             </div>
 
             {loading && (
-                <div className="flex h-64 items-center justify-center text-sm text-slate-500">
+                <div className="flex h-52 items-center justify-center text-sm text-slate-500">
                     Cargando sentimiento...
                 </div>
             )}
 
             {error && (
-                <div className="flex h-64 items-center justify-center text-sm text-red-600">
+                <div className="flex h-52 items-center justify-center text-sm text-red-600">
                     {error}
                 </div>
             )}
 
             {!loading && !error && (
                 <>
-                    <div className="mt-6 h-64">
-
-                        <ResponsiveContainer width="100%" height="100%">
-
+                    <div className="c-chart c-chart--donut">
+                        <ResponsiveContainer width="100%" height={200}>
                             <PieChart>
-
                                 <Pie
-                                    data={data}
+                                    data={safeData}
                                     cx="50%"
                                     cy="50%"
-                                    innerRadius={65}
-                                    outerRadius={95}
+                                    innerRadius={64}
+                                    outerRadius={86}
                                     paddingAngle={3}
                                     dataKey="value"
+                                    stroke="none"
+                                    onMouseEnter={(_, index) => setActiveIndex(index)}
+                                    onMouseLeave={() => setActiveIndex(0)}
                                 >
-
-                                    {data.map((entry, index) => (
+                                    {safeData.map((entry, index) => (
                                         <Cell
                                             key={`cell-${entry.name}`}
-                                            fill={COLORS[index]}
+                                            fill={getSegmentColor(entry.name, index)}
+                                            opacity={activeIndex === index ? 1 : 0.85}
+                                            style={{ cursor: 'pointer', outline: 'none' }}
                                         />
                                     ))}
-
                                 </Pie>
-
                                 <Tooltip
                                     formatter={(value) => [`${value}%`, 'Porcentaje']}
+                                    contentStyle={{
+                                        backgroundColor: '#0f172a',
+                                        border: 'none',
+                                        borderRadius: '8px',
+                                        color: '#ffffff',
+                                        fontSize: '12px',
+                                    }}
+                                    itemStyle={{ color: '#ffffff' }}
                                 />
-
                             </PieChart>
-
                         </ResponsiveContainer>
 
+                        <div className="c-chart__center">
+                            <b className="tabular-nums">{currentItem?.value ?? 0}%</b>
+                            <span>{currentItem?.name ?? 'Positivo'}</span>
+                        </div>
                     </div>
 
-                    <div className="mt-2 flex justify-center gap-6">
-
-                        {data.map((item, index) => (
-                            <div
-                                key={item.name}
-                                className="flex items-center gap-2"
-                            >
-
-                                <span
-                                    className="h-3 w-3 rounded-full"
-                                    style={{
-                                        backgroundColor: COLORS[index],
-                                    }}
-                                />
-
-                                <span>
-                                    {item.name} {item.value}%
-                                </span>
-
-                            </div>
-                        ))}
-
+                    <div className="c-legend c-legend--stack">
+                        {safeData.map((item, index) => {
+                            const color = getSegmentColor(item.name, index)
+                            return (
+                                <div
+                                    key={item.name}
+                                    className="c-legend__item"
+                                    onMouseEnter={() => setActiveIndex(index)}
+                                    onMouseLeave={() => setActiveIndex(0)}
+                                >
+                                    <span
+                                        className="c-legend__swatch"
+                                        style={{ background: color }}
+                                    />
+                                    <span>{item.name}</span>
+                                    <span className="c-legend__value tabular-nums">
+                                        {item.value}%
+                                    </span>
+                                </div>
+                            )
+                        })}
                     </div>
                 </>
             )}
-
-        </div>
+        </article>
     )
 }
 

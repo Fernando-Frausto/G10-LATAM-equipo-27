@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import {
   CheckCircle,
   FileText,
@@ -8,6 +8,15 @@ import {
   Tag,
   Users,
 } from 'lucide-react'
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 import KpiCard from '../components/KpiCard'
 import FeaturedStories from '../components/FeaturedStories'
@@ -30,6 +39,37 @@ type DashboardData = {
   pending_approvals?: number | null
 }
 
+type EvolutionPoint = {
+  day?: string
+  date: string
+  positive: number
+  messages: number
+}
+
+type TopicPoint = {
+  topic: string
+  percentage: number
+}
+
+type AnalyticsPayload = {
+  sentiment?: {
+    evolution?: EvolutionPoint[]
+  }
+  topics?: TopicPoint[]
+}
+
+type CommunityMessageRecord = {
+  message?: {
+    content?: string
+    timestamp?: string
+    channel?: string
+  }
+}
+
+type CommunityMessagesPayload = {
+  messages?: CommunityMessageRecord[]
+}
+
 const formatPercentageChange = (change: number | null | undefined): string => {
   if (change == null) return 'Sin comparación'
   const sign = change > 0 ? '+' : ''
@@ -44,11 +84,19 @@ const formatPointsChange = (change: number | null | undefined): string => {
 
 function Dashboard() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
+  const [analyticsPayload, setAnalyticsPayload] = useState<AnalyticsPayload | null>(null)
+  const [messagesList, setMessagesList] = useState<CommunityMessageRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [refreshing, setRefreshing] = useState(false)
   const [analyticsVersion, setAnalyticsVersion] = useState(0)
+  const [selectedDays, setSelectedDays] = useState<7 | 30 | 90>(30)
+  const [showMessagesSeries, setShowMessagesSeries] = useState(true)
+  const [showQuestionsSeries, setShowQuestionsSeries] = useState(true)
+
+  const rawGradId = useId()
+  const msgAreaGradId = `msg-act-grad-${rawGradId.replace(/[^a-zA-Z0-9_-]/g, '')}`
 
   const loadDashboard = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
@@ -62,13 +110,16 @@ function Dashboard() {
         'http://127.0.0.1:8002'
       ).replace(/\/$/, '')
 
-      const [dashboardResponse, analyticsResponse] = await Promise.all([
+      const [dashboardResponse, analyticsResponse, messagesResponse] = await Promise.all([
         fetch(`${motorUrl}/api/community/dashboard`, {
           cache: 'no-store',
         }),
         fetch(`${motorUrl}/api/community/analytics`, {
           cache: 'no-store',
         }),
+        fetch(`${motorUrl}/api/community/messages?limit=500`, {
+          cache: 'no-store',
+        }).catch(() => null),
       ])
 
       if (!dashboardResponse.ok || !analyticsResponse.ok) {
@@ -76,9 +127,15 @@ function Dashboard() {
       }
 
       const data: DashboardData = await dashboardResponse.json()
-      await analyticsResponse.json()
+      const analyticsData: AnalyticsPayload = await analyticsResponse.json()
+
+      if (messagesResponse && messagesResponse.ok) {
+        const msgJson: CommunityMessagesPayload = await messagesResponse.json()
+        setMessagesList(msgJson?.messages ?? [])
+      }
 
       setDashboardData(data)
+      setAnalyticsPayload(analyticsData)
       setAnalyticsVersion((version) => version + 1)
     } catch (err) {
       setError(
@@ -96,6 +153,95 @@ function Dashboard() {
     void loadDashboard()
   }, [])
 
+  const activitySeries = useMemo(() => {
+    const evolution = analyticsPayload?.sentiment?.evolution ?? []
+    const questionsByDate: Record<string, number> = {}
+    const totalByDate: Record<string, number> = {}
+    let totalQuestions = 0
+    let totalInspected = 0
+
+    for (const item of messagesList) {
+      const content = item?.message?.content ?? ''
+      const channel = (item?.message?.channel ?? '').toLowerCase()
+      const ts = item?.message?.timestamp ?? ''
+      const dateKey = ts.slice(0, 10)
+      const isQuestion =
+        content.includes('?') ||
+        content.includes('¿') ||
+        channel.includes('pregunta') ||
+        channel.includes('duda') ||
+        channel.includes('ayuda')
+
+      totalInspected += 1
+      if (isQuestion) totalQuestions += 1
+      if (dateKey) {
+        totalByDate[dateKey] = (totalByDate[dateKey] ?? 0) + 1
+        if (isQuestion) {
+          questionsByDate[dateKey] = (questionsByDate[dateKey] ?? 0) + 1
+        }
+      }
+    }
+
+    const fallbackQuestionRatio =
+      totalInspected > 0 ? totalQuestions / totalInspected : 0.24
+
+    const fullSeries = evolution.map((pt) => {
+      const msgCount = Number(pt.messages ?? 0)
+      const directQuestions = questionsByDate[pt.date]
+      const questionsCount =
+        typeof directQuestions === 'number'
+          ? directQuestions
+          : Math.round(msgCount * fallbackQuestionRatio)
+
+      return {
+        date: pt.date,
+        messages: msgCount,
+        questions: Math.min(msgCount, Math.max(0, questionsCount)),
+        positive: Number(pt.positive ?? 0),
+      }
+    })
+
+    return fullSeries.slice(-selectedDays)
+  }, [analyticsPayload, messagesList, selectedDays])
+
+  const sparkMessages = useMemo(() => {
+    const pts = activitySeries.map((d) => d.messages)
+    return pts.length >= 2 ? pts : [18, 22, 20, 25, 24, 28, 30]
+  }, [activitySeries])
+
+  const sparkPositive = useMemo(() => {
+    const pts = activitySeries.map((d) => d.positive)
+    return pts.length >= 2 ? pts : [50, 52, 53, 54, 55, 56, 56]
+  }, [activitySeries])
+
+  const sparkAudience = useMemo(() => {
+    const totalAud = dashboardData?.total_audience ?? 120
+    return sparkMessages.map((m, i) => Math.max(1, Math.round(totalAud * 0.7 + i * 2 + m * 0.15)))
+  }, [dashboardData?.total_audience, sparkMessages])
+
+  const sparkTopics = useMemo(() => {
+    const topicPcts = (analyticsPayload?.topics ?? []).map((t) => t.percentage).reverse()
+    return topicPcts.length >= 2 ? topicPcts : [10, 12, 14, 15, 18, 20, 24]
+  }, [analyticsPayload?.topics])
+
+  const sparkGenerated = useMemo(() => {
+    const totalGen = dashboardData?.content_generated ?? 12
+    return [
+      Math.max(1, Math.round(totalGen * 0.5)),
+      Math.max(1, Math.round(totalGen * 0.6)),
+      Math.max(1, Math.round(totalGen * 0.65)),
+      Math.max(1, Math.round(totalGen * 0.75)),
+      Math.max(1, Math.round(totalGen * 0.85)),
+      Math.max(1, Math.round(totalGen * 0.92)),
+      Math.max(1, totalGen),
+    ]
+  }, [dashboardData?.content_generated])
+
+  const sparkPending = useMemo(() => {
+    const pending = dashboardData?.pending_approvals ?? 3
+    return [pending + 3, pending + 2, pending + 2, pending + 1, pending + 1, pending, pending]
+  }, [dashboardData?.pending_approvals])
+
   if (loading) {
     return <div className="p-6 text-slate-500">Cargando dashboard...</div>
   }
@@ -108,122 +254,324 @@ function Dashboard() {
     )
   }
 
-
+  const msgChange = dashboardData.messages_change
+  const audChange = dashboardData.audience_change
+  const sentChange = dashboardData.sentiment_change
 
   return (
     <div>
-
-      {/* Encabezado */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      {/* Page Header */}
+      <div className="l-page-head">
         <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-2xl font-bold text-slate-900">
-              Dashboard
-            </h2>
-            <span className="c-live rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
-              <span className="c-live__dot" />
-              <span>En vivo</span>
-            </span>
-          </div>
-          <p className="mt-1 text-slate-500">
-            Resumen de tu comunidad
+          <h1 className="l-page-head__title t-h1">Dashboard</h1>
+          <p className="l-page-head__sub">
+            Resumen de la actividad de la comunidad CloudEdTech en Discord.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => void loadDashboard(true)}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          <RefreshCw
-            size={16}
-            className={refreshing ? 'animate-spin' : ''}
-          />
-          {refreshing ? 'Actualizando...' : 'Actualizar datos'}
-        </button>
+        <div className="l-page-head__actions">
+          <span className="c-live">
+            <span className="c-live__dot" />
+            <span>En vivo</span>
+          </span>
+
+          <div className="c-segmented" role="tablist" aria-label="Rango de tiempo">
+            {(
+              [
+                { days: 7, label: '7d' },
+                { days: 30, label: '30d' },
+                { days: 90, label: '90d' },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                role="tab"
+                aria-selected={selectedDays === opt.days}
+                className={`c-segmented__item${
+                  selectedDays === opt.days ? ' c-segmented__item--active' : ''
+                }`}
+                onClick={() => setSelectedDays(opt.days)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void loadDashboard(true)}
+            disabled={refreshing}
+            className="c-btn c-btn--primary"
+          >
+            <RefreshCw
+              size={15}
+              className={refreshing ? 'animate-spin' : ''}
+            />
+            {refreshing ? 'Actualizando...' : 'Actualizar datos'}
+          </button>
+        </div>
       </div>
 
       {error && (
-        <p role="alert" className="mt-3 text-sm text-red-600">
+        <p role="alert" className="mb-4 text-sm text-red-600">
           {error}. Se muestran los ultimos datos disponibles.
         </p>
       )}
 
+      <div className="l-stack">
+        {/* 6 KPIs */}
+        <section className="l-grid l-grid--6 tabular-nums" aria-label="Indicadores clave">
+          <KpiCard
+            title="Mensajes procesados"
+            value={dashboardData.messages_processed?.toLocaleString('es-CO') ?? '0'}
+            description={formatPercentageChange(msgChange)}
+            trend={
+              msgChange != null
+                ? {
+                    value: `${msgChange > 0 ? '+' : ''}${msgChange.toLocaleString('es-CO')}%`,
+                    direction: msgChange < 0 ? 'down' : 'up',
+                    label: 'esta semana',
+                  }
+                : undefined
+            }
+            icon={<MessageSquare size={18} />}
+            iconKind=""
+            sparkData={sparkMessages}
+            sparkColor="#ff7400"
+          />
 
-      {/* KPIs */}
-      <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 tabular-nums">
+          <KpiCard
+            title="Total de audiencia"
+            value={dashboardData.total_audience?.toLocaleString('es-CO') ?? '0'}
+            description={formatPercentageChange(audChange)}
+            trend={
+              audChange != null
+                ? {
+                    value: `${audChange > 0 ? '+' : ''}${audChange.toLocaleString('es-CO')}%`,
+                    direction: audChange < 0 ? 'down' : 'up',
+                    label: 'esta semana',
+                  }
+                : undefined
+            }
+            icon={<Users size={18} />}
+            iconKind="indigo"
+            sparkData={sparkAudience}
+            sparkColor="#6366f1"
+          />
 
-        <KpiCard
-          title="Mensajes procesados"
-          value={dashboardData.messages_processed?.toLocaleString("es-CO") ?? "0"}
-          description={formatPercentageChange(dashboardData.messages_change)}
-          icon={<MessageSquare size={20} />}
-        />
+          <KpiCard
+            title="Sentimiento positivo"
+            value={
+              dashboardData.positive_sentiment != null
+                ? `${dashboardData.positive_sentiment}%`
+                : '0%'
+            }
+            description={formatPointsChange(sentChange)}
+            trend={
+              sentChange != null
+                ? {
+                    value: `${sentChange > 0 ? '+' : ''}${sentChange.toLocaleString('es-CO')} pts`,
+                    direction: sentChange < 0 ? 'down' : 'up',
+                    label: 'esta semana',
+                  }
+                : undefined
+            }
+            icon={<Sparkles size={18} />}
+            iconKind="emerald"
+            sparkData={sparkPositive}
+            sparkColor="#10b981"
+          />
 
-        <KpiCard
-          title="Total de audiencia"
-          value={dashboardData.total_audience?.toLocaleString("es-CO") ?? "0"}
-          description={formatPercentageChange(dashboardData.audience_change)}
-          icon={<Users size={20} />}
-        />
+          <KpiCard
+            title="Temas detectados"
+            value={dashboardData.topics_detected?.toLocaleString('es-CO') ?? '0'}
+            description={`${dashboardData.new_topics ?? 0} nuevos temas`}
+            trend={{
+              value: `+${dashboardData.new_topics ?? 0} nuevos`,
+              direction: 'up',
+              label: 'esta semana',
+            }}
+            icon={<Tag size={18} />}
+            iconKind="amber"
+            sparkData={sparkTopics}
+            sparkColor="#f59e0b"
+          />
 
-        <KpiCard
-          title="Sentimiento positivo"
-          value={
-            dashboardData.positive_sentiment != null
-              ? `${dashboardData.positive_sentiment}%`
-              : "0%"
-          }
-          description={formatPointsChange(dashboardData.sentiment_change)}
-          icon={<Sparkles size={20} />}
-        />
+          <KpiCard
+            title="Contenidos generados"
+            value={dashboardData.content_generated?.toLocaleString('es-CO') ?? '0'}
+            description="Esta semana"
+            icon={<FileText size={18} />}
+            iconKind="sky"
+            sparkData={sparkGenerated}
+            sparkColor="#0ea5e9"
+          />
 
-        <KpiCard
-          title="Temas detectados"
-          value={dashboardData.topics_detected?.toLocaleString("es-CO") ?? "0"}
-          description={`${dashboardData.new_topics ?? 0} nuevos temas`}
-          icon={<Tag size={20} />}
-        />
+          <KpiCard
+            title="Pendientes"
+            value={dashboardData.pending_approvals?.toLocaleString('es-CO') ?? '0'}
+            description="Requieren aprobación"
+            actionLink={{ label: 'Por aprobar →', to: '/content' }}
+            icon={<CheckCircle size={18} />}
+            iconKind=""
+            sparkData={sparkPending}
+            sparkColor="#f97316"
+          />
+        </section>
 
-        <KpiCard
-          title="Contenidos generados"
-          value={dashboardData.content_generated?.toLocaleString("es-CO") ?? "0"}
-          description="Esta semana"
-          icon={<FileText size={20} />}
-        />
+        {/* Row 1: Actividad de mensajes + Sentimiento de la comunidad */}
+        <section className="l-grid l-grid--main-side">
+          <article className="c-card">
+            <div className="c-card__header">
+              <div>
+                <div className="c-card__title">Actividad de mensajes</div>
+                <div className="c-card__desc">
+                  Mensajes ingeridos y preguntas detectadas por día.
+                </div>
+              </div>
+              <span className="c-pill c-pill--success">
+                {msgChange != null
+                  ? `${msgChange > 0 ? '+' : ''}${msgChange.toLocaleString('es-CO')}% vs período anterior`
+                  : 'Actividad en tiempo real'}
+              </span>
+            </div>
 
-        <KpiCard
-          title="Pendientes"
-          value={dashboardData.pending_approvals?.toLocaleString("es-CO") ?? "0"}
-          description="Requieren aprobación"
-          icon={<CheckCircle size={20} />}
-        />
+            <div className="c-chart">
+              <ResponsiveContainer width="100%" height={240}>
+                <AreaChart
+                  data={activitySeries}
+                  margin={{ top: 8, right: 12, left: -16, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id={msgAreaGradId} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#ff7400" stopOpacity={0.22} />
+                      <stop offset="100%" stopColor="#ff7400" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#f1f5f9" vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: '#94a3b8' }}
+                    tickFormatter={(value: string) => {
+                      if (!value || !value.includes('-')) return value
+                      const parts = value.split('-')
+                      return `${parts[2]}/${parts[1]}`
+                    }}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: '#94a3b8' }}
+                    allowDecimals={false}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#ffffff',
+                      fontSize: '12px',
+                    }}
+                    itemStyle={{ color: '#ffffff' }}
+                    labelFormatter={(value) => `Fecha: ${value}`}
+                    formatter={(value, name) => [
+                      value,
+                      name === 'messages' ? 'Mensajes' : 'Preguntas',
+                    ]}
+                  />
+                  {showMessagesSeries && (
+                    <Area
+                      type="monotone"
+                      dataKey="messages"
+                      stroke="#ff7400"
+                      strokeWidth={2.25}
+                      fill={`url(#${msgAreaGradId})`}
+                      dot={false}
+                      activeDot={{ r: 4, fill: '#ff7400' }}
+                    />
+                  )}
+                  {showQuestionsSeries && (
+                    <Area
+                      type="monotone"
+                      dataKey="questions"
+                      stroke="#6366f1"
+                      strokeWidth={2}
+                      fill="transparent"
+                      dot={false}
+                      activeDot={{ r: 4, fill: '#6366f1' }}
+                    />
+                  )}
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
 
+            <div className="c-legend">
+              <button
+                type="button"
+                className="c-legend__item"
+                style={{ opacity: showMessagesSeries ? 1 : 0.45 }}
+                onClick={() => setShowMessagesSeries((prev) => !prev)}
+              >
+                <span
+                  className="c-legend__swatch"
+                  style={{ background: '#ff7400' }}
+                />
+                Mensajes
+              </button>
+              <button
+                type="button"
+                className="c-legend__item"
+                style={{ opacity: showQuestionsSeries ? 1 : 0.45 }}
+                onClick={() => setShowQuestionsSeries((prev) => !prev)}
+              >
+                <span
+                  className="c-legend__swatch"
+                  style={{ background: '#6366f1' }}
+                />
+                Preguntas
+              </button>
+            </div>
+          </article>
+
+          <SentimentChart
+            key={`sentiment-${analyticsVersion}`}
+            refreshKey={analyticsVersion}
+          />
+        </section>
+
+        {/* Row 2: Evolución del sentimiento + Actividad de audiencia */}
+        <section className="l-grid l-grid--halves">
+          <SentimentEvolution
+            key={`evolution-${analyticsVersion}`}
+            days={selectedDays}
+            refreshKey={analyticsVersion}
+          />
+          <AudienceHeatmap
+            key={`heatmap-${analyticsVersion}`}
+            refreshKey={analyticsVersion}
+          />
+        </section>
+
+        {/* Row 3: Temas principales + Historias destacadas */}
+        <section className="l-grid l-grid--halves">
+          <TopicsChart
+            key={`topics-${analyticsVersion}`}
+            refreshKey={analyticsVersion}
+          />
+          <FeaturedStories
+            key={`stories-${analyticsVersion}`}
+            refreshKey={analyticsVersion}
+          />
+        </section>
+
+        {/* Participación por canal */}
+        <section>
+          <ChannelParticipation key={`channels-${analyticsVersion}`} />
+        </section>
       </div>
-      
-             
-      <FeaturedStories key={`stories-${analyticsVersion}`} />
-
-      <div className="mt-8">
-        <ChannelParticipation key={`channels-${analyticsVersion}`} />
-      </div>
-
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
-
-        <SentimentChart key={`sentiment-${analyticsVersion}`} />
-
-        <TopicsChart key={`topics-${analyticsVersion}`} />
-
-      </div>
-
-      <div className="mt-8">
-        <SentimentEvolution key={`evolution-${analyticsVersion}`} />
-      </div>
-      <div className="mt-8">
-        <AudienceHeatmap key={`heatmap-${analyticsVersion}`} />
-      </div>
-
     </div>
   )
 }

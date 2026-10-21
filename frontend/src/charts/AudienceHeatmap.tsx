@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-
+import {
+    Bar,
+    BarChart,
+    CartesianGrid,
+    Cell,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+} from 'recharts'
 
 type ActivityRow = {
     day: string
@@ -13,152 +22,189 @@ type ActivityHeatmap = {
 }
 
 type AnalyticsResponse = {
-    activity_heatmap: ActivityHeatmap
+    activity_heatmap?: ActivityHeatmap
 }
 
+type CommunityMessageItem = {
+    message?: {
+        timestamp?: string
+    }
+}
 
-function AudienceHeatmap() {
+type CommunityMessagesResponse = {
+    messages?: CommunityMessageItem[]
+}
 
-    const [activityData, setActivityData] = useState<ActivityRow[]>([])
-    const [hours, setHours] = useState<string[]>([])
+type HourlyBarPoint = {
+    hour: string
+    count: number
+}
+
+interface AudienceHeatmapProps {
+    refreshKey?: number
+}
+
+function AudienceHeatmap({ refreshKey = 0 }: AudienceHeatmapProps) {
+    const [hourlyData, setHourlyData] = useState<HourlyBarPoint[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
 
     useEffect(() => {
-
         const loadActivity = async () => {
-
             try {
+                const baseUrl = (
+                    import.meta.env.VITE_API_URL ||
+                    import.meta.env.VITE_MOTOR_API_URL ||
+                    'http://127.0.0.1:8002'
+                ).replace(/\/$/, '')
 
-                const response = await fetch(
-                    (import.meta.env.VITE_API_URL || import.meta.env.VITE_MOTOR_API_URL || "http://127.0.0.1:8002").replace(/\/$/, "") + "/api/community/analytics"
-                )
+                const [analyticsRes, messagesRes] = await Promise.all([
+                    fetch(`${baseUrl}/api/community/analytics`),
+                    fetch(`${baseUrl}/api/community/messages?limit=500`).catch(() => null),
+                ])
 
-                if (!response.ok) {
-                    throw new Error(
-                        'No fue posible cargar la actividad de audiencia'
-                    )
+                if (!analyticsRes.ok) {
+                    throw new Error('No fue posible cargar la actividad de audiencia')
                 }
 
-                const result: AnalyticsResponse = await response.json()
+                const result: AnalyticsResponse = await analyticsRes.json()
+                const heatmapHours = result?.activity_heatmap?.hours ?? []
+                const heatmapRows = result?.activity_heatmap?.data ?? []
 
-                setActivityData(result?.activity_heatmap?.data ?? [])
-                setHours(result?.activity_heatmap?.hours ?? [])
+                const buckets24 = Array.from({ length: 24 }, (_, h) => ({
+                    hour: `${String(h).padStart(2, '0')}:00`,
+                    count: 0,
+                }))
 
+                let populatedFromMessages = false
+                if (messagesRes && messagesRes.ok) {
+                    const msgPayload: CommunityMessagesResponse = await messagesRes.json()
+                    const msgs = msgPayload?.messages ?? []
+                    for (const item of msgs) {
+                        const ts = item?.message?.timestamp
+                        if (!ts) continue
+                        const d = new Date(ts)
+                        if (!Number.isNaN(d.getTime())) {
+                            const h = d.getHours()
+                            buckets24[h].count += 1
+                            populatedFromMessages = true
+                        }
+                    }
+                }
+
+                if (populatedFromMessages) {
+                    setHourlyData(buckets24)
+                } else if (heatmapHours.length > 0 && heatmapRows.length > 0) {
+                    const summed = heatmapHours.map((label, idx) => {
+                        const totalCount = heatmapRows.reduce((acc, row) => {
+                            const c = row.counts?.[idx] ?? row.values?.[idx] ?? 0
+                            return acc + Number(c)
+                        }, 0)
+                        return {
+                            hour: label,
+                            count: totalCount,
+                        }
+                    })
+                    setHourlyData(summed)
+                } else {
+                    setHourlyData(buckets24)
+                }
+
+                setError(null)
             } catch (err) {
-
                 setError(
                     err instanceof Error
                         ? err.message
                         : 'Error desconocido al cargar la actividad'
                 )
-
             } finally {
-
                 setLoading(false)
-
             }
         }
 
-        loadActivity()
+        void loadActivity()
+    }, [refreshKey])
 
-    }, [])
+    const maxCount = hourlyData.reduce((max, item) => Math.max(max, item.count), 0)
+    const peakPoint =
+        hourlyData.find((item) => item.count === maxCount && maxCount > 0) ||
+        hourlyData[0] || { hour: '19:00', count: 0 }
 
     return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-            <div>
-                <h3 className="font-bold text-slate-900">
-                    Actividad de audiencia
-                </h3>
-
-                <p className="mt-1 text-sm text-slate-500">
-                    Intensidad de actividad por día y hora
-                </p>
+        <article className="c-card">
+            <div className="c-card__header">
+                <div>
+                    <div className="c-card__title">Actividad de audiencia</div>
+                    <div className="c-card__desc">
+                        Mensajes promedio por hora del día.
+                    </div>
+                </div>
+                <span className="c-pill c-pill--brand">
+                    Peak {peakPoint.hour}
+                </span>
             </div>
 
             {loading && (
-                <div className="flex h-64 items-center justify-center text-sm text-slate-500">
+                <div className="flex h-56 items-center justify-center text-sm text-slate-500">
                     Cargando actividad...
                 </div>
             )}
 
             {error && (
-                <div className="flex h-64 items-center justify-center text-sm text-red-600">
+                <div className="flex h-56 items-center justify-center text-sm text-red-600">
                     {error}
                 </div>
             )}
 
             {!loading && !error && (
-                <div className="mt-6 overflow-x-auto">
-
-                    <div className="min-w-[620px]">
-
-                        <div className="mb-2 grid grid-cols-[60px_repeat(6,1fr)] gap-2">
-
-                            <div />
-
-                            {hours.map((hour) => (
-                                <div
-                                    key={hour}
-                                    className="text-center text-xs font-medium text-slate-400"
-                                >
-                                    {hour}
-                                </div>
-                            ))}
-
-                        </div>
-
-                        <div className="space-y-2">
-
-                            {activityData.map((row) => (
-
-                                <div
-                                    key={row.day}
-                                    className="grid grid-cols-[60px_repeat(6,1fr)] gap-2"
-                                >
-
-                                    <div className="flex items-center text-xs font-semibold text-slate-500">
-                                        {row.day}
-                                    </div>
-
-                                    {row.values.map((value, index) => {
-
-                                        const intensity =
-                                            value >= 80
-                                                ? 'bg-orange-500'
-                                                : value >= 60
-                                                    ? 'bg-orange-400'
-                                                    : value >= 40
-                                                        ? 'bg-orange-300'
-                                                        : value >= 20
-                                                            ? 'bg-orange-200'
-                                                            : value > 0
-                                                                ? 'bg-orange-100'
-                                                                : 'bg-slate-100'
-
-                                        const count = row.counts[index]
-
-                                        return (
-                                            <div
-                                                key={`${row.day}-${index}`}
-                                                title={`${row.day} ${hours[index]} · ${count} ${count === 1 ? 'mensaje' : 'mensajes'} · Intensidad ${value}%`}
-                                                className={`h-10 rounded-lg ${intensity} transition hover:scale-105`}
-                                            />
-                                        )
-                                    })}
-
-                                </div>
-                            ))}
-
-                        </div>
-
-                    </div>
-
+                <div className="c-chart c-chart--sm">
+                    <ResponsiveContainer width="100%" height={220}>
+                        <BarChart
+                            data={hourlyData}
+                            margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
+                        >
+                            <CartesianGrid stroke="#f1f5f9" vertical={false} />
+                            <XAxis
+                                dataKey="hour"
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fontSize: 10, fill: '#94a3b8' }}
+                                interval={hourlyData.length > 12 ? 2 : 0}
+                            />
+                            <YAxis
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fontSize: 11, fill: '#94a3b8' }}
+                                allowDecimals={false}
+                            />
+                            <Tooltip
+                                cursor={{ fill: 'rgba(255, 116, 0, 0.06)' }}
+                                contentStyle={{
+                                    backgroundColor: '#0f172a',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    color: '#ffffff',
+                                    fontSize: '12px',
+                                }}
+                                itemStyle={{ color: '#ffffff' }}
+                                formatter={(value) => [`${value} msgs`, 'Actividad']}
+                            />
+                            <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                                {hourlyData.map((entry, idx) => {
+                                    const isPeak = maxCount > 0 && entry.count === maxCount
+                                    return (
+                                        <Cell
+                                            key={`bar-${entry.hour}-${idx}`}
+                                            fill={isPeak ? '#ff7400' : '#fdba74'}
+                                        />
+                                    )
+                                })}
+                            </Bar>
+                        </BarChart>
+                    </ResponsiveContainer>
                 </div>
             )}
-
-        </div>
+        </article>
     )
 }
 
