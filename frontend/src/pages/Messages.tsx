@@ -5,10 +5,7 @@ import {
     ChevronRight,
     Clock3,
     Copy,
-    Filter,
-    Hash,
     Inbox,
-    MessageCircle,
     MessageSquare,
     RefreshCw,
     RotateCcw,
@@ -18,7 +15,6 @@ import {
     Smile,
     Sparkles,
     Star,
-    Tag,
     ThumbsUp,
     X,
 } from 'lucide-react'
@@ -122,6 +118,8 @@ function Messages() {
     const [searchTerm, setSearchTerm] = useState('')
     const [channelFilter, setChannelFilter] = useState('all')
     const [sentimentFilter, setSentimentFilter] = useState('all')
+    const [topicFilter, setTopicFilter] = useState('all')
+    const [classificationFilter, setClassificationFilter] = useState('all')
     const [timeFilter, setTimeFilter] = useState('all')
     const [curationFilter, setCurationFilter] = useState('all')
     const [aiModels, setAiModels] = useState<AiModel[]>(DEFAULT_AI_MODELS)
@@ -308,6 +306,40 @@ function Messages() {
         })
     }, [messageItems, PREFERRED_CHANNELS_ORDER])
 
+    const topics = useMemo(() => {
+        const set = new Set<string>()
+        for (const msg of messageItems) {
+            if (msg.isAnalyzed && msg.topic && msg.topic.trim() && msg.topic.toLowerCase() !== 'sin tema') {
+                set.add(msg.topic.trim())
+            }
+        }
+        return Array.from(set).sort((a, b) => a.localeCompare(b))
+    }, [messageItems])
+
+    const classificationChips = useMemo(() => {
+        const visibleItems = messageItems.filter(
+            (m) => !m.author.toLowerCase().includes('cloudedtech community bot')
+        )
+        const classes = Array.from(new Set(visibleItems.map((m) => m.classification)))
+        return [
+            ['all', 'Todas', visibleItems.length] as const,
+            ...classes.map(
+                (cls) =>
+                    [
+                        cls,
+                        cls,
+                        visibleItems.filter((m) => m.classification === cls).length,
+                    ] as const
+            ),
+        ]
+    }, [messageItems])
+
+    const getAvatarTone = (name: string) => {
+        const tones = ['', 'c-avatar--indigo', 'c-avatar--emerald', 'c-avatar--purple', 'c-avatar--slate']
+        const sum = Array.from(name || 'U').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
+        return tones[sum % tones.length]
+    }
+
     const analyzedCount = useMemo(
         () => messageItems.filter((message) => message.isAnalyzed).length,
         [messageItems]
@@ -432,10 +464,20 @@ function Messages() {
             sentimentFilter === 'all' ||
             message.sentiment === sentimentFilter
 
+        const matchesTopic =
+            topicFilter === 'all' ||
+            message.topic === topicFilter
+
+        const matchesClassification =
+            classificationFilter === 'all' ||
+            message.classification === classificationFilter
+
         return (
             matchesSearch &&
             matchesChannel &&
             matchesSentiment &&
+            matchesTopic &&
+            matchesClassification &&
             matchesTimeFilter(message.rawDate)
         )
     })
@@ -736,6 +778,8 @@ function Messages() {
         setSearchTerm('')
         setChannelFilter('all')
         setSentimentFilter('all')
+        setTopicFilter('all')
+        setClassificationFilter('all')
         setTimeFilter('all')
         setCurationFilter('all')
         setDateFrom('')
@@ -1191,245 +1235,217 @@ function Messages() {
                 )}
             </section>
 
-            {/* Panel de filtrado */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex items-center gap-2">
-                        <Filter size={17} className="text-orange-500" />
-                        <h3 className="font-bold text-slate-900">
-                            Panel de filtrado de mensajes
-                        </h3>
-                    </div>
+            {/* Sección unificada: Panel de filtrado de mensajes + Lista de mensajes (CommunityLab DS) */}
+            <article className="c-card c-card--flush">
+                <div className="c-card__section">
+                    <div className="c-card__header" style={{ marginBottom: 'var(--space-4)' }}>
+                        <div>
+                            <h2 className="t-card">Panel de filtrado de mensajes</h2>
+                            <p className="c-card__desc tabular-nums">
+                                Mostrando{' '}
+                                <strong className="font-bold text-slate-900" id="msg-count">
+                                    {filteredMessages.length}
+                                </strong>{' '}
+                                {curationFilter === 'descartados'
+                                    ? filteredMessages.length === 1
+                                        ? 'mensaje descartado que coincide con los filtros.'
+                                        : 'mensajes descartados que coinciden con los filtros.'
+                                    : curationFilter === 'completos'
+                                    ? 'mensajes con proceso completo que coinciden con los filtros.'
+                                    : curationFilter === 'pending_eval'
+                                    ? 'mensajes pendientes de evaluar que coinciden con los filtros.'
+                                    : curationFilter === 'pending_copy'
+                                    ? 'mensajes en la cola de publicación que coinciden con los filtros.'
+                                    : 'mensajes en total (Todos los mensajes) que coinciden con los filtros.'}
+                                {(dateFrom || dateTo) && (
+                                    <span className="ml-1 font-semibold text-purple-700">
+                                        (en rango: {dateFrom || 'inicio'} a {dateTo || 'hoy'})
+                                    </span>
+                                )}
+                            </p>
+                        </div>
 
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            onClick={clearFilters}
-                            className="rounded-xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
-                        >
-                            Deseleccionar
-                        </button>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.1fr_1.35fr_1fr]">
-                    {/* Tiempo */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Filtro de tiempo
-                        </label>
-
-                        <div className="grid grid-cols-4 rounded-xl bg-slate-100 p-1">
-                            {[
-                                ['24h', '24 Horas'],
-                                ['week', 'Semana'],
-                                ['month', 'Mes'],
-                                ['all', 'Todo'],
-                            ].map(([value, label]) => (
-                                <button
-                                    key={value}
-                                    type="button"
-                                    onClick={() =>
-                                        setTimeFilter(value)
-                                    }
-                                    className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition ${
-                                        timeFilter === value
-                                            ? 'bg-white text-slate-900 shadow-sm'
-                                            : 'text-slate-500'
+                        <div className="l-cluster">
+                            <span className="c-pill c-pill--outline">
+                                <span
+                                    className={`h-1.5 w-1.5 rounded-full ${
+                                        apiConnected ? 'bg-emerald-500' : 'bg-amber-400'
                                     }`}
-                                >
-                                    {label}
-                                </button>
-                            ))}
+                                />
+                                Actualización en streaming {apiConnected ? 'activa' : 'pendiente'}
+                            </span>
+
+                            <button
+                                className="c-btn c-btn--ghost c-btn--sm"
+                                type="button"
+                                id="msg-reset"
+                                onClick={clearFilters}
+                            >
+                                Limpiar filtros
+                            </button>
                         </div>
                     </div>
 
-                    {/* Canal */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Canales monitoreados
-                        </label>
+                    <div className="c-toolbar">
+                        {/* Buscar */}
+                        <div className="c-field" style={{ flexBasis: '16rem' }}>
+                            <label className="c-label sr-only" htmlFor="msg-q">
+                                Buscar
+                            </label>
+                            <div className="c-input-group">
+                                <Search size={15} className="icon" />
+                                <input
+                                    id="msg-q"
+                                    type="text"
+                                    className="c-input"
+                                    placeholder="Buscar por autor o contenido…"
+                                    value={searchTerm}
+                                    onChange={(event) => setSearchTerm(event.target.value)}
+                                />
+                            </div>
+                        </div>
 
-                        <div className="relative">
-                            <Hash
-                                size={15}
-                                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                            />
-
+                        {/* Canal */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-channel">
+                                Canal
+                            </label>
                             <select
+                                id="msg-channel"
+                                className="c-select"
                                 value={channelFilter}
-                                onChange={(event) =>
-                                    setChannelFilter(
-                                        event.target.value
-                                    )
-                                }
-                                className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-4 text-xs font-medium text-slate-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                                onChange={(event) => setChannelFilter(event.target.value)}
                             >
                                 <option value="all">
                                     Todos los canales ({channels.length})
                                 </option>
-
                                 {channels.map((channel) => (
-                                    <option
-                                        key={channel}
-                                        value={channel}
-                                    >
+                                    <option key={channel} value={channel}>
                                         #{channel}
                                     </option>
                                 ))}
                             </select>
                         </div>
-                    </div>
 
-                    {/* Búsqueda */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Identificación y búsqueda
-                        </label>
+                        {/* Sentimiento */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-sent">
+                                Sentimiento
+                            </label>
+                            <select
+                                id="msg-sent"
+                                className="c-select"
+                                value={sentimentFilter}
+                                onChange={(event) => setSentimentFilter(event.target.value)}
+                            >
+                                <option value="all">Todo sentimiento</option>
+                                <option value="positive">Positivo</option>
+                                <option value="neutral">Neutral</option>
+                                <option value="negative">Negativo</option>
+                            </select>
+                        </div>
 
-                        <div className="relative">
-                            <Search
-                                size={15}
-                                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                            />
+                        {/* Tema */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-topic">
+                                Tema
+                            </label>
+                            <select
+                                id="msg-topic"
+                                className="c-select"
+                                value={topicFilter}
+                                onChange={(event) => setTopicFilter(event.target.value)}
+                            >
+                                <option value="all">Todos los temas</option>
+                                {topics.map((topic) => (
+                                    <option key={topic} value={topic}>
+                                        {topic}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
 
-                            <input
-                                type="text"
-                                placeholder="Buscar usuario, tema, canal o palabra clave..."
-                                value={searchTerm}
-                                onChange={(event) =>
-                                    setSearchTerm(event.target.value)
-                                }
-                                className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-4 text-xs outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
-                            />
+                        {/* Estado del mensaje */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-status">
+                                Estado del mensaje
+                            </label>
+                            <select
+                                id="msg-status"
+                                aria-label="Estado del mensaje"
+                                className="c-select"
+                                value={curationFilter}
+                                onChange={(event) => setCurationFilter(event.target.value)}
+                            >
+                                <option value="all">Todos los estados</option>
+                                <option value="pending_eval">Pendientes de evaluar</option>
+                                <option value="pending_copy">Pendientes de publicar</option>
+                                <option value="completos">Proceso completo</option>
+                                <option value="descartados">Descartado</option>
+                            </select>
                         </div>
                     </div>
 
-                    {/* Estado */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Estado del mensaje
-                        </label>
+                    <div className="l-cluster" id="msg-chips" style={{ marginTop: 'var(--space-4)' }}>
+                        {classificationChips.map(([val, label, count]) => (
+                            <button
+                                key={val}
+                                type="button"
+                                onClick={() => setClassificationFilter(val)}
+                                className={`c-chip${classificationFilter === val ? ' is-active' : ''}`}
+                            >
+                                {label} <span className="c-chip__n">{count}</span>
+                            </button>
+                        ))}
 
-                        <select
-                            value={curationFilter}
-                            onChange={(event) =>
-                                setCurationFilter(event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                        <span className="mx-1 h-4 w-px bg-slate-200" aria-hidden="true" />
+
+                        {[
+                            ['all', 'Todo el tiempo'],
+                            ['24h', '24 Horas'],
+                            ['week', 'Semana'],
+                            ['month', 'Mes'],
+                        ].map(([value, label]) => (
+                            <button
+                                key={value}
+                                type="button"
+                                onClick={() => setTimeFilter(value)}
+                                className={`c-chip${timeFilter === value ? ' is-active' : ''}`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {curationError && (
+                        <div
+                            role="alert"
+                            className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-medium text-rose-700"
                         >
-                            <option value="all">
-                                Todos los estados
-                            </option>
-                            <option value="pending_eval">
-                                Pendientes de evaluar
-                            </option>
-                            <option value="pending_copy">
-                                Pendientes de publicar
-                            </option>
-                            <option value="completos">
-                                Proceso completo
-                            </option>
-                            <option value="descartados">
-                                Descartado
-                            </option>
-                        </select>
-                    </div>
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <select
-                        value={sentimentFilter}
-                        onChange={(event) =>
-                            setSentimentFilter(event.target.value)
-                        }
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 outline-none focus:border-orange-400"
-                    >
-                        <option value="all">
-                            Todos los sentimientos
-                        </option>
-                        <option value="positive">
-                            Positivo
-                        </option>
-                        <option value="neutral">
-                            Neutral
-                        </option>
-                        <option value="negative">
-                            Negativo
-                        </option>
-                    </select>
-                </div>
-            </section>
-
-            {/* Cabecera de cola */}
-            <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs font-medium text-slate-500">
-                    Mostrando{' '}
-                    <span className="font-bold text-slate-700 tabular-nums">
-                        {filteredMessages.length}
-                    </span>{' '}
-                    {curationFilter === 'descartados'
-                        ? filteredMessages.length === 1
-                            ? 'mensaje descartado'
-                            : 'mensajes descartados'
-                        : curationFilter === 'completos'
-                        ? 'mensajes con proceso completo'
-                        : curationFilter === 'pending_eval'
-                        ? 'mensajes pendientes de evaluar'
-                        : curationFilter === 'pending_copy'
-                        ? 'mensajes en la cola de publicación'
-                        : 'mensajes en total (Todos los mensajes)'}
-                    {(dateFrom || dateTo) && (
-                        <span className="ml-1 font-semibold text-purple-700">
-                            (en rango: {dateFrom || 'inicio'} a {dateTo || 'hoy'})
-                        </span>
+                            No se guardó la curaduría: {curationError}
+                        </div>
                     )}
-                </p>
-
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <span
-                        className={`h-2 w-2 rounded-full ${
-                            apiConnected
-                                ? 'bg-emerald-500'
-                                : 'bg-amber-400'
-                        }`}
-                    />
-                    Actualización en streaming
-                    {apiConnected ? ' activa' : ' pendiente'}
                 </div>
-            </div>
 
-            {curationError && (
-                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                    No se guardó la curaduría: {curationError}
-                </div>
-            )}
+                {/* Lista de Mensajes (#msg-list) */}
+                <div id="msg-list" className="max-h-[min(850px,70vh)] overflow-y-auto">
+                    {filteredMessages.length === 0 && (
+                        <div className="c-empty">
+                            <div className="c-empty__icon">
+                                <Search size={22} />
+                            </div>
+                            <p className="c-empty__title">No se encontraron mensajes</p>
+                            <p className="c-empty__text">
+                                Prueba con otros filtros o limpia la búsqueda.
+                            </p>
+                        </div>
+                    )}
 
-            {/* Mensajes */}
-            <div className="max-h-[min(850px,70vh)] overflow-y-auto pr-2 space-y-4">
-                {filteredMessages.length === 0 && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
-                        <MessageCircle
-                            size={36}
-                            className="mx-auto text-slate-300"
-                        />
-
-                        <h3 className="mt-4 font-semibold text-slate-900">
-                            No se encontraron mensajes
-                        </h3>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                            No hay mensajes disponibles con los filtros seleccionados.
-                        </p>
-                    </div>
-                )}
-
-                {filteredMessages.map((message) => {
-                    const isMsgPublished = Boolean(message.isPublished) || message.workflowStage === 'publicado'
-                    const currentCuration =
-                        curationStatus[message.id] ?? 'pending'
-                    const status =
-                        isMsgPublished
+                    {filteredMessages.map((message) => {
+                        const isMsgPublished =
+                            Boolean(message.isPublished) || message.workflowStage === 'publicado'
+                        const currentCuration = curationStatus[message.id] ?? 'pending'
+                        const status = isMsgPublished
                             ? 'curated'
                             : currentCuration === 'discarded' ||
                               (message.isAnalyzed &&
@@ -1439,281 +1455,231 @@ function Messages() {
                             ? 'discarded'
                             : currentCuration
 
-                    const ALL_PLATFORMS = ['Discord', 'LinkedIn', 'X'] as const
-                    const rawPublished = (message.publishedPlatforms || []).map((p) => {
-                        const lower = p.toLowerCase()
-                        if (lower === 'discord') return 'Discord'
-                        if (lower === 'linkedin') return 'LinkedIn'
-                        if (lower === 'x' || lower === 'twitter') return 'X'
-                        return p
-                    })
-                    const canonicalPublished = ALL_PLATFORMS.filter((p) => rawPublished.includes(p))
-                    const effectivePublished = canonicalPublished.length > 0 ? canonicalPublished : ['Discord']
-                    const missingPlatforms = ALL_PLATFORMS.filter((p) => !effectivePublished.includes(p))
-                    const publishedPlatformsText = effectivePublished.join(', ')
+                        const ALL_PLATFORMS = ['Discord', 'LinkedIn', 'X'] as const
+                        const rawPublished = (message.publishedPlatforms || []).map((p) => {
+                            const lower = p.toLowerCase()
+                            if (lower === 'discord') return 'Discord'
+                            if (lower === 'linkedin') return 'LinkedIn'
+                            if (lower === 'x' || lower === 'twitter') return 'X'
+                            return p
+                        })
+                        const canonicalPublished = ALL_PLATFORMS.filter((p) =>
+                            rawPublished.includes(p)
+                        )
+                        const effectivePublished =
+                            canonicalPublished.length > 0 ? canonicalPublished : ['Discord']
+                        const missingPlatforms = ALL_PLATFORMS.filter(
+                            (p) => !effectivePublished.includes(p)
+                        )
+                        const publishedPlatformsText = effectivePublished.join(', ')
 
-                    const actionButtonLabel = !isMsgPublished
-                        ? 'Generar publicación'
-                        : missingPlatforms.length > 0
+                        const actionButtonLabel = !isMsgPublished
+                            ? 'Generar publicación'
+                            : missingPlatforms.length > 0
                             ? `Publicar en demás redes (${missingPlatforms.join(', ')})`
                             : 'Ver en mesa de trabajo'
 
-                    const relevanceScore = message.relevance
+                        const relevanceScore = message.relevance
+                        const sentimentPillClass =
+                            message.sentiment === 'positive'
+                                ? 'c-pill--success'
+                                : message.sentiment === 'negative'
+                                ? 'c-pill--danger'
+                                : ''
 
-                    return (
-                        <article
-                            key={message.id}
-                            className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
-                        >
-                            <div className="flex flex-col xl:flex-row">
-                                {/* Contenido */}
-                                <div className="min-w-0 flex-1 p-5">
-                                    <div className="flex items-start gap-3">
-                                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700">
-                                            {message.initials}
+                        return (
+                            <div
+                                key={message.id}
+                                className="c-msg flex-col xl:flex-row xl:items-start"
+                            >
+                                <div className="flex min-w-0 flex-1 items-start gap-3">
+                                    <span className={`c-avatar ${getAvatarTone(message.author)}`}>
+                                        {message.initials}
+                                    </span>
+
+                                    <div className="c-msg__body">
+                                        <div className="c-msg__head">
+                                            <span className="c-msg__author">{message.author}</span>
+                                            <span className="t-caption text-slate-400">
+                                                @{message.author.toLowerCase().replace(/\s+/g, '_')}
+                                            </span>
+                                            <span className="c-tag c-tag--channel">
+                                                {message.channel.replace(/^#/, '')}
+                                            </span>
+                                            <span
+                                                className={`c-pill ${
+                                                    isMsgPublished ||
+                                                    status === 'curated' ||
+                                                    message.workflowStage === 'en_aprobacion' ||
+                                                    message.workflowStage === 'en_redaccion'
+                                                        ? 'c-pill--success'
+                                                        : !message.isAnalyzed ||
+                                                          message.workflowStage === 'ingesta' ||
+                                                          message.workflowStage === 'en_ingesta'
+                                                        ? 'c-pill--warning'
+                                                        : 'c-pill--info'
+                                                }`}
+                                            >
+                                                {isMsgPublished
+                                                    ? 'Publicado'
+                                                    : status === 'curated' ||
+                                                      message.workflowStage === 'en_aprobacion' ||
+                                                      message.workflowStage === 'en_redaccion'
+                                                    ? 'Completo'
+                                                    : !message.isAnalyzed ||
+                                                      message.workflowStage === 'ingesta' ||
+                                                      message.workflowStage === 'en_ingesta'
+                                                    ? 'Ingesta / IA'
+                                                    : 'Publicar'}
+                                            </span>
+                                            <span className="c-msg__time tabular-nums">
+                                                {message.time}
+                                            </span>
                                         </div>
 
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                                    <p className="font-bold text-slate-900">
-                                                        {message.author}
-                                                    </p>
+                                        <p className="c-msg__text">{message.message}</p>
 
-                                                    <span className="text-xs text-slate-400">
-                                                        @{message.author
-                                                            .toLowerCase()
-                                                            .replace(
-                                                                /\s+/g,
-                                                                '_'
-                                                            )}
+                                        <div className="c-msg__meta">
+                                            {message.isAnalyzed ? (
+                                                <>
+                                                    <span
+                                                        className={`c-pill c-pill--dot ${sentimentPillClass}`}
+                                                    >
+                                                        {message.sentimentLabel}
                                                     </span>
-
-                                                    <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">
+                                                    <span className="c-pill c-pill--brand">
+                                                        {message.topic}
+                                                    </span>
+                                                    <span className="c-pill c-pill--outline">
                                                         {message.classification}
                                                     </span>
-
-                                                    <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
-                                                        isMsgPublished
-                                                            ? 'bg-emerald-100 text-emerald-700'
-                                                            : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
-                                                            ? 'bg-emerald-100 text-emerald-700'
-                                                            : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
-                                                            ? 'bg-amber-100 text-amber-700'
-                                                            : 'bg-indigo-100 text-indigo-700'
-                                                    }`}>
-                                                        {isMsgPublished
-                                                            ? 'Publicado'
-                                                            : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
-                                                            ? 'Completo'
-                                                            : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
-                                                            ? 'Ingesta / IA'
-                                                            : 'Publicar'}
-                                                    </span>
-
-                                                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600">
-                                                        <Hash size={11} />
-                                                        {message.channel}
-                                                    </span>
-
-                                                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 tabular-nums">
-                                                        <Clock3 size={11} />
-                                                        {message.time}
-                                                    </span>
-                                                </div>
-
-                                                {message.isAnalyzed && (
-                                                    <div
-                                                        className="score-ring"
-                                                        style={{ '--p': relevanceScore } as React.CSSProperties}
-                                                        title={`Relevancia IA: ${relevanceScore}%`}
-                                                    >
-                                                        <span className="tabular-nums">{relevanceScore}%</span>
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            <p className="mt-3 text-sm leading-6 text-slate-700">
-                                                {message.message}
-                                            </p>
-
-                                            {/* Keywords */}
-                                            {message.isAnalyzed && message.keywords.length > 0 && (
-                                                <div className="mt-3 flex flex-wrap items-center gap-2">
-                                                    <Tag
-                                                        size={13}
-                                                        className="text-slate-400"
-                                                    />
-
-                                                    {message.keywords
-                                                        .slice(0, 6)
-                                                        .map(
-                                                            (
-                                                                keyword
-                                                            ) => (
-                                                                <span
-                                                                    key={
-                                                                        keyword
-                                                                    }
-                                                                    className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600"
-                                                                >
-                                                                    #
-                                                                    {
-                                                                        keyword
-                                                                    }
-                                                                </span>
-                                                            )
-                                                        )}
-                                                </div>
-                                            )}
-
-                                            {/* Reacciones visuales */}
-                                            <div className="mt-4 flex flex-wrap gap-2">
-                                                {message.isAnalyzed ? (
-                                                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                                                        <ThumbsUp size={12} />
+                                                    <span className="c-pill c-pill--success">
+                                                        <ThumbsUp size={11} />
                                                         Analizado con IA
                                                     </span>
-                                                ) : (
-                                                    <span className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
-                                                        <Clock3 size={12} />
+                                                    {message.highlight && (
+                                                        <span className="c-pill c-pill--brand">
+                                                            Destacado
+                                                        </span>
+                                                    )}
+                                                    {isMsgPublished && (
+                                                        <span className="c-pill c-pill--success">
+                                                            ✓ Publicado en: {publishedPlatformsText}
+                                                        </span>
+                                                    )}
+                                                    {message.keywords.slice(0, 6).map((keyword) => (
+                                                        <span key={keyword} className="c-tag">
+                                                            #{keyword}
+                                                        </span>
+                                                    ))}
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span className="c-pill c-pill--warning c-pill--dot">
+                                                        <Clock3 size={11} />
                                                         Pendiente por Analizar
                                                     </span>
-                                                )}
-
-                                                {message.highlight && (
-                                                    <span className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-700">
-                                                        Destacado
+                                                    <span className="c-pill c-pill--outline">
+                                                        {message.classification}
                                                     </span>
-                                                )}
-
-                                                {isMsgPublished && (
-                                                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                                                        ✓ Publicado en: {publishedPlatformsText}
+                                                    <span className="t-caption italic text-slate-500">
+                                                        ⚡ Pendiente por Analizar · Mensaje crudo en ingesta. Pulsa &apos;Evaluar con IA&apos; para clasificarlo
                                                     </span>
-                                                )}
-                                            </div>
-
-                                            {/* Metadatos IA */}
-                                            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3 text-[11px]">
-                                                {message.isAnalyzed ? (
-                                                    <>
-                                                        <span className="text-slate-500">
-                                                             Tema:{' '}
-                                                            <strong className="text-slate-700">
-                                                                {message.topic}
-                                                            </strong>
-                                                        </span>
-
-                                                        <span className="text-slate-500 tabular-nums">
-                                                            Relevancia:{' '}
-                                                            <strong className="text-slate-700 tabular-nums">
-                                                                {message.relevance}%
-                                                            </strong>
-                                                        </span>
-
-                                                        <span className="text-slate-500">
-                                                            Sentimiento:{' '}
-                                                            <strong
-                                                                className={
-                                                                    message.sentiment ===
-                                                                    'positive'
-                                                                        ? 'text-emerald-600'
-                                                                        : message.sentiment ===
-                                                                            'negative'
-                                                                          ? 'text-rose-600'
-                                                                          : 'text-blue-600'
-                                                                }
-                                                            >
-                                                                {
-                                                                    message.sentimentLabel
-                                                                }
-                                                            </strong>
-                                                        </span>
-                                                    </>
-                                                ) : (
-                                                    <span className="inline-flex items-center gap-1.5 text-xs text-amber-700 font-medium italic">
-                                                        <span>⚡ Pendiente por Analizar</span>
-                                                        <span className="text-slate-300">·</span>
-                                                        <span className="text-slate-500 font-normal">
-                                                            Mensaje crudo en ingesta. Pulsa &apos;Evaluar IA&apos; para clasificarlo
-                                                        </span>
-                                                    </span>
-                                                )}
-                                            </div>
+                                                </>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* Acciones */}
-                                <aside className="flex shrink-0 flex-col justify-between gap-4 border-t border-slate-100 bg-slate-50/40 p-4 xl:w-56 xl:border-l xl:border-t-0">
-                                    <div>
-                                        <StatusBadge
-                                            status={status}
-                                            isAnalyzed={message.isAnalyzed}
-                                            isPublished={isMsgPublished}
-                                            workflowStage={message.workflowStage}
-                                        />
-
-                                        <div className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1">
-                                            {status === 'discarded' ? (
-                                                <button
-                                                    type="button"
-                                                    title="Restaurar mensaje a pendientes"
-                                                    disabled={savingCurationId !== null}
-                                                    onClick={() =>
-                                                        markCuration(
-                                                            message,
-                                                            'pending'
-                                                        )
-                                                    }
-                                                    className="flex h-9 items-center justify-center rounded-lg text-emerald-600 transition hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    <RotateCcw size={15} />
-                                                </button>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    title={
-                                                        isMsgPublished
-                                                            ? 'Mensaje ya publicado (no se puede descartar)'
-                                                            : 'Descartar'
-                                                    }
-                                                    disabled={savingCurationId !== null || isMsgPublished}
-                                                    onClick={() =>
-                                                        markCuration(
-                                                            message,
-                                                            'discarded'
-                                                        )
-                                                    }
-                                                    className="flex h-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    <X size={15} />
-                                                </button>
-                                            )}
-
-                                            <button
-                                                type="button"
-                                                title="Copiar contenido"
-                                                onClick={() =>
-                                                    navigator.clipboard.writeText(
-                                                        message.message
-                                                    )
-                                                }
-                                                className="flex h-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                                            >
-                                                <Copy size={15} />
-                                            </button>
+                                {/* Columna derecha: Relevancia, Estado y Botones de Acción (CommunityLab DS) */}
+                                <aside className="c-msg__score w-full shrink-0 gap-2 border-t border-slate-100 pt-3 xl:w-64 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0">
+                                    <div className="flex w-full items-center justify-between gap-2.5">
+                                        <div className="min-w-0 flex-1">
+                                            <StatusBadge
+                                                status={status}
+                                                isAnalyzed={message.isAnalyzed}
+                                                isPublished={isMsgPublished}
+                                                workflowStage={message.workflowStage}
+                                            />
                                         </div>
+
+                                        {message.isAnalyzed && (
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                <div className="flex flex-col items-end gap-0.5">
+                                                    <div className="flex items-baseline gap-1">
+                                                        <b>{relevanceScore}</b>
+                                                        <span className="t-caption">relevancia</span>
+                                                    </div>
+                                                    <div
+                                                        className="c-progress c-progress--sm"
+                                                        style={{ width: '3.75rem' }}
+                                                    >
+                                                        <div
+                                                            className="c-progress__bar"
+                                                            style={{ width: `${relevanceScore}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div
+                                                    className="score-ring"
+                                                    style={
+                                                        { '--p': relevanceScore } as React.CSSProperties
+                                                    }
+                                                    title={`Relevancia IA: ${relevanceScore}%`}
+                                                >
+                                                    <span className="tabular-nums">
+                                                        {relevanceScore}%
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
 
-                                    <div className="grid grid-cols-1 gap-2">
+                                    <div className="flex w-full items-center gap-1.5">
+                                        {status === 'discarded' ? (
+                                            <button
+                                                type="button"
+                                                title="Restaurar mensaje a pendientes"
+                                                aria-label="Restaurar mensaje a pendientes"
+                                                disabled={savingCurationId !== null}
+                                                onClick={() => markCuration(message, 'pending')}
+                                                className="c-btn c-btn--secondary c-btn--icon c-btn--sm text-emerald-600 hover:text-emerald-700"
+                                            >
+                                                <RotateCcw size={14} />
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                title={
+                                                    isMsgPublished
+                                                        ? 'Mensaje ya publicado (no se puede descartar)'
+                                                        : 'Descartar'
+                                                }
+                                                aria-label="Descartar"
+                                                disabled={savingCurationId !== null || isMsgPublished}
+                                                onClick={() => markCuration(message, 'discarded')}
+                                                className="c-btn c-btn--secondary c-btn--icon c-btn--sm hover:text-rose-600"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        )}
+
+                                        <button
+                                            type="button"
+                                            title="Copiar contenido"
+                                            aria-label="Copiar contenido"
+                                            onClick={() =>
+                                                navigator.clipboard.writeText(message.message)
+                                            }
+                                            className="c-btn c-btn--secondary c-btn--icon c-btn--sm"
+                                        >
+                                            <Copy size={14} />
+                                        </button>
+
                                         {!message.isAnalyzed && (
                                             <button
                                                 type="button"
-                                                onClick={() =>
-                                                    handleEvaluateSingleMessage(message)
-                                                }
+                                                onClick={() => handleEvaluateSingleMessage(message)}
                                                 disabled={
                                                     status === 'discarded' ||
                                                     evaluatingMessageId === message.interactionId
@@ -1723,7 +1689,7 @@ function Messages() {
                                                         ? 'Restaura el mensaje para evaluarlo con IA'
                                                         : `Evaluar este mensaje con ${selectedAiBrain}`
                                                 }
-                                                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-purple-600 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                className="c-btn c-btn--primary c-btn--sm flex-1 justify-center"
                                             >
                                                 <Sparkles
                                                     size={13}
@@ -1733,9 +1699,11 @@ function Messages() {
                                                             : ''
                                                     }
                                                 />
-                                                {evaluatingMessageId === message.interactionId
-                                                    ? 'Evaluando...'
-                                                    : 'Evaluar IA'}
+                                                <span>
+                                                    {evaluatingMessageId === message.interactionId
+                                                        ? 'Evaluando...'
+                                                        : 'Evaluar con IA'}
+                                                </span>
                                             </button>
                                         )}
 
@@ -1743,9 +1711,14 @@ function Messages() {
                                             <button
                                                 type="button"
                                                 onClick={() =>
-                                                    navigate(`/content?interaction=${message.interactionId}`, {
-                                                        state: { interactionId: message.interactionId },
-                                                    })
+                                                    navigate(
+                                                        `/content?interaction=${message.interactionId}`,
+                                                        {
+                                                            state: {
+                                                                interactionId: message.interactionId,
+                                                            },
+                                                        }
+                                                    )
                                                 }
                                                 disabled={status === 'discarded' && !isMsgPublished}
                                                 title={
@@ -1753,19 +1726,19 @@ function Messages() {
                                                         ? 'Restaura el mensaje para generar publicación'
                                                         : actionButtonLabel
                                                 }
-                                                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-orange-500 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                                className="c-btn c-btn--primary c-btn--sm flex-1 justify-center"
                                             >
-                                                <span>{actionButtonLabel}</span>
-                                                <ChevronRight size={14} />
+                                                <span className="truncate">{actionButtonLabel}</span>
+                                                <ChevronRight size={14} className="shrink-0" />
                                             </button>
                                         )}
                                     </div>
                                 </aside>
                             </div>
-                        </article>
-                    )
-                })}
-            </div>
+                        )
+                    })}
+                </div>
+            </article>
 
             {/* Nota integración */}
             <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
@@ -1806,8 +1779,7 @@ function StatusBadge({
 }) {
     if (isPublished || workflowStage === 'publicado') {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className="c-pill c-pill--success c-pill--dot w-full justify-center">
                 Proceso completo
             </span>
         )
@@ -1815,8 +1787,8 @@ function StatusBadge({
 
     if (status === 'discarded') {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-700">
-                <ShieldAlert size={12} />
+            <span className="c-pill c-pill--danger w-full justify-center">
+                <ShieldAlert size={11} />
                 Descartado
             </span>
         )
@@ -1828,8 +1800,7 @@ function StatusBadge({
         workflowStage === 'en_redaccion'
     ) {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className="c-pill c-pill--success c-pill--dot w-full justify-center">
                 Listo / Aprobado
             </span>
         )
@@ -1838,8 +1809,8 @@ function StatusBadge({
     // Si es totalmente crudo y le falta el análisis con IA
     if (!isAnalyzed || workflowStage === 'ingesta' || workflowStage === 'en_ingesta') {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700">
-                <Clock3 size={12} />
+            <span className="c-pill c-pill--warning w-full justify-center">
+                <Clock3 size={11} />
                 Falta análisis con IA
             </span>
         )
@@ -1847,8 +1818,8 @@ function StatusBadge({
 
     // Ya analizado por IA, pero le falta la parte de redacción / publicación
     return (
-        <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700">
-            <Sparkles size={12} />
+        <span className="c-pill c-pill--info w-full justify-center">
+            <Sparkles size={11} />
             Falta redacción de publicación
         </span>
     )

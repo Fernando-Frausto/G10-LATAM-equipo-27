@@ -642,3 +642,12 @@ body {
   box-shadow: inset 3px 0 0 var(--color-brand, #ff7400), var(--shadow-sm);
   border-color: var(--color-brand, #ff7400) !important;
 }
+
+/* ---------- Empty State & Input Group Icon (Cristian DS) ---------- */
+.c-input-group > .icon { position: absolute; left: 0.875rem; color: var(--text-subtle); pointer-events: none; }
+.c-input-group > .icon + .c-input { padding-left: 2.5rem; }
+
+.c-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: var(--space-12) var(--space-6); }
+.c-empty__icon { display: flex; align-items: center; justify-content: center; width: 3.5rem; height: 3.5rem; border-radius: 50%; background: var(--slate-100); color: var(--text-subtle); }
+.c-empty__title { margin-top: var(--space-4); font-weight: var(--weight-semibold); color: var(--text-strong); }
+.c-empty__text { margin-top: var(--space-1); max-width: 22rem; font-size: var(--text-sm); color: var(--text-muted); }
