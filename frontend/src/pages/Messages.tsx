@@ -750,7 +750,7 @@ function Messages() {
             {/* Encabezado */}
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                 <div>
-                    <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
+                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight t-page t-page--xl">
                         Ingesta de mensajes
                     </h1>
 
