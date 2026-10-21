@@ -748,43 +748,85 @@ function Messages() {
         <div className="space-y-6">
 
             {/* Encabezado */}
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-500">
-                        <MessageCircle size={21} />
-                    </div>
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                    <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
+                        Ingesta de mensajes
+                    </h1>
 
-                    <div>
-                        <h2 className="text-2xl font-bold text-slate-900">
-                            Ingesta de mensajes
-                        </h2>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                            Monitoreo, análisis y curaduría de conversaciones de Discord
-                        </p>
-                    </div>
+                    <p className="mt-1 text-sm text-slate-500">
+                        Monitoreo, análisis y curaduría de conversaciones de Discord
+                    </p>
                 </div>
 
-                <div
-                    className={`flex items-center gap-2 rounded-lg px-3 py-2 ${
-                        apiConnected
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-amber-50 text-amber-700'
-                    }`}
-                >
-                    <div
-                        className={`h-2 w-2 rounded-full ${
-                            apiConnected
-                                ? 'bg-emerald-500'
-                                : 'bg-amber-500'
-                        }`}
-                    />
+                {/* Sección compacta: Mensajes totales recibidos, telemetría y sincronización */}
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/90 bg-white px-4 py-2.5 shadow-sm tabular-nums">
+                        <div>
+                            <div className="flex items-baseline gap-1.5">
+                                <span className="text-2xl font-black tracking-tight text-slate-950">
+                                    {(apiData.total || messageItems.length).toLocaleString('es-CO')}
+                                </span>
+                                <span className="text-xs font-semibold text-slate-500">
+                                    totales recibidos
+                                </span>
+                            </div>
 
-                    <span className="text-xs font-semibold">
-                        {apiConnected
-                            ? 'Motor de ingesta conectado'
-                            : 'Esperando conexión del Motor IA'}
-                    </span>
+                            <div className="flex items-center gap-1.5 text-[11px]">
+                                <span
+                                    className={`inline-flex items-center gap-1 font-semibold ${
+                                        apiConnected
+                                            ? 'text-emerald-700'
+                                            : 'text-amber-700'
+                                    }`}
+                                >
+                                    <span
+                                        className={`h-1.5 w-1.5 rounded-full ${
+                                            apiConnected
+                                                ? 'bg-emerald-500'
+                                                : 'bg-amber-500'
+                                        }`}
+                                    />
+                                    {apiConnected
+                                        ? 'Conexión a Discord activa'
+                                        : 'Conexión pendiente'}
+                                </span>
+                                <span className="text-slate-400">· Datos en Motor IA</span>
+                            </div>
+                        </div>
+
+                        <div className="hidden h-8 w-px bg-slate-200 sm:block" />
+
+                        <div className="flex divide-x divide-slate-100 text-center">
+                            <div className="px-2.5">
+                                <p className="text-[10px] font-medium text-slate-400">Bots omitidos</p>
+                                <p className="text-sm font-bold text-slate-600">
+                                    {(apiData.omitted_bots_count ?? 0).toLocaleString('es-CO')}
+                                </p>
+                            </div>
+
+                            <div className="px-2.5">
+                                <p className="text-[10px] font-medium text-slate-400">Reales detectados</p>
+                                <p className="text-sm font-bold text-emerald-600">
+                                    {(apiData.real_messages_count ?? apiData.total ?? messageItems.length).toLocaleString('es-CO')}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleSyncDiscord}
+                        disabled={isSyncingDiscord}
+                        className="c-btn c-btn--primary inline-flex items-center gap-2"
+                        style={{ height: '2.625rem' }}
+                    >
+                        <RefreshCw
+                            size={14}
+                            className={isSyncingDiscord ? 'animate-spin' : ''}
+                        />
+                        <span>{isSyncingDiscord ? 'Sincronizando...' : 'Sincronizar Discord'}</span>
+                    </button>
                 </div>
             </div>
 
@@ -863,86 +905,6 @@ function Messages() {
                 </div>
             )}
 
-            {/* Estado Discord */}
-            <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                    <div className="flex items-center gap-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm">
-                            <MessageCircle size={25} />
-                        </div>
-
-                        <div>
-                            <div className="flex flex-wrap items-baseline gap-2">
-                                <span className="text-3xl font-black tracking-tight text-slate-950 tabular-nums">
-                                    {apiData.total || messageItems.length}
-                                </span>
-
-                                <span className="text-sm font-semibold text-slate-500">
-                                    Mensajes totales recibidos
-                                </span>
-                            </div>
-
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                                <span
-                                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ${
-                                        apiConnected
-                                            ? 'bg-emerald-50 text-emerald-700'
-                                            : 'bg-amber-50 text-amber-700'
-                                    }`}
-                                >
-                                    <span
-                                        className={`h-1.5 w-1.5 rounded-full ${
-                                            apiConnected
-                                                ? 'bg-emerald-500'
-                                                : 'bg-amber-500'
-                                        }`}
-                                    />
-
-                                    {apiConnected
-                                        ? 'Conexión a Discord activa'
-                                        : 'Conexión pendiente'}
-                                </span>
-
-                                <span className="text-slate-400">
-                                    Datos almacenados en Motor IA
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex divide-x divide-slate-200 rounded-xl border border-slate-100 tabular-nums">
-                            <div className="px-6 py-2 text-center">
-                                <p className="text-xs font-medium text-slate-500">Mensajes omitidos de bots</p>
-                                <p className="mt-1 text-lg font-bold text-slate-600 tabular-nums">
-                                    {apiData.omitted_bots_count ?? 0}
-                                </p>
-                            </div>
-
-                            <div className="px-6 py-2 text-center">
-                                <p className="text-xs font-medium text-slate-500">Mensajes reales detectados</p>
-                                <p className="mt-1 text-lg font-bold text-emerald-600 tabular-nums">
-                                    {apiData.real_messages_count ?? apiData.total ?? messageItems.length}
-                                </p>
-                            </div>
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={handleSyncDiscord}
-                            disabled={isSyncingDiscord}
-                            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            <RefreshCw
-                                size={14}
-                                className={isSyncingDiscord ? 'animate-spin' : ''}
-                            />
-                            {isSyncingDiscord ? 'Sincronizando...' : '📥 Sincronizar Discord'}
-                        </button>
-                    </div>
-                </div>
-            </section>
-
             {/* Panel de Evaluación IA por Lotes con Filtro de Fechas */}
             <section className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
                 <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -960,12 +922,35 @@ function Messages() {
                         </div>
                     </div>
 
-                    {aiModels.length > 0 && (
-                        <div className="flex items-center gap-1.5 rounded-lg bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 tabular-nums">
-                            <span className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
-                            {aiModels.length} cerebros IA disponibles
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div
+                            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${
+                                apiConnected
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-amber-50 text-amber-700'
+                            }`}
+                        >
+                            <span
+                                className={`h-2 w-2 rounded-full ${
+                                    apiConnected
+                                        ? 'bg-emerald-500'
+                                        : 'bg-amber-500'
+                                }`}
+                            />
+                            <span>
+                                {apiConnected
+                                    ? 'Motor de ingesta conectado'
+                                    : 'Esperando conexión del Motor IA'}
+                            </span>
                         </div>
-                    )}
+
+                        {aiModels.length > 0 && (
+                            <div className="flex items-center gap-1.5 rounded-lg bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 tabular-nums">
+                                <span className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
+                                {aiModels.length} cerebros IA disponibles
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* Medidor de Progreso de Evaluación (.c-meter) */}
