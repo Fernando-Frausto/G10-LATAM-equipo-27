@@ -12,7 +12,7 @@ export interface KpiCardProps {
     value: string
     description?: string
     icon: ReactNode
-    iconKind?: '' | 'indigo' | 'emerald' | 'amber' | 'sky'
+    iconKind?: '' | 'indigo' | 'emerald' | 'amber' | 'sky' | 'success' | 'danger' | 'info' | 'accent' | 'neutral'
     trend?: KpiTrend
     actionLink?: {
         label: string

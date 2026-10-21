@@ -1,11 +1,11 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import {
-  CheckCircle,
-  FileText,
+  Clock,
+  Hash,
   MessageSquare,
+  PenLine,
   RefreshCw,
-  Sparkles,
-  Tag,
+  Smile,
   Users,
 } from 'lucide-react'
 import {
@@ -20,7 +20,6 @@ import {
 
 import KpiCard from '../components/KpiCard'
 import FeaturedStories from '../components/FeaturedStories'
-import ChannelParticipation from '../components/ChannelParticipation'
 import SentimentChart from '../charts/SentimentChart'
 import TopicsChart from '../charts/TopicsChart'
 import SentimentEvolution from '../charts/SentimentEvolution'
@@ -481,8 +480,8 @@ function Dashboard() {
                     label: 'esta semana',
                   }
             }
-            icon={<Sparkles size={18} />}
-            iconKind="emerald"
+            icon={<Smile size={18} />}
+            iconKind="success"
             sparkData={sparkPositive}
             sparkColor="#10b981"
           />
@@ -496,20 +495,20 @@ function Dashboard() {
               direction: 'up',
               label: 'esta semana',
             }}
-            icon={<Tag size={18} />}
+            icon={<Hash size={18} />}
             iconKind="amber"
             sparkData={sparkTopics}
-            sparkColor="#f59e0b"
+            sparkColor="#0f172a"
           />
 
           <KpiCard
             title="Contenidos generados"
             value={dashboardData.content_generated?.toLocaleString('es-CO') ?? '0'}
             description="Esta semana"
-            icon={<FileText size={18} />}
-            iconKind="sky"
+            icon={<PenLine size={18} />}
+            iconKind=""
             sparkData={sparkGenerated}
-            sparkColor="#0ea5e9"
+            sparkColor="#a855f7"
           />
 
           <KpiCard
@@ -517,10 +516,10 @@ function Dashboard() {
             value={dashboardData.pending_approvals?.toLocaleString('es-CO') ?? '0'}
             description="Requieren aprobación"
             actionLink={{ label: 'Por aprobar →', to: '/content' }}
-            icon={<CheckCircle size={18} />}
-            iconKind=""
+            icon={<Clock size={18} />}
+            iconKind="danger"
             sparkData={sparkPending}
-            sparkColor="#f97316"
+            sparkColor="#f59e0b"
           />
         </section>
 
@@ -669,11 +668,6 @@ function Dashboard() {
             key={`stories-${analyticsVersion}`}
             refreshKey={analyticsVersion}
           />
-        </section>
-
-        {/* Participación por canal */}
-        <section>
-          <ChannelParticipation key={`channels-${analyticsVersion}`} />
         </section>
       </div>
     </div>
