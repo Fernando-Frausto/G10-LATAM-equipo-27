@@ -158,6 +158,9 @@ function SentimentEvolution({ days = 30, refreshKey = 0 }: SentimentEvolutionPro
     const [data, setData] = useState<Array<EvolutionItem & { neutral: number; negative: number }>>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [showPositive, setShowPositive] = useState(true)
+    const [showNeutral, setShowNeutral] = useState(true)
+    const [showNegative, setShowNegative] = useState(true)
     const rawId = useId()
     const gradId = `pos-grad-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`
 
@@ -311,59 +314,80 @@ function SentimentEvolution({ days = 30, refreshKey = 0 }: SentimentEvolutionPro
                                         return [`${value}%`, label]
                                     }}
                                 />
-                                <Area
-                                    type="monotone"
-                                    dataKey="positive"
-                                    stroke="#10b981"
-                                    strokeWidth={2}
-                                    fill={`url(#${gradId})`}
-                                    dot={false}
-                                    activeDot={{ r: 4 }}
-                                />
-                                <Area
-                                    type="monotone"
-                                    dataKey="neutral"
-                                    stroke="#94a3b8"
-                                    strokeWidth={2}
-                                    fill="transparent"
-                                    dot={false}
-                                    activeDot={{ r: 4 }}
-                                />
-                                <Area
-                                    type="monotone"
-                                    dataKey="negative"
-                                    stroke="#f43f5e"
-                                    strokeWidth={2}
-                                    fill="transparent"
-                                    dot={false}
-                                    activeDot={{ r: 4 }}
-                                />
+                                {showPositive && (
+                                    <Area
+                                        type="monotone"
+                                        dataKey="positive"
+                                        stroke="#10b981"
+                                        strokeWidth={2}
+                                        fill={`url(#${gradId})`}
+                                        dot={false}
+                                        activeDot={{ r: 4 }}
+                                    />
+                                )}
+                                {showNeutral && (
+                                    <Area
+                                        type="monotone"
+                                        dataKey="neutral"
+                                        stroke="#94a3b8"
+                                        strokeWidth={2}
+                                        fill="transparent"
+                                        dot={false}
+                                        activeDot={{ r: 4 }}
+                                    />
+                                )}
+                                {showNegative && (
+                                    <Area
+                                        type="monotone"
+                                        dataKey="negative"
+                                        stroke="#f43f5e"
+                                        strokeWidth={2}
+                                        fill="transparent"
+                                        dot={false}
+                                        activeDot={{ r: 4 }}
+                                    />
+                                )}
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
 
                     <div className="c-legend">
-                        <span className="c-legend__item">
+                        <button
+                            type="button"
+                            className={`c-legend__item${!showPositive ? ' is-off' : ''}`}
+                            onClick={() => setShowPositive((v) => !v)}
+                            title={showPositive ? 'Ocultar Positivo' : 'Mostrar Positivo'}
+                        >
                             <span
                                 className="c-legend__swatch"
                                 style={{ background: '#10b981' }}
                             />
                             Positivo
-                        </span>
-                        <span className="c-legend__item">
+                        </button>
+                        <button
+                            type="button"
+                            className={`c-legend__item${!showNeutral ? ' is-off' : ''}`}
+                            onClick={() => setShowNeutral((v) => !v)}
+                            title={showNeutral ? 'Ocultar Neutral' : 'Mostrar Neutral'}
+                        >
                             <span
                                 className="c-legend__swatch"
                                 style={{ background: '#94a3b8' }}
                             />
                             Neutral
-                        </span>
-                        <span className="c-legend__item">
+                        </button>
+                        <button
+                            type="button"
+                            className={`c-legend__item${!showNegative ? ' is-off' : ''}`}
+                            onClick={() => setShowNegative((v) => !v)}
+                            title={showNegative ? 'Ocultar Negativo' : 'Mostrar Negativo'}
+                        >
                             <span
                                 className="c-legend__swatch"
                                 style={{ background: '#f43f5e' }}
                             />
                             Negativo
-                        </span>
+                        </button>
                     </div>
                 </>
             )}

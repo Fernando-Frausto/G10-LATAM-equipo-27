@@ -614,9 +614,9 @@ function Dashboard() {
             <div className="c-legend">
               <button
                 type="button"
-                className="c-legend__item"
-                style={{ opacity: showMessagesSeries ? 1 : 0.45 }}
+                className={`c-legend__item${!showMessagesSeries ? ' is-off' : ''}`}
                 onClick={() => setShowMessagesSeries((prev) => !prev)}
+                title={showMessagesSeries ? 'Ocultar Mensajes' : 'Mostrar Mensajes'}
               >
                 <span
                   className="c-legend__swatch"
@@ -626,9 +626,9 @@ function Dashboard() {
               </button>
               <button
                 type="button"
-                className="c-legend__item"
-                style={{ opacity: showQuestionsSeries ? 1 : 0.45 }}
+                className={`c-legend__item${!showQuestionsSeries ? ' is-off' : ''}`}
                 onClick={() => setShowQuestionsSeries((prev) => !prev)}
+                title={showQuestionsSeries ? 'Ocultar Preguntas' : 'Mostrar Preguntas'}
               >
                 <span
                   className="c-legend__swatch"
