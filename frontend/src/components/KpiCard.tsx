@@ -10,7 +10,7 @@ export interface KpiTrend {
 export interface KpiCardProps {
     title: string
     value: string
-    description?: string
+    description?: ReactNode
     icon: ReactNode
     iconKind?: '' | 'indigo' | 'emerald' | 'amber' | 'sky' | 'success' | 'danger' | 'info' | 'accent' | 'neutral'
     trend?: KpiTrend
@@ -18,6 +18,7 @@ export interface KpiCardProps {
         label: string
         to: string
     }
+    spark?: boolean
     sparkData?: number[]
     sparkColor?: string
 }
@@ -61,6 +62,7 @@ function KpiCard({
     iconKind = '',
     trend,
     actionLink,
+    spark = true,
     sparkData,
     sparkColor = '#ff7400',
 }: KpiCardProps) {
@@ -119,24 +121,26 @@ function KpiCard({
                 </span>
             </div>
 
-            <div className="c-stat__spark" aria-hidden="true">
-                <svg viewBox="0 0 300 36" preserveAspectRatio="none">
-                    <defs>
-                        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={sparkColor} stopOpacity="0.22" />
-                            <stop offset="100%" stopColor={sparkColor} stopOpacity="0" />
-                        </linearGradient>
-                    </defs>
-                    <path d={areaPath} fill={`url(#${gradId})`} />
-                    <path
-                        d={linePath}
-                        fill="none"
-                        stroke={sparkColor}
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                    />
-                </svg>
-            </div>
+            {spark && (
+                <div className="c-stat__spark" aria-hidden="true">
+                    <svg viewBox="0 0 300 36" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={sparkColor} stopOpacity="0.22" />
+                                <stop offset="100%" stopColor={sparkColor} stopOpacity="0" />
+                            </linearGradient>
+                        </defs>
+                        <path d={areaPath} fill={`url(#${gradId})`} />
+                        <path
+                            d={linePath}
+                            fill="none"
+                            stroke={sparkColor}
+                            strokeWidth="1.75"
+                            strokeLinecap="round"
+                        />
+                    </svg>
+                </div>
+            )}
         </article>
     )
 }

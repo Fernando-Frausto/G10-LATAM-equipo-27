@@ -7,13 +7,17 @@ import {
     Copy,
     Filter,
     Hash,
+    Inbox,
     MessageCircle,
+    MessageSquare,
     RefreshCw,
     RotateCcw,
     Search,
     Server,
     ShieldAlert,
+    Smile,
     Sparkles,
+    Star,
     Tag,
     ThumbsUp,
     X,
@@ -21,6 +25,7 @@ import {
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import KpiCard from '../components/KpiCard'
 import { updateMessageCuration } from '../api/messageCuration'
 import { syncDiscord } from '../api/discordSync'
 import { evaluateSingleMessage } from '../api/communityLive'
@@ -784,44 +789,54 @@ function Messages() {
             </div>
 
             {/* KPIs */}
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="l-grid l-grid--4 tabular-nums" id="msg-summary">
                 <KpiCard
-                    label="Mensajes analizados"
-                    value={analyzedCount}
-                    helper={
-                        messageItems.length > 0
-                            ? `${analyzedCount} de ${messageItems.length} (${messageItems.length - analyzedCount} pendientes)`
-                            : 'Sin mensajes'
+                    title="Analizados"
+                    value={analyzedCount.toLocaleString('es-CO')}
+                    description="Últimos 30 días"
+                    icon={<Inbox size={18} />}
+                    iconKind=""
+                    spark={false}
+                />
+
+                <KpiCard
+                    title="Positivos"
+                    value={positiveMessages.toLocaleString('es-CO')}
+                    description={
+                        <>
+                            <b className="t-success font-semibold text-emerald-600">
+                                {analyzedCount > 0
+                                    ? Math.round(
+                                          (positiveMessages / analyzedCount) *
+                                              100
+                                      )
+                                    : 0}
+                                %
+                            </b>{' '}
+                            del total
+                        </>
                     }
+                    icon={<Smile size={18} />}
+                    iconKind="success"
+                    spark={false}
                 />
 
                 <KpiCard
-                    label="Positivos"
-                    value={positiveMessages}
-                    helper={
-                        analyzedCount > 0
-                            ? `${Math.round(
-                                  (positiveMessages /
-                                      analyzedCount) *
-                                      100
-                              )}% de los analizados`
-                            : 'Sin mensajes analizados'
-                    }
-                    valueClass="text-emerald-600"
+                    title="Preguntas"
+                    value={questionMessages.toLocaleString('es-CO')}
+                    description="Candidatas a FAQ"
+                    icon={<MessageSquare size={18} />}
+                    iconKind="info"
+                    spark={false}
                 />
 
                 <KpiCard
-                    label="Preguntas"
-                    value={questionMessages}
-                    helper="Detectadas en la ingesta"
-                    valueClass="text-blue-600"
-                />
-
-                <KpiCard
-                    label="Destacados"
-                    value={highlightedMessages}
-                    helper="Interacciones relevantes"
-                    valueClass="text-orange-500"
+                    title="Destacados"
+                    value={highlightedMessages.toLocaleString('es-CO')}
+                    description="Relevancia ≥ 85"
+                    icon={<Star size={18} />}
+                    iconKind=""
+                    spark={false}
                 />
             </div>
 
@@ -1797,31 +1812,6 @@ function Messages() {
     )
 }
 
-function KpiCard({
-    label,
-    value,
-    helper,
-    valueClass = 'text-slate-900',
-}: {
-    label: string
-    value: number
-    helper: string
-    valueClass?: string
-}) {
-    return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm tabular-nums">
-            <p className="text-sm text-slate-500">{label}</p>
-
-            <p className={`mt-2 text-3xl font-bold tabular-nums ${valueClass}`}>
-                {value.toLocaleString('es-CO')}
-            </p>
-
-            <p className="mt-1 text-xs text-slate-400 tabular-nums">
-                {helper}
-            </p>
-        </div>
-    )
-}
 
 function StatusBadge({
     status,
