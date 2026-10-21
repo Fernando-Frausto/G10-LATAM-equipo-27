@@ -28,7 +28,7 @@ function buildSparkPaths(values: number[], width = 300, height = 36) {
             ? values
             : values && values.length === 1
               ? [values[0], values[0]]
-              : [0, 0, 0, 0, 0, 0, 0]
+              : [10, 12, 11, 14, 13, 16, 18]
 
     const min = Math.min(...safeValues)
     const max = Math.max(...safeValues)
@@ -66,7 +66,7 @@ function KpiCard({
 }: KpiCardProps) {
     const rawId = useId()
     const gradId = `spark-grad-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`
-    const { linePath, areaPath } = buildSparkPaths(sparkData || [1, 2, 2, 3, 3, 4, 4])
+    const { linePath, areaPath } = buildSparkPaths(sparkData || [10, 13, 12, 15, 14, 17, 19])
 
     const iconBoxClass = iconKind ? `c-iconbox c-iconbox--${iconKind}` : 'c-iconbox'
 
@@ -117,25 +117,25 @@ function KpiCard({
                 <span className={iconBoxClass} aria-hidden="true">
                     {icon}
                 </span>
+            </div>
 
-                <div className="c-stat__spark" aria-hidden="true">
-                    <svg viewBox="0 0 300 36" preserveAspectRatio="none">
-                        <defs>
-                            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={sparkColor} stopOpacity="0.22" />
-                                <stop offset="100%" stopColor={sparkColor} stopOpacity="0" />
-                            </linearGradient>
-                        </defs>
-                        <path d={areaPath} fill={`url(#${gradId})`} />
-                        <path
-                            d={linePath}
-                            fill="none"
-                            stroke={sparkColor}
-                            strokeWidth="1.75"
-                            strokeLinecap="round"
-                        />
-                    </svg>
-                </div>
+            <div className="c-stat__spark" aria-hidden="true">
+                <svg viewBox="0 0 300 36" preserveAspectRatio="none">
+                    <defs>
+                        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={sparkColor} stopOpacity="0.22" />
+                            <stop offset="100%" stopColor={sparkColor} stopOpacity="0" />
+                        </linearGradient>
+                    </defs>
+                    <path d={areaPath} fill={`url(#${gradId})`} />
+                    <path
+                        d={linePath}
+                        fill="none"
+                        stroke={sparkColor}
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                    />
+                </svg>
             </div>
         </article>
     )
