@@ -768,7 +768,7 @@ function Messages() {
                                     {(apiData.total || messageItems.length).toLocaleString('es-CO')}
                                 </span>
                                 <span className="text-xs font-semibold text-slate-500">
-                                    totales recibidos
+                                    Mensajes totales recibidos
                                 </span>
                             </div>
 
@@ -905,128 +905,233 @@ function Messages() {
                 </div>
             )}
 
-            {/* Panel de Evaluación IA por Lotes con Filtro de Fechas */}
-            <section className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            {/* Panel de Evaluación IA por Lotes con Filtro de Fechas (compacto - CommunityLab DS) */}
+            <section className="c-card" style={{ padding: '1rem 1.25rem' }}>
+                {/* Encabezado compacto */}
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-center gap-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-100 text-purple-600">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600">
                             <Bot size={20} />
                         </div>
-                        <div>
-                            <h3 className="font-bold text-slate-900">
+                        <div className="min-w-0">
+                            <h3 className="text-sm font-bold text-slate-900">
                                 Evaluación por Lote con Inteligencia Artificial
                             </h3>
-                            <p className="text-xs text-slate-500">
+                            <p className="text-[11px] text-slate-500">
                                 Clasifica sentimiento, relevancia y temas usando los modelos del motor IA
                             </p>
                         </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div
-                            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${
-                                apiConnected
-                                    ? 'bg-emerald-50 text-emerald-700'
-                                    : 'bg-amber-50 text-amber-700'
-                            }`}
-                        >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        {aiModels.length > 0 && (
+                            <span className="c-pill c-pill--accent tabular-nums">
+                                <span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
+                                {aiModels.length} cerebros IA disponibles
+                            </span>
+                        )}
+
+                        <span className={`c-pill ${apiConnected ? 'c-pill--success' : 'c-pill--warning'}`}>
                             <span
-                                className={`h-2 w-2 rounded-full ${
-                                    apiConnected
-                                        ? 'bg-emerald-500'
-                                        : 'bg-amber-500'
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                    apiConnected ? 'bg-emerald-500' : 'bg-amber-500'
                                 }`}
                             />
-                            <span>
-                                {apiConnected
-                                    ? 'Motor de ingesta conectado'
-                                    : 'Esperando conexión del Motor IA'}
-                            </span>
-                        </div>
-
-                        {aiModels.length > 0 && (
-                            <div className="flex items-center gap-1.5 rounded-lg bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 tabular-nums">
-                                <span className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
-                                {aiModels.length} cerebros IA disponibles
-                            </div>
-                        )}
+                            {apiConnected
+                                ? 'Motor de ingesta conectado'
+                                : 'Esperando conexión del Motor IA'}
+                        </span>
                     </div>
                 </div>
 
-                {/* Medidor de Progreso de Evaluación (.c-meter) */}
-                {!batchEvalMetrics.isDateRangeInverted && (
-                    <div className="mb-4 rounded-xl border border-slate-100 bg-slate-50/70 px-4 py-3">
-                        <div className="mb-1.5 flex items-center justify-between text-xs">
-                            <span className="font-semibold text-slate-600">
-                                Cobertura de evaluación IA en el rango seleccionado
-                            </span>
-                            <span className="font-bold text-slate-800 tabular-nums">
-                                {Math.max(0, batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange)} / {batchEvalMetrics.totalInRange} evaluados (
-                                {batchEvalMetrics.totalInRange > 0
-                                    ? Math.round(
-                                          ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
-                                              batchEvalMetrics.totalInRange) *
-                                              100
-                                      )
-                                    : 0}
-                                %)
-                            </span>
-                        </div>
-                        <div className="c-meter">
-                            <div
-                                className="c-meter__bar"
-                                style={{
-                                    width: `${
-                                        batchEvalMetrics.totalInRange > 0
-                                            ? Math.min(
-                                                  100,
-                                                  Math.round(
-                                                      ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
-                                                          batchEvalMetrics.totalInRange) *
-                                                          100
-                                                  )
-                                              )
-                                            : 0
-                                    }%`,
-                                }}
-                            />
-                        </div>
+                {/* Controles en una sola fila */}
+                <div className="mt-3 grid grid-cols-1 items-end gap-2.5 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                    {/* Selector de Cerebro IA */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Cerebro IA
+                        </label>
+                        <select
+                            value={selectedAiBrain}
+                            onChange={(e) => setSelectedAiBrain(e.target.value)}
+                            className="c-select"
+                            style={{ padding: '0.45rem 2rem 0.45rem 0.75rem', fontSize: '0.75rem' }}
+                        >
+                            {aiModels.map((m) => (
+                                <option key={m.id} value={m.name}>
+                                    {m.name} ({m.provider})
+                                </option>
+                            ))}
+                        </select>
                     </div>
+
+                    {/* Fecha Desde */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Desde (opcional)
+                        </label>
+                        <input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => setDateFrom(e.target.value)}
+                            className="c-input"
+                            style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
+                        />
+                    </div>
+
+                    {/* Fecha Hasta */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Hasta (opcional)
+                        </label>
+                        <input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => setDateTo(e.target.value)}
+                            className="c-input"
+                            style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
+                        />
+                    </div>
+
+                    {/* Selector de tamaño de lote */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Tamaño del lote
+                        </label>
+                        <select
+                            value={batchEvalMetrics.evaluableCount === 0 ? 0 : batchLimit}
+                            onChange={(e) => setBatchLimit(Number(e.target.value))}
+                            disabled={batchEvalMetrics.evaluableCount === 0 || isEvaluatingBatch}
+                            className="c-select disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                            style={{ padding: '0.45rem 2rem 0.45rem 0.75rem', fontSize: '0.75rem' }}
+                        >
+                            {batchEvalMetrics.evaluableCount === 0 ? (
+                                <option value={0} disabled>Sin pendientes</option>
+                            ) : (
+                                <>
+                                    <option value={1}>1 mensaje</option>
+                                    {batchEvalMetrics.evaluableCount > 1 && batchEvalMetrics.evaluableCount < 5 && (
+                                        <option value={batchEvalMetrics.evaluableCount}>
+                                            Evaluar todos ({batchEvalMetrics.evaluableCount})
+                                        </option>
+                                    )}
+                                    <option value={5}>5 mensajes</option>
+                                    {batchEvalMetrics.evaluableCount > 5 && batchEvalMetrics.evaluableCount < 10 && (
+                                        <option value={batchEvalMetrics.evaluableCount}>
+                                            Evaluar todos ({batchEvalMetrics.evaluableCount})
+                                        </option>
+                                    )}
+                                    <option value={10}>10 mensajes</option>
+                                </>
+                            )}
+                        </select>
+                    </div>
+
+                    {/* Botón de Acción */}
+                    <button
+                        type="button"
+                        disabled={
+                            isEvaluatingBatch ||
+                            batchEvalMetrics.evaluableCount === 0 ||
+                            batchEvalMetrics.isDateRangeInverted
+                        }
+                        onClick={handleEvaluateBatch}
+                        title={
+                            batchEvalMetrics.isDateRangeInverted
+                                ? "La fecha 'Desde' no puede ser posterior a 'Hasta'"
+                                : batchEvalMetrics.evaluableCount === 0
+                                ? "No hay mensajes para evaluar con los criterios actuales"
+                                : undefined
+                        }
+                        className="c-btn c-btn--primary inline-flex items-center justify-center gap-2 whitespace-nowrap"
+                        style={{ height: '2.125rem', fontSize: '0.75rem' }}
+                    >
+                        <RefreshCw
+                            size={14}
+                            className={isEvaluatingBatch ? 'animate-spin' : ''}
+                        />
+                        <span>{isEvaluatingBatch ? 'Evaluando con IA...' : 'Evaluar mensajes con IA'}</span>
+                    </button>
+                </div>
+
+                {selectedAiBrain.toLowerCase().includes('gemma') && (
+                    <p className="mt-1.5 text-[11px] font-medium text-amber-700">
+                        ⚠️ Google Gemma 4 es un modelo denso (31B) y puede demorar entre 30 y 45s. Para respuesta inmediata usa Groq.
+                    </p>
                 )}
 
-                {/* Contador reactivo e indicadores de estado */}
-                <div className="mb-4 space-y-2">
+                {/* Franja de estado: cobertura IA + conteos del rango */}
+                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
                     {batchEvalMetrics.isDateRangeInverted ? (
                         <div
                             role="alert"
-                            className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-700"
+                            className="flex items-center gap-2 text-xs font-semibold text-rose-700"
                         >
-                            <AlertCircle size={16} className="shrink-0 text-rose-600" />
+                            <AlertCircle size={15} className="shrink-0 text-rose-600" />
                             <span>La fecha 'Desde' no puede ser posterior a 'Hasta'.</span>
                         </div>
                     ) : (
-                        <div className="flex flex-wrap items-center gap-2">
-                            <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-purple-100 bg-purple-50/80 px-3.5 py-2 text-xs text-slate-700 tabular-nums">
-                                <span className="font-bold text-purple-950">
+                        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:gap-4">
+                            {/* Medidor de Progreso de Evaluación (.c-meter) */}
+                            <div className="shrink-0 xl:w-80">
+                                <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
+                                    <span className="font-semibold text-slate-600">
+                                        Cobertura de evaluación IA en el rango seleccionado
+                                    </span>
+                                    <span className="font-bold text-slate-800 tabular-nums whitespace-nowrap">
+                                        {Math.max(0, batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange)} / {batchEvalMetrics.totalInRange} evaluados (
+                                        {batchEvalMetrics.totalInRange > 0
+                                            ? Math.round(
+                                                  ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
+                                                      batchEvalMetrics.totalInRange) *
+                                                      100
+                                              )
+                                            : 0}
+                                        %)
+                                    </span>
+                                </div>
+                                <div className="c-meter">
+                                    <div
+                                        className="c-meter__bar"
+                                        style={{
+                                            width: `${
+                                                batchEvalMetrics.totalInRange > 0
+                                                    ? Math.min(
+                                                          100,
+                                                          Math.round(
+                                                              ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
+                                                                  batchEvalMetrics.totalInRange) *
+                                                                  100
+                                                          )
+                                                      )
+                                                    : 0
+                                            }%`,
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="hidden h-8 w-px bg-slate-200 xl:block" />
+
+                            {/* Contador reactivo e indicadores de estado */}
+                            <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-700 tabular-nums">
+                                <span className="font-bold text-slate-900">
                                     📊 {batchEvalMetrics.totalInRange} mensajes en este rango:
                                 </span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-amber-700">
-                                    <Clock3 size={13} className="shrink-0" />
+                                    <Clock3 size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.pendingEvalInRange}</strong> pendientes de evaluar
                                 </span>
-                                <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-indigo-700">
-                                    <Sparkles size={13} className="shrink-0" />
+                                    <Sparkles size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.pendingCopyInRange}</strong> Pendientes de publicar
                                 </span>
-                                <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-emerald-700">
-                                    <ThumbsUp size={13} className="shrink-0" />
+                                    <ThumbsUp size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.completedInRange}</strong> con proceso completo
                                 </span>
-                                <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-rose-700">
-                                    <X size={13} className="shrink-0" />
+                                    <X size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.discardedInRange}</strong> descartados
                                 </span>
                             </div>
@@ -1038,27 +1143,27 @@ function Messages() {
                                         setDateFrom('')
                                         setDateTo('')
                                     }}
-                                    className="inline-flex items-center gap-1.5 rounded-xl border border-purple-200 bg-white px-3 py-1.5 text-xs font-semibold text-purple-700 shadow-sm transition hover:bg-purple-50"
+                                    className="c-btn c-btn--secondary c-btn--sm shrink-0"
                                     title="Quitar filtro de fechas para ver todos los mensajes"
                                 >
-                                    <X size={13} />
+                                    <X size={12} />
                                     Mostrar todos los mensajes
                                 </button>
                             )}
+                        </div>
+                    )}
 
-                            {batchEvalMetrics.evaluableCount === 0 && (
-                                <div
-                                    role="status"
-                                    className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800"
-                                >
-                                    <AlertTriangle size={15} className="shrink-0 text-amber-600" />
-                                    <span>
-                                        {batchEvalMetrics.totalInRange === 0
-                                            ? 'Sin mensajes en este rango de fechas.'
-                                            : 'Todos los mensajes de este rango ya fueron evaluados (puedes explorarlos abajo).'}
-                                    </span>
-                                </div>
-                            )}
+                    {!batchEvalMetrics.isDateRangeInverted && batchEvalMetrics.evaluableCount === 0 && (
+                        <div
+                            role="status"
+                            className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-800"
+                        >
+                            <AlertTriangle size={13} className="shrink-0 text-amber-600" />
+                            <span>
+                                {batchEvalMetrics.totalInRange === 0
+                                    ? 'Sin mensajes en este rango de fechas.'
+                                    : 'Todos los mensajes de este rango ya fueron evaluados (puedes explorarlos abajo).'}
+                            </span>
                         </div>
                     )}
                 </div>
@@ -1066,7 +1171,7 @@ function Messages() {
                 {batchEvalMessage && (
                     <div
                         role="alert"
-                        className={`mb-4 flex items-center justify-between rounded-xl border px-4 py-3 text-xs font-medium ${
+                        className={`mt-3 flex items-center justify-between rounded-xl border px-3 py-2 text-xs font-medium ${
                             batchEvalMessage.type === 'success'
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                                 : batchEvalMessage.type === 'warning'
@@ -1084,116 +1189,6 @@ function Messages() {
                         </button>
                     </div>
                 )}
-
-                <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    {/* Selector de Cerebro IA */}
-                    <div>
-                        <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                            Cerebro IA
-                        </label>
-                        <select
-                            value={selectedAiBrain}
-                            onChange={(e) => setSelectedAiBrain(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-                        >
-                            {aiModels.map((m) => (
-                                <option key={m.id} value={m.name}>
-                                    {m.name} ({m.provider})
-                                </option>
-                            ))}
-                        </select>
-                        {selectedAiBrain.toLowerCase().includes('gemma') && (
-                            <p className="mt-1 text-[11px] font-medium text-amber-700">
-                                ⚠️ Google Gemma 4 es un modelo denso (31B) y puede demorar entre 30 y 45s. Para respuesta inmediata usa Groq.
-                            </p>
-                        )}
-                    </div>
-
-                    {/* Fecha Desde */}
-                    <div>
-                        <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                            Desde (opcional)
-                        </label>
-                        <input
-                            type="date"
-                            value={dateFrom}
-                            onChange={(e) => setDateFrom(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-                        />
-                    </div>
-
-                    {/* Fecha Hasta */}
-                    <div>
-                        <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                            Hasta (opcional)
-                        </label>
-                        <input
-                            type="date"
-                            value={dateTo}
-                            onChange={(e) => setDateTo(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-                        />
-                    </div>
-
-                    {/* Selector de tamaño de lote y Botón de Acción */}
-                    <div className="flex flex-col gap-2">
-                        <div>
-                            <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                                Tamaño del lote
-                            </label>
-                            <select
-                                value={batchEvalMetrics.evaluableCount === 0 ? 0 : batchLimit}
-                                onChange={(e) => setBatchLimit(Number(e.target.value))}
-                                disabled={batchEvalMetrics.evaluableCount === 0 || isEvaluatingBatch}
-                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                            >
-                                {batchEvalMetrics.evaluableCount === 0 ? (
-                                    <option value={0} disabled>Sin pendientes</option>
-                                ) : (
-                                    <>
-                                        <option value={1}>1 mensaje</option>
-                                        {batchEvalMetrics.evaluableCount > 1 && batchEvalMetrics.evaluableCount < 5 && (
-                                            <option value={batchEvalMetrics.evaluableCount}>
-                                                Evaluar todos ({batchEvalMetrics.evaluableCount})
-                                            </option>
-                                        )}
-                                        <option value={5}>5 mensajes</option>
-                                        {batchEvalMetrics.evaluableCount > 5 && batchEvalMetrics.evaluableCount < 10 && (
-                                            <option value={batchEvalMetrics.evaluableCount}>
-                                                Evaluar todos ({batchEvalMetrics.evaluableCount})
-                                            </option>
-                                        )}
-                                        <option value={10}>10 mensajes</option>
-                                    </>
-                                )}
-                            </select>
-                        </div>
-
-                        <button
-                            type="button"
-                            disabled={
-                                isEvaluatingBatch ||
-                                batchEvalMetrics.evaluableCount === 0 ||
-                                batchEvalMetrics.isDateRangeInverted
-                            }
-                            onClick={handleEvaluateBatch}
-                            title={
-                                batchEvalMetrics.isDateRangeInverted
-                                    ? "La fecha 'Desde' no puede ser posterior a 'Hasta'"
-                                    : batchEvalMetrics.evaluableCount === 0
-                                    ? "No hay mensajes para evaluar con los criterios actuales"
-                                    : undefined
-                            }
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            <RefreshCw
-                                size={14}
-                                className={isEvaluatingBatch ? 'animate-spin' : ''}
-                            />
-                            {isEvaluatingBatch ? 'Evaluando con IA...' : 'Evaluar mensajes con IA'}
-                        </button>
-                    </div>
-                </div>
             </section>
 
             {/* Panel de filtrado */}
