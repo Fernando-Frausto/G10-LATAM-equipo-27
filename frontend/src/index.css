@@ -610,14 +610,14 @@ body {
 }
 
 .score-ring--sm {
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.95rem;
+  height: 1.95rem;
 }
 
 .score-ring--sm span {
-  width: 1.25rem;
-  height: 1.25rem;
-  font-size: 0.55rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 0.6rem;
 }
 
 /* ---------- Vista Previa en Vivo Discord Embed ---------- */
