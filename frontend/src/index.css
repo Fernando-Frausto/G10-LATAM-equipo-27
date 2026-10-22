@@ -346,6 +346,18 @@ body {
 .c-card--lg { padding: var(--space-6); }
 .c-card--flush { padding: 0; overflow: hidden; }
 .c-card--muted { background: var(--surface-muted); box-shadow: none; }
+.emoji-card {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+.emoji-card__e {
+  font-size: 2rem;
+  line-height: 1;
+}
 .c-card--brand {
   background:
     radial-gradient(circle at 88% 18%, rgb(255 116 0 / 0.18), transparent 55%),

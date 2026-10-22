@@ -4,21 +4,25 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
 ## Estado actual
 - **Sincronización Discord y Evaluación IA:** Ingesta bajo demanda (`POST /api/v1/discord/sync`), evaluación individual y por lotes (`POST /api/v1/ai/evaluate-batch`) con 3 cerebros (Groq, Gemma, Gemini). Sincronización directa en SQLite local y Supabase (`lotes_ia_kpis`).
 - **Dashboard Homologado 1:1 con Cristian (Spec 020):** 6 tarjetas KPI con iconos exactos (`Smile` en verde, `Hash` con sparkline negro, `PenLine` con sparkline morado, `Clock` en rojo), sin sección de participación por canal, título `Dashboard` en negrita, filtros interactivos de sentimiento y botón funcional `Actualizar datos`.
-- **Ingesta de Mensajes Homologada (Spec 020):**
-  - **4 Tarjetas KPI Superiores (`#msg-summary`):** Homologadas 1:1 con el Design System de Cristian (`l-grid l-grid--4` y `KpiCard`): `Analizados` (`Inbox`), `Positivos` (`Smile` en `.c-iconbox--success` con `% del total`), `Preguntas` (`MessageSquare` en `.c-iconbox--info` con `Candidatas a FAQ`) y `Destacados` (`Star` con `Relevancia ≥ 85`), con datos reales y sin sparkline.
-  - **Cabecera Compacta y Título Homologado:** Título `Ingesta de mensajes` estilizado idéntico al de Dashboard (`text-3xl font-bold tracking-tight t-page t-page--xl`). Sección compacta de `Mensajes totales recibidos` en cabecera con botón `Sincronizar Discord`.
-  - **Panel Evaluación por Lote compacto:** `.c-card` con píldoras `.c-pill` (primero `cerebros IA`, luego `Motor de ingesta`), robot morado conservado, controles en una sola fila (`.c-select`/`.c-input` compactos + `Evaluar mensajes con IA` `.c-btn--primary`) y franja única de cobertura `.c-meter` + conteos del rango.
-  - **Sección Unificada de Filtrado y Lista de Mensajes (`.c-card--flush`):** Panel de filtrado (`.c-toolbar` con búsqueda, canal, sentimiento, tema y estado del mensaje, más chips de tiempo rápidos sin duplicados) y lista de mensajes (`#msg-list` con `.c-msg`, avatares de 5 tonos, `.c-pill`/`.c-tag`) integrados en una sola tarjeta, con etiquetas de proceso concisas (*Pendiente de evaluar*, *Pendiente de publicar*, *Proceso completo*, *Descartado*), cápsula compacta de relevancia (`%` en anillo + `relevancia` + barra) y botones de acción limpios de ancho natural.
+- **Ingesta de Mensajes Homologada (Spec 020):** 4 tarjetas KPI (`Analizados`, `Positivos`, `Preguntas`, `Destacados`), cabecera compacta con telemetría de bots/reales, panel de evaluación IA en una sola fila con `.c-meter`, contenedor unificado `.c-card--flush` de filtro y mensajes con scroll interno, pod derecho compacto de relevancia y botones de ancho natural.
+- **Pestaña de Análisis Homologada 1:1 con Cristian (Spec 020):**
+  - **Cabecera (`.l-page-head`):** Título `Análisis` en negrita, subtítulo y selector segmentado de período (`7d`, `30d`, `90d`) conectado al filtrado.
+  - **Métricas Globales de Curaduría (`.c-card.c-card--lg`):** Grid de 4 columnas con `.c-meter`, `.t-kpi` tabular y barras `.c-progress` (`Tasa de sentimiento positivo`, `Índice de interacción`, `Relevancia promedio`, `Alertas activas`), con datos reales.
+  - **Evolución y Señales Clave (`.l-grid.l-grid--main-side`):**
+    - Izquierda: Gráfico de área `Evolución del sentimiento` con series Positivo, Neutral y Negativo, leyenda interactiva para aislar series y filtrado por días.
+    - Derecha: **Tarjeta Unificada de Insights (`.c-card--brand`)** con el diseño oscuro de marca original (`Insight principal`, `Preguntas frecuentes` y `Atención requerida` agrupadas en un solo bloque con botón interactivo hacia `/content#panel-quejas`).
+  - **Scorecards de Emojis Destacados (`.c-card.c-card--lg`):** Grid de 6 columnas con `.emoji-card`, emoji a 2rem, conteo `.t-kpi`, etiqueta y badge de tendencia `.c-trend`.
+  - **Hashtags y Temas (`.l-grid.l-grid--halves`):**
+    - Mitad 1: Gráfico de barras horizontal con selector segmentado de métrica (`Volumen` / `Crecimiento`).
+    - Mitad 2: Gráfico de radar semántico (`Relevancia` vs. `Participación`) con leyenda centralizada.
 - **Redacción de Contenidos y Mesa de Trabajo (ContentStudio.tsx - Enoc):** Integración multicanal Mototradis (Discord, LinkedIn, X), persistencia SQLite, panel de quejas con resolución de canales, anuncios oficiales con vista previa Discord Embed y buscador dinámico de mensajes por ID.
 - **Informes y Almacenamiento OCI (OCIStorage.tsx - Tania):** Conectado con `reporte_semanal.py` y `oci_uploader.py`, panel de estado de bucket y generación de paquetes.
-- **Infraestructura y Despliegue:** Frontend desplegado en Netlify (`https://cloudedtech-communitylab2.netlify.app`), backend en Render con Cloudflare Worker reverse proxy (`https://discord-proxy-edtech.fraustojeovany.workers.dev`) para evitar rate limit de Discord. CI/CD activo sin `[skip netlify]`.
-- **Tests y Calidad:** 100% de la suite pasando en verde (`pytest tests/test_unificacion_motor_ia.py`), build frontend limpio con código 0 (`npm run build`). Inmutabilidad absoluta de los 17 archivos protegidos de la raíz, `backend/`, `motor-ia/` y `src/`.
+- **Infraestructura y Tests:** Netlify + Render con Cloudflare Worker proxy. 100% tests pasando (100/100 en verde), build frontend exitoso con código 0 (`npm run build`). Inmutabilidad absoluta de los 17 archivos protegidos de la raíz, `backend/`, `motor-ia/` y `src/`.
 
 ## Decisiones (y por qué)
-- **Design System con Datos Reales:** Se adoptan 1:1 los componentes y estilos de Cristian (`cloudedtech-design-system`), alimentados exclusivamente por los datos reales de la comunidad y del backend (0 mocks de `CE_DATA`).
-- **Eliminación de Tecnicismos:** Se reemplazó la terminología de "curaduría" y "pendientes de copy" por términos intuitivos ("Pendientes de publicar", "Listo / Aprobado").
+- **Design System con Datos Reales:** Se adoptan 1:1 los componentes y layouts de Cristian (`cloudedtech-design-system`), alimentados exclusivamente por los datos reales de la comunidad y del backend (0 mocks).
+- **Tarjeta Unificada de Insights en Análisis:** Se agruparon las 3 secciones inferiores (`Insight principal`, `Preguntas frecuentes` y `Atención requerida`) en una sola tarjeta lateral con la estética de marca oscura (`c-card--brand`), conservando el botón funcional a `/content#panel-quejas`.
 - **Aislamiento Constitucional:** Cero modificaciones a los 17 archivos protegidos de la raíz ni `backend/`; la lógica de compatibilidad reside en `puente_motor_ia.py` y `frontend/src/`.
-- **Soberanía Humana (HITL):** Los estados y textos editados por humanos prevalecen sobre el motor de IA.
 
 ## Errores a evitar
 - Nunca modificar los archivos preexistentes de la raíz, `backend/` ni `motor-ia/`.

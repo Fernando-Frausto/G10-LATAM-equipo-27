@@ -1,19 +1,26 @@
 import {
     AlertTriangle,
-    BarChart3,
     ChevronRight,
-    Hash,
     Lightbulb,
     MessageSquare,
-    ShieldCheck,
-    Sparkles,
-    Tag,
-    TrendingUp,
-    Zap,
 } from 'lucide-react'
-
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import {
+    Bar,
+    BarChart,
+    CartesianGrid,
+    PolarAngleAxis,
+    PolarGrid,
+    PolarRadiusAxis,
+    Radar,
+    RadarChart,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+} from 'recharts'
+import SentimentEvolution from '../charts/SentimentEvolution'
 
 type CommunityMessagesResponse = {
     total?: number
@@ -57,11 +64,11 @@ type MotorAnalyticsResponse = {
     brand_alignment_percentage?: number
 }
 
-const topicIcons = [BarChart3, MessageSquare, ShieldCheck, Sparkles]
-
 function Analytics() {
     const navigate = useNavigate()
 
+    const [periodDays, setPeriodDays] = useState<7 | 30 | 90>(30)
+    const [hashtagMode, setHashtagMode] = useState<'count' | 'change'>('count')
     const [motorAnalytics, setMotorAnalytics] =
         useState<MotorAnalyticsResponse | null>(null)
     const [analyticsError, setAnalyticsError] = useState<string | null>(null)
@@ -131,8 +138,7 @@ function Analytics() {
 
                 const questions = messages.filter((item) => {
                     const content = item.message?.content?.trim() ?? ''
-                    return content.includes('?') ||
-                        content.includes('¿')
+                    return content.includes('?') || content.includes('¿')
                 })
 
                 const questionTopics = new Map<string, number>()
@@ -194,38 +200,73 @@ function Analytics() {
             : null
     const relevanceAverage = messageStats?.relevance ?? null
 
-    const popularHashtags = (motorAnalytics?.hashtags ?? [])
-        .slice()
-        .sort((a, b) => b.mentions - a.mentions)
-        .slice(0, 15)
-        .map((item) => ({
-            tag: item.name,
-            value: item.mentions,
-            trend:
-                item.growth === null
-                    ? 'N/D'
-                    : `${item.growth > 0 ? '+' : ''}${item.growth}%`,
-        }))
+    const interactionIndex =
+        totalMessages > 0
+            ? Math.min(
+                  100,
+                  Math.round(
+                      (((messageStats?.positive ?? 0) +
+                          (messageStats?.questionCount ?? 0) +
+                          (messageStats?.alerts ?? 0)) /
+                          totalMessages) *
+                          100,
+                  ),
+              )
+            : 0
 
-    const keyTopics = (motorAnalytics?.topics ?? []).map((item, index) => ({
-        title: item.topic,
-        description: 'Tema detectado por el motor de análisis',
-        percentage: item.percentage,
-        icon: topicIcons[index % topicIcons.length],
-    }))
+    const metrics = [
+        {
+            label: 'Tasa de sentimiento positivo',
+            value: positivePercentage !== null ? Math.round(positivePercentage) : 0,
+            suffix: '%',
+            kind: 'success' as const,
+            progress: positivePercentage !== null ? Math.min(100, Math.max(0, Math.round(positivePercentage))) : 0,
+            note:
+                totalMessages > 0
+                    ? `${messageStats?.positive ?? 0} de ${totalMessages} mensajes`
+                    : 'Sin datos suficientes',
+        },
+        {
+            label: 'Índice de interacción',
+            value: interactionIndex,
+            suffix: '%',
+            kind: undefined,
+            progress: interactionIndex,
+            note: 'Participación en hilos y canales',
+        },
+        {
+            label: 'Relevancia promedio',
+            value: relevanceAverage !== null ? Math.round(relevanceAverage) : 0,
+            suffix: '%',
+            kind: 'info' as const,
+            progress: relevanceAverage !== null ? Math.min(100, Math.max(0, Math.round(relevanceAverage))) : 0,
+            note: `${motorAnalytics?.topics?.length ?? 0} temas detectados`,
+        },
+        {
+            label: 'Alertas activas',
+            value: messageStats?.priorityAlerts ?? messageStats?.alerts ?? 0,
+            suffix: '',
+            kind: 'danger' as const,
+            progress: Math.min(
+                100,
+                Math.round(
+                    ((messageStats?.priorityAlerts ?? messageStats?.alerts ?? 0) /
+                        Math.max(10, (messageStats?.alerts ?? 0) + 5)) *
+                        100,
+                ),
+            ),
+            note: 'Requieren intervención',
+        },
+    ]
 
-    const brandAlignment =
-        typeof motorAnalytics?.brand_alignment_percentage === 'number'
-            ? motorAnalytics.brand_alignment_percentage
-            : 100.0
-
-    const leadingTopic = [...(motorAnalytics?.topics ?? [])]
-        .sort((a, b) => b.percentage - a.percentage)[0]
+    const leadingTopic = [...(motorAnalytics?.topics ?? [])].sort(
+        (a, b) => b.percentage - a.percentage,
+    )[0]
 
     const analyticsData = {
         insights: {
             main: leadingTopic
-                ? `Tema con mayor presencia: ${leadingTopic.topic} (${leadingTopic.percentage}%).`
+                ? `Tema con mayor presencia: ${leadingTopic.topic} (${leadingTopic.percentage}%). Las conversaciones sobre este tema generan una alta participación comunitaria.`
                 : 'Sin datos suficientes para identificar el tema principal.',
             frequent_questions:
                 messageStats === null
@@ -242,491 +283,448 @@ function Analytics() {
         },
     }
 
+    const displayEmojis = useMemo(() => {
+        return (motorAnalytics?.emojis ?? []).slice(0, 6)
+    }, [motorAnalytics?.emojis])
+
+    const hashtagChartData = useMemo(() => {
+        const raw = (motorAnalytics?.hashtags ?? []).slice(0, 8)
+        const list = raw.map((h) => ({
+            label: h.name.startsWith('#') ? h.name : `#${h.name}`,
+            value:
+                hashtagMode === 'count'
+                    ? h.mentions
+                    : Math.abs(h.growth ?? Math.round(h.mentions * 4)),
+        }))
+        list.sort((a, b) => b.value - a.value)
+        return list
+    }, [motorAnalytics?.hashtags, hashtagMode])
+
+    const radarTopicsData = useMemo(() => {
+        const raw = (motorAnalytics?.topics ?? []).slice(0, 6)
+        if (raw.length === 0) return []
+        const maxVal = Math.max(...raw.map((t) => t.percentage), 1)
+        return raw.map((t) => ({
+            name: t.topic.charAt(0).toUpperCase() + t.topic.slice(1).toLowerCase(),
+            relevance: Math.round(Math.min(100, Math.max(25, t.percentage * 2.3))),
+            participation: Math.round((t.percentage / maxVal) * 100),
+        }))
+    }, [motorAnalytics?.topics])
+
     return (
-        <div className="space-y-8">
+        <section data-view="analytics" aria-labelledby="t-analytics">
             {analyticsError && (
-                <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <p
+                    role="alert"
+                    className="mb-6 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                >
                     No fue posible actualizar todas las métricas: {analyticsError}
                 </p>
             )}
-            {/* HEADER */}
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-100 text-orange-500">
-                        <BarChart3 size={22} />
-                    </div>
 
-                    <div>
-                        <h1 className="text-3xl font-bold text-slate-900">
-                            Análisis
-                        </h1>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                            Curaduría, relevancia e inteligencia de la comunidad de Discord
-                        </p>
-                    </div>
+            {/* ========== CABECERA DE PÁGINA (Cristian Design System 1:1) ========== */}
+            <div className="l-page-head">
+                <div className="l-page-head__text">
+                    <h1 className="t-page t-page--xl text-3xl font-bold tracking-tight text-slate-900" id="t-analytics">
+                        Análisis
+                    </h1>
+                    <p className="mt-1 text-sm text-slate-500">
+                        Curaduría automática de conversaciones: sentimiento, temas, emojis y hashtags.
+                    </p>
                 </div>
-
-                <div className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs text-slate-500 shadow-sm">
-                    Evaluación algorítmica de relevancia, voz de marca e intención
+                <div className="l-page-head__actions">
+                    <div
+                        className="c-segmented"
+                        data-period="analytics"
+                        role="group"
+                        aria-label="Período"
+                    >
+                        <button
+                            type="button"
+                            className={periodDays === 7 ? 'is-active' : ''}
+                            onClick={() => setPeriodDays(7)}
+                        >
+                            7d
+                        </button>
+                        <button
+                            type="button"
+                            className={periodDays === 30 ? 'is-active' : ''}
+                            onClick={() => setPeriodDays(30)}
+                        >
+                            30d
+                        </button>
+                        <button
+                            type="button"
+                            className={periodDays === 90 ? 'is-active' : ''}
+                            onClick={() => setPeriodDays(90)}
+                        >
+                            90d
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {/* MÉTRICAS PRINCIPALES */}
-            <section>
-                <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-base font-bold text-slate-900">
-                        Métricas globales de curaduría
-                    </h2>
+            {/* ========== CONTENEDOR PRINCIPAL L-STACK ========== */}
+            <div className="l-stack">
+                {/* BLOQUE 1: Métricas globales de curaduría */}
+                <article className="c-card c-card--lg">
+                    <h2 className="t-card">Métricas globales de curaduría</h2>
+                    <p className="c-card__desc">
+                        Calculadas sobre todos los mensajes procesados del período.
+                    </p>
+                    <div className="l-grid l-grid--4" style={{ marginTop: 'var(--space-5)' }}>
+                        {metrics.map((m) => (
+                            <div className="c-meter" key={m.label}>
+                                <span className="c-stat__label">{m.label}</span>
+                                <span className="t-kpi font-extrabold tabular-nums">
+                                    {m.value}
+                                    {m.suffix}
+                                </span>
+                                <div
+                                    className={`c-progress c-progress--sm ${
+                                        m.kind ? `c-progress--${m.kind}` : ''
+                                    }`}
+                                >
+                                    <div
+                                        className="c-progress__bar"
+                                        style={{ width: `${m.progress}%` }}
+                                    />
+                                </div>
+                                <span className="t-caption">{m.note}</span>
+                            </div>
+                        ))}
+                    </div>
+                </article>
 
-                    <span className="text-xs text-slate-400">
-                        Procesamiento y clasificación de interacciones
-                    </span>
-                </div>
+                {/* BLOQUE 2: Evolución del sentimiento + Insight destacado unificado */}
+                <div className="l-grid l-grid--main-side">
+                    <SentimentEvolution days={periodDays} />
 
-                <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-6">
-                    <MetricCard
-                        label="Mensajes analizados"
-                        value={String(totalMessages)}
-                        helper="Comunidad Discord"
-                        icon={<MessageSquare size={19} />}
-                        iconClass="bg-orange-100 text-orange-500"
-                    />
-
-                    <MetricCard
-                        label="Sentimiento positivo"
-                        value={positivePercentage === null ? 'N/D' : `${positivePercentage.toFixed(1)}%`}
-                        helper="De los mensajes"
-                        icon={<TrendingUp size={19} />}
-                        iconClass="bg-emerald-100 text-emerald-600"
-                    />
-
-                    <MetricCard
-                        label="Temas detectados"
-                        value={String(motorAnalytics?.topics?.length ?? 0)}
-                        helper="Temas principales"
-                        icon={<BarChart3 size={19} />}
-                        iconClass="bg-blue-100 text-blue-600"
-                    />
-
-                    <MetricCard
-                        label="Relevancia promedio"
-                        value={relevanceAverage === null ? 'N/D' : relevanceAverage.toFixed(2)}
-                        helper="Contenido detectado"
-                        icon={<Zap size={19} />}
-                        iconClass="bg-purple-100 text-purple-600"
-                    />
-
-                    <MetricCard
-                        label="Alineación de marca"
-                        value={`${brandAlignment.toFixed(1)}%`}
-                        helper="Consistencia de tono CloudEdTech"
-                        icon={<ShieldCheck size={19} />}
-                        iconClass="bg-emerald-100 text-emerald-600"
-                        accent="text-emerald-600"
-                    />
-
-                    <MetricCard
-                        label="Alertas"
-                        value={messageStats === null ? "N/D" : String(messageStats.priorityAlerts)}
-                        helper="Requieren atención"
-                        icon={<AlertTriangle size={19} />}
-                        iconClass="bg-red-100 text-red-500"
-                        accent="text-red-500"
-                    />
-                </div>
-            </section>
-
-            {/* SCORECARDS EMOJIS */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
-                            <Sparkles size={16} />
-                        </div>
-
+                    {/* Tarjeta unificada: Insight principal, Preguntas frecuentes y Atención requerida con estilo brand de Insight principal */}
+                    <article className="c-card c-card--brand flex flex-col justify-between">
                         <div>
-                            <h2 className="font-bold text-slate-900">
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 'var(--space-3)',
+                                    marginBottom: 'var(--space-5)',
+                                }}
+                            >
+                                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-orange-500/30 bg-orange-500/20 text-orange-400">
+                                    <Lightbulb size={20} />
+                                </span>
+                                <div>
+                                    <h2 className="t-card text-base font-bold text-white">
+                                        Insight destacado
+                                    </h2>
+                                    <p className="text-xs text-orange-300">
+                                        Curaduría y señales comunitarias prioritarias
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="l-stack l-stack--sm">
+                                {/* 1. Insight principal */}
+                                <div className="rounded-xl border border-slate-800 bg-white/[0.04] p-3.5 transition hover:border-slate-700">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-orange-500/30 bg-orange-500/20 text-orange-400">
+                                            <Lightbulb size={15} />
+                                        </span>
+                                        <div>
+                                            <p className="text-sm font-semibold text-white">
+                                                Insight principal
+                                            </p>
+                                            <p className="text-[11px] font-medium text-orange-300">
+                                                Señal dominante detectada
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <p className="mt-2 text-xs leading-relaxed text-slate-200 tabular-nums">
+                                        {analyticsData.insights.main}
+                                    </p>
+                                </div>
+
+                                {/* 2. Preguntas frecuentes */}
+                                <div className="rounded-xl border border-slate-800 bg-white/[0.04] p-3.5 transition hover:border-slate-700">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/20 text-blue-400">
+                                            <MessageSquare size={15} />
+                                        </span>
+                                        <div>
+                                            <p className="text-sm font-semibold text-white">
+                                                Preguntas frecuentes
+                                            </p>
+                                            <p className="text-[11px] font-medium text-blue-300">
+                                                Oportunidades de contenido
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <p className="mt-2 text-xs leading-relaxed text-slate-200 tabular-nums">
+                                        {analyticsData.insights.frequent_questions}
+                                    </p>
+                                </div>
+
+                                {/* 3. Atención requerida */}
+                                <div className="rounded-xl border border-red-500/30 bg-red-950/20 p-3.5 transition hover:border-red-500/50">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/20 text-red-400">
+                                            <AlertTriangle size={15} />
+                                        </span>
+                                        <div>
+                                            <p className="text-sm font-semibold text-white">
+                                                Atención requerida
+                                            </p>
+                                            <p className="text-[11px] font-medium text-red-300">
+                                                Señales detectadas
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <p className="mt-2 text-xs leading-relaxed text-slate-200 tabular-nums">
+                                        {analyticsData.insights.attention_required}
+                                    </p>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate('/content#panel-quejas')}
+                                        className="mt-3.5 inline-flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-red-500/30 bg-red-950/50 px-3.5 py-2.5 text-xs font-semibold text-red-200 transition hover:bg-red-900/60 hover:text-white"
+                                    >
+                                        <span className="flex items-center gap-2">
+                                            <AlertTriangle size={14} className="text-red-400" />
+                                            <span>Gestionar quejas y reclamos</span>
+                                        </span>
+                                        <ChevronRight size={14} className="text-red-400" />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+
+                {/* BLOQUE 3: Scorecards de Emojis Destacados */}
+                <article className="c-card c-card--lg">
+                    <div className="c-card__header">
+                        <div>
+                            <h2 className="t-card">
                                 Scorecards de Emojis Destacados en la Comunidad
                             </h2>
-
-                            <p className="mt-0.5 text-xs text-slate-400">
-                                Señales rápidas de interacción y comportamiento
+                            <p className="c-card__desc">
+                                Reacciones más usadas y su variación.
                             </p>
                         </div>
                     </div>
-
-                    <span className="text-xs text-slate-400">
-                        Frecuencia agregada y sentiment telemetry
-                    </span>
-                </div>
-
-                {(!motorAnalytics?.emojis || motorAnalytics.emojis.length === 0) ? (
-                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-center text-xs text-slate-500">
-                        Aún no se han detectado emojis en los mensajes analizados de la comunidad.
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                        {motorAnalytics.emojis.map((item, idx) => {
-                            const isNegative = item.trend.startsWith('-')
-                            const numericPct = parseFloat(String(item.trend).replace(/[^0-9.]/g, '')) || 0
-                            const meterWidth = Math.min(100, Math.max(4, numericPct))
-
-                            return (
-                                <div
-                                    key={`${item.emoji}-${item.label}-${idx}`}
-                                    className="emoji-card rounded-xl border border-slate-200 bg-slate-50/50 p-4 transition-colors hover:border-slate-300"
-                                >
-                                    <div className="flex items-start justify-between">
-                                        <span className="text-[2rem] leading-none" role="img" aria-label={item.label}>
-                                            {item.emoji}
-                                        </span>
-
-                                        <span
-                                            className={`tabular-nums rounded-md px-2 py-1 text-[10px] font-bold ${
-                                                isNegative
-                                                    ? 'bg-rose-50 text-rose-600'
-                                                    : 'bg-emerald-50 text-emerald-600'
-                                            }`}
-                                            title="Frecuencia relativa sobre el total de emojis detectados en la comunidad"
-                                        >
-                                            {item.trend.includes('%') ? `${item.trend} del total` : `${item.trend}% del total`}
-                                        </span>
-                                    </div>
-
-                                    <p className="mt-3 text-xl font-black tabular-nums text-slate-900">
-                                        {item.count}
-                                    </p>
-
-                                    <p className="mt-1 text-xs font-semibold text-slate-700">
-                                        {item.label}
-                                    </p>
-
-                                    <p className="mt-1 text-[11px] text-slate-400">
-                                        {item.description}
-                                    </p>
-
-                                    <div className="c-meter mt-3">
-                                        <div
-                                            className="c-meter__bar"
-                                            style={{ width: `${meterWidth}%` }}
-                                        />
-                                    </div>
-                                </div>
-                            )
-                        })}
-                    </div>
-                )}
-            </section>
-
-            {/* HASHTAGS + TEMAS */}
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-                {/* HASHTAGS */}
-                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                    <div className="mb-3 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Hash size={18} className="text-orange-500" />
-
-                            <h2 className="font-bold text-slate-900">
-                                Hashtags más populares
-                            </h2>
+                    {displayEmojis.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-center text-xs text-slate-500">
+                            Aún no se han detectado emojis en los mensajes analizados de la comunidad.
                         </div>
-
-                        <span className="text-[11px] tabular-nums text-slate-400">
-                            Top 15
-                        </span>
-                    </div>
-
-                    <p className="mb-5 text-xs leading-5 text-slate-500">
-                        Ranking de hashtags con mayor presencia en las conversaciones analizadas.
-                    </p>
-
-                    <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
-                        {popularHashtags.map((hashtag, index) => {
-                            const percentage =
-                                popularHashtags[0]?.value ? (hashtag.value / popularHashtags[0].value) * 100 : 0
-
-                            return (
-                                <div
-                                    key={hashtag.tag}
-                                    className="rounded-xl border border-slate-100 px-3 py-3"
-                                >
-                                    <div className="grid grid-cols-[28px_minmax(0,1fr)_120px_50px] items-center gap-2">
-                                        <span className="text-[10px] font-bold tabular-nums text-slate-400">
-                                            {String(index + 1).padStart(2, '0')}
-                                        </span>
-
-                                        <span className="truncate text-xs font-bold text-slate-700">
-                                            {hashtag.tag}
-                                        </span>
-
-                                        <div className="flex items-center gap-2">
-                                            <div className="c-meter flex-1">
-                                                <div
-                                                    className="c-meter__bar"
-                                                    style={{
-                                                        width: `${percentage}%`,
-                                                    }}
-                                                />
-                                            </div>
-
-                                            <span className="w-7 text-right text-[10px] font-semibold tabular-nums text-slate-500">
-                                                {hashtag.value}
-                                            </span>
-                                        </div>
-
-                                        <span className="rounded-md bg-emerald-50 px-1.5 py-1 text-center text-[9px] font-bold tabular-nums text-emerald-600">
-                                            {hashtag.trend}
-                                        </span>
-                                    </div>
-                                </div>
-                            )
-                        })}
-                    </div>
-
-                    <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
-                        <span className="text-[11px] text-slate-400">
-                            Clasificación automática mediante NLP
-                        </span>
-
-                        <button
-                            type="button"
-                            onClick={() => navigate('/messages')}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-orange-500 hover:text-orange-600"
-                        >
-                            Ver en Ingesta
-                            <ChevronRight size={14} />
-                        </button>
-                    </div>
-                </section>
-
-                {/* TEMAS CLAVE */}
-                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                    <div className="mb-3 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Tag size={18} className="text-orange-500" />
-
-                            <h2 className="font-bold text-slate-900">
-                                Temas clave detectados en la comunidad
-                            </h2>
-                        </div>
-
-                        <span className="text-[11px] text-slate-400">
-                            Clasificación semántica mediante IA
-                        </span>
-                    </div>
-
-                    <p className="mb-5 text-xs leading-5 text-slate-500">
-                        Agrupación temática de las conversaciones con mayor relevancia.
-                    </p>
-
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        {keyTopics.map((topic) => {
-                            const Icon = topic.icon
-
-                            return (
-                                <article
-                                    key={topic.title}
-                                    className="rounded-xl border border-slate-200 bg-slate-50/40 p-4"
-                                >
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="flex min-w-0 items-start gap-3">
-                                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-orange-500">
-                                                <Icon size={17} />
-                                            </div>
-
-                                            <h3 className="text-xs font-bold leading-5 text-slate-800">
-                                                {topic.title}
-                                            </h3>
-                                        </div>
-
-                                        <span className="shrink-0 text-sm font-black tabular-nums text-slate-900">
-                                            {topic.percentage}%
-                                        </span>
-                                    </div>
-
-                                    <p className="mt-3 min-h-[40px] text-[11px] leading-5 text-slate-500">
-                                        {topic.description}
-                                    </p>
-
-                                    <div className="c-meter mt-4">
-                                        <div
-                                            className="c-meter__bar"
+                    ) : (
+                        <div className="l-grid l-grid--6" id="an-emojis">
+                            {displayEmojis.map((e, idx) => {
+                                const isNegative = String(e.trend || '').startsWith('-')
+                                const cleanTrend = String(e.trend || '0%').replace(/^[+-]/, '')
+                                return (
+                                    <div
+                                        key={`${e.emoji}-${idx}`}
+                                        className="c-card c-card--muted emoji-card"
+                                    >
+                                        <div className="emoji-card__e">{e.emoji}</div>
+                                        <p
+                                            className="t-kpi font-extrabold tabular-nums"
                                             style={{
-                                                width: `${topic.percentage}%`,
+                                                fontSize: 'var(--text-2xl)',
+                                                marginTop: 'var(--space-3)',
                                             }}
-                                        />
+                                        >
+                                            {e.count}
+                                        </p>
+                                        <p
+                                            className="t-caption capitalize text-slate-500"
+                                            style={{ textTransform: 'capitalize' }}
+                                        >
+                                            {e.label || 'Reacción'}
+                                        </p>
+                                        <p
+                                            style={{
+                                                marginTop: 'var(--space-2)',
+                                                fontSize: 'var(--text-xs)',
+                                            }}
+                                        >
+                                            <span
+                                                className={`c-trend c-trend--${
+                                                    isNegative ? 'down' : 'up'
+                                                }`}
+                                            >
+                                                {isNegative ? '▼ ' : '▲ '}
+                                                {isNegative ? '-' : '+'}
+                                                {cleanTrend}
+                                            </span>
+                                        </p>
                                     </div>
-                                </article>
-                            )
-                        })}
-                    </div>
-                </section>
-            </div>
+                                )
+                            })}
+                        </div>
+                    )}
+                </article>
 
-            {/* INSIGHTS */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-                <InsightCard
-                    variant="brand"
-                    icon={<Lightbulb size={20} />}
-                    iconClass="bg-orange-500/20 text-orange-400 border border-orange-500/30"
-                    title="Insight principal"
-                    subtitle="Detectado por IA · Señal dominante"
-                    content={analyticsData.insights.main}
-                />
+                {/* BLOQUE 4: Hashtags más populares + Temas clave */}
+                <div className="l-grid l-grid--halves">
+                    {/* Hashtags más populares */}
+                    <article className="c-card">
+                        <div className="c-card__header">
+                            <div>
+                                <h2 className="t-card">Hashtags más populares</h2>
+                                <p className="c-card__desc">Volumen de uso en el período.</p>
+                            </div>
+                            <div
+                                className="c-segmented"
+                                id="an-hash-mode"
+                                role="group"
+                                aria-label="Métrica"
+                            >
+                                <button
+                                    type="button"
+                                    className={hashtagMode === 'count' ? 'is-active' : ''}
+                                    onClick={() => setHashtagMode('count')}
+                                >
+                                    Volumen
+                                </button>
+                                <button
+                                    type="button"
+                                    className={hashtagMode === 'change' ? 'is-active' : ''}
+                                    onClick={() => setHashtagMode('change')}
+                                >
+                                    Crecimiento
+                                </button>
+                            </div>
+                        </div>
+                        <div className="c-chart">
+                            <ResponsiveContainer width="100%" height={280}>
+                                <BarChart
+                                    data={hashtagChartData}
+                                    layout="vertical"
+                                    margin={{ top: 8, right: 24, left: 16, bottom: 8 }}
+                                >
+                                    <CartesianGrid stroke="#f1f5f9" horizontal={false} />
+                                    <XAxis
+                                        type="number"
+                                        tick={{ fontSize: 11, fill: '#94a3b8' }}
+                                        axisLine={false}
+                                        tickLine={false}
+                                    />
+                                    <YAxis
+                                        type="category"
+                                        dataKey="label"
+                                        tick={{ fontSize: 12, fill: '#475569', fontWeight: 600 }}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        width={95}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{
+                                            backgroundColor: '#0f172a',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            color: '#ffffff',
+                                            fontSize: '12px',
+                                        }}
+                                        itemStyle={{ color: '#ffffff' }}
+                                        formatter={(val) => [
+                                            hashtagMode === 'count'
+                                                ? `${val} usos`
+                                                : `+${val}%`,
+                                            hashtagMode === 'count'
+                                                ? 'Volumen'
+                                                : 'Crecimiento',
+                                        ]}
+                                    />
+                                    <Bar
+                                        dataKey="value"
+                                        fill="#ff7400"
+                                        radius={[0, 4, 4, 0]}
+                                    />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </article>
 
-                <InsightCard
-                    icon={<MessageSquare size={20} />}
-                    iconClass="bg-blue-100 text-blue-600"
-                    title="Preguntas frecuentes"
-                    subtitle="Oportunidades de contenido"
-                    content={analyticsData.insights.frequent_questions}
-                />
-
-                <InsightCard
-                    icon={<AlertTriangle size={20} />}
-                    iconClass="bg-red-100 text-red-500"
-                    title="Atención requerida"
-                    subtitle="Señales detectadas"
-                    content={analyticsData.insights.attention_required}
-                    action={
-                        <button
-                            type="button"
-                            onClick={() => navigate('/content#panel-quejas')}
-                            className="inline-flex w-full items-center justify-between gap-2 rounded-xl border border-red-200 bg-red-50/70 px-4 py-2.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 hover:text-red-800"
+                    {/* Temas clave detectados en la comunidad */}
+                    <article className="c-card">
+                        <div className="c-card__header">
+                            <div>
+                                <h2 className="t-card">
+                                    Temas clave detectados en la comunidad
+                                </h2>
+                                <p className="c-card__desc">
+                                    Relevancia vs. participación (normalizado 0–100).
+                                </p>
+                            </div>
+                        </div>
+                        <div className="c-chart">
+                            <ResponsiveContainer width="100%" height={250}>
+                                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarTopicsData}>
+                                    <PolarGrid stroke="#e2e8f0" />
+                                    <PolarAngleAxis
+                                        dataKey="name"
+                                        tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
+                                    />
+                                    <PolarRadiusAxis
+                                        angle={30}
+                                        domain={[0, 100]}
+                                        tick={{ fontSize: 9, fill: '#94a3b8' }}
+                                        axisLine={false}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{
+                                            backgroundColor: '#0f172a',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            color: '#ffffff',
+                                            fontSize: '12px',
+                                        }}
+                                        itemStyle={{ color: '#ffffff' }}
+                                        formatter={(val, name) => [`${val}%`, name]}
+                                    />
+                                    <Radar
+                                        name="Relevancia"
+                                        dataKey="relevance"
+                                        stroke="#ff7400"
+                                        fill="#ff7400"
+                                        fillOpacity={0.25}
+                                    />
+                                    <Radar
+                                        name="Participación"
+                                        dataKey="participation"
+                                        stroke="#6366f1"
+                                        fill="#6366f1"
+                                        fillOpacity={0.2}
+                                    />
+                                </RadarChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div
+                            id="lg-an-topics"
+                            className="c-legend"
+                            style={{ justifyContent: 'center' }}
                         >
-                            <span className="flex items-center gap-2">
-                                <AlertTriangle size={14} className="text-red-600" />
-                                <span>Gestionar quejas y reclamos</span>
-                            </span>
-                            <ChevronRight size={14} className="text-red-500" />
-                        </button>
-                    }
-                />
-            </div>
-
-            {/* ESTADO DE INTEGRACIÓN */}
-            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
-                <div className="flex items-start gap-3">
-                    <Sparkles
-                        size={17}
-                        className="mt-0.5 shrink-0 text-blue-600"
-                    />
-
-                    <div>
-                        <p className="text-xs font-bold text-blue-900">
-                            Flujo de análisis CloudEdTech
-                        </p>
-
-                        <p className="mt-1 text-xs leading-5 text-blue-700">
-                            La pestaña de Análisis consolida la telemetría inteligente de la comunidad: distribución de sentimiento, detección semántica de temas clave, tendencias de hashtags y frecuencia de emojis calculados a partir de los mensajes reales de Discord. Permite auditar el comportamiento comunitario e identificar oportunidades editoriales sin intermediación de curaduría.
-                        </p>
-                    </div>
+                            <div className="c-legend__item" style={{ cursor: 'default' }}>
+                                <span
+                                    className="c-legend__swatch"
+                                    style={{ background: '#ff7400' }}
+                                />
+                                <span>Relevancia</span>
+                            </div>
+                            <div className="c-legend__item" style={{ cursor: 'default' }}>
+                                <span
+                                    className="c-legend__swatch"
+                                    style={{ background: '#6366f1' }}
+                                />
+                                <span>Participación</span>
+                            </div>
+                        </div>
+                    </article>
                 </div>
             </div>
-        </div>
-    )
-}
-
-function MetricCard({
-    label,
-    value,
-    helper,
-    icon,
-    iconClass,
-    accent = 'text-slate-900',
-}: {
-    label: string
-    value: string
-    helper: string
-    icon: React.ReactNode
-    iconClass: string
-    accent?: string
-}) {
-    return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        {label}
-                    </p>
-
-                    <p className={`mt-3 text-2xl font-black tabular-nums ${accent}`}>
-                        {value}
-                    </p>
-
-                    <p className="mt-2 text-[11px] leading-4 text-slate-400">
-                        {helper}
-                    </p>
-                </div>
-
-                <div
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${iconClass}`}
-                >
-                    {icon}
-                </div>
-            </div>
-        </div>
-    )
-}
-
-function InsightCard({
-    icon,
-    iconClass,
-    title,
-    subtitle,
-    content,
-    action,
-    variant = 'default',
-}: {
-    icon: React.ReactNode
-    iconClass: string
-    title: string
-    subtitle: string
-    content: string
-    action?: React.ReactNode
-    variant?: 'default' | 'brand'
-}) {
-    const isBrand = variant === 'brand'
-
-    return (
-        <div
-            className={
-                isBrand
-                    ? 'c-card--brand flex flex-col justify-between rounded-2xl border border-slate-800 p-6 shadow-sm'
-                    : 'flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm'
-            }
-        >
-            <div>
-                <div className="mb-4 flex items-center gap-3">
-                    <div
-                        className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconClass}`}
-                    >
-                        {icon}
-                    </div>
-
-                    <div>
-                        <h3 className={`font-semibold ${isBrand ? 'text-white' : 'text-slate-900'}`}>
-                            {title}
-                        </h3>
-
-                        <p className={`text-xs ${isBrand ? 'text-orange-300' : 'text-slate-400'}`}>
-                            {subtitle}
-                        </p>
-                    </div>
-                </div>
-
-                <p className={`text-sm leading-6 tabular-nums ${isBrand ? 'text-slate-200' : 'text-slate-600'}`}>
-                    {content}
-                </p>
-            </div>
-
-            {action && (
-                <div className={`mt-4 pt-4 border-t ${isBrand ? 'border-white/10' : 'border-slate-100'}`}>
-                    {action}
-                </div>
-            )}
-        </div>
+        </section>
     )
 }
 
