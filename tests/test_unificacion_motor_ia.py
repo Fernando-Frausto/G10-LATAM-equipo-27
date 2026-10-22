@@ -21,6 +21,8 @@ def limpiar_bd_sqlite(tmp_path, monkeypatch):
     """Aísla SQLite usando una BD temporal por test para garantizar aislamiento e idempotencia."""
     test_db = str(tmp_path / "test_communitylab.db")
     monkeypatch.setattr(puente_motor_ia.motor_bd, "RUTA_BD", test_db)
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("DISCORD_TOKEN", raising=False)
     puente_motor_ia.invalidar_cache_supabase()
     puente_motor_ia._asegurar_esquema_sqlite()
     yield
@@ -2828,7 +2830,7 @@ def test_mototradis_hitl_decision_aprobacion_soberania_humana_y_cascada_discord(
         "copys_editados": copys_editados
     }
 
-    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/123"}, clear=False):
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
         resp = client.post("/api/v1/mototradis/hitl-decision", json=payload)
 
     assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
@@ -2905,7 +2907,8 @@ def test_mototradis_publish_channel_validacion_280_x_y_tolerancia_credenciales(c
         "titulo": "Título de Prueba",
         "texto_copy": "Cuerpo del anuncio oficial"
     }
-    resp_discord = client.post("/api/v1/mototradis/publish-channel", json=payload_discord)
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
+        resp_discord = client.post("/api/v1/mototradis/publish-channel", json=payload_discord)
     assert resp_discord.status_code == 200, f"Error en publicación individual de Discord: {resp_discord.status_code} {resp_discord.text}"
     data_disc = resp_discord.json()
     assert data_disc.get("canal") == "discord"
@@ -2974,7 +2977,7 @@ def test_mototradis_hitl_decision_omite_canales_no_generados_y_solo_publica_acti
         "copys_editados": copys_con_omisiones
     }
 
-    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/123"}, clear=False):
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
         resp = client.post("/api/v1/mototradis/hitl-decision", json=payload)
 
     assert resp.status_code == 200
@@ -3026,7 +3029,7 @@ def test_publish_channel_persiste_en_sqlite_y_actualiza_interaccion(client):
         "texto_copy": "Copy verificado y listo para despacho en canal oficial.",
     }
 
-    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/test"}, clear=False):
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
         resp = client.post("/api/v1/mototradis/publish-channel", json=payload)
 
     assert resp.status_code == 200

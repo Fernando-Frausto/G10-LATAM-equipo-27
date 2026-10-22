@@ -253,12 +253,12 @@ function Messages() {
                     isAnalyzed: Boolean(
                         isPublished ||
                         analysis.workflow_stage === 'publicado' ||
+                        analysis.relevance > 0 ||
                         (analysis.workflow_stage !== 'ingesta' &&
                             analysis.workflow_stage !== 'en_ingesta' &&
                             (analysis.workflow_stage === 'en_analisis' ||
                                 analysis.workflow_stage === 'en_redaccion' ||
-                                analysis.workflow_stage === 'en_aprobacion' ||
-                                analysis.relevance > 0))
+                                analysis.workflow_stage === 'en_aprobacion'))
                     ),
                     isPublished,
                     publishedPlatforms,
@@ -389,15 +389,14 @@ function Messages() {
 
         // Precedencia humana (HITL):
         // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
-        // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado ni restaurado a 'pending'
+        // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado explícitamente
         // Y NUNCA si el mensaje ya fue publicado
         const isDiscarded =
             !isMsgPublished &&
             (currentCuration === 'discarded' ||
                 (message.isAnalyzed &&
                     message.relevance < 70 &&
-                    currentCuration !== 'curated' &&
-                    currentCuration !== 'pending'))
+                    currentCuration !== 'curated'))
 
         // Solo se considera proceso completo si efectivamente fue publicado en >= 1 red social
         const isCompleted = !isDiscarded && isMsgPublished
@@ -406,8 +405,9 @@ function Messages() {
             !isDiscarded &&
             !isCompleted &&
             (!message.isAnalyzed ||
-                message.workflowStage === 'ingesta' ||
-                message.workflowStage === 'en_ingesta')
+                (message.relevance === 0 &&
+                    (message.workflowStage === 'ingesta' ||
+                        message.workflowStage === 'en_ingesta')))
 
         const isPendingCopy = !isDiscarded && !isCompleted && !isPendingEval
 
@@ -576,7 +576,12 @@ function Messages() {
                 msg.workflowStage === 'publicado' ||
                 (Array.isArray(msg.publishedPlatforms) && msg.publishedPlatforms.length > 0)
             const st = curationStatus[msg.id] ?? 'pending'
-            if (!isMsgPublished && st === 'discarded') {
+            const isDiscarded =
+                !isMsgPublished &&
+                (st === 'discarded' ||
+                    (msg.isAnalyzed && msg.relevance < 70 && st !== 'curated'))
+
+            if (isDiscarded) {
                 discardedInRange++
                 continue
             }
@@ -587,8 +592,9 @@ function Messages() {
             const isPendingEval =
                 !isCompleted &&
                 (!msg.isAnalyzed ||
-                    msg.workflowStage === 'ingesta' ||
-                    msg.workflowStage === 'en_ingesta')
+                    (msg.relevance === 0 &&
+                        (msg.workflowStage === 'ingesta' ||
+                            msg.workflowStage === 'en_ingesta')))
 
             if (isCompleted) {
                 completedInRange++
@@ -1420,8 +1426,7 @@ function Messages() {
                             : currentCuration === 'discarded' ||
                               (message.isAnalyzed &&
                                   message.relevance < 70 &&
-                                  currentCuration !== 'curated' &&
-                                  currentCuration !== 'pending')
+                                  currentCuration !== 'curated')
                             ? 'discarded'
                             : currentCuration
 
