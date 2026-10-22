@@ -1522,10 +1522,10 @@ function Messages() {
                                                 <>
                                                     <span className="c-pill c-pill--warning c-pill--dot">
                                                         <Clock3 size={11} />
-                                                        Pendiente por Analizar
+                                                        Pendiente de evaluar
                                                     </span>
-                                                    <span className="t-caption italic text-slate-500">
-                                                        ⚡ Pendiente por Analizar · Mensaje crudo en ingesta. Pulsa &apos;Evaluar con IA&apos; para clasificarlo
+                                                    <span className="t-caption text-slate-400">
+                                                        Mensaje crudo en ingesta
                                                     </span>
                                                 </>
                                             )}
@@ -1533,9 +1533,10 @@ function Messages() {
                                     </div>
                                 </div>
 
-                                {/* Columna derecha compacta: Relevancia, Estado y Botones de Acción (CommunityLab DS) */}
-                                <aside className="c-msg__score w-full shrink-0 gap-2 border-t border-slate-100 pt-2.5 lg:w-[19.5rem] lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0 xl:w-[20.5rem]">
-                                    <div className="flex w-full items-center justify-between gap-2">
+                                {/* Control compacto de estado, relevancia y acciones (Estilo pod CommunityLab DS) */}
+                                <aside className="shrink-0 flex flex-col items-end justify-center gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/70 p-2.5 shadow-xs lg:self-center">
+                                    {/* Fila superior: Estado y Relevancia unidos de forma contigua */}
+                                    <div className="flex items-center justify-end gap-2">
                                         <StatusBadge
                                             status={status}
                                             isAnalyzed={message.isAnalyzed}
@@ -1543,7 +1544,9 @@ function Messages() {
                                             workflowStage={message.workflowStage}
                                         />
 
-                                        <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200/80 bg-slate-50/90 px-2 py-0.5">
+                                        <span className="h-4 w-px bg-slate-200" aria-hidden="true" />
+
+                                        <div className="inline-flex shrink-0 items-center gap-1.5">
                                             <div
                                                 className="score-ring score-ring--sm"
                                                 style={
@@ -1572,7 +1575,8 @@ function Messages() {
                                         </div>
                                     </div>
 
-                                    <div className="flex w-full items-center justify-end gap-1.5">
+                                    {/* Fila inferior: Botones de acción compactos */}
+                                    <div className="flex items-center justify-end gap-1.5">
                                         {status === 'discarded' ? (
                                             <button
                                                 type="button"
