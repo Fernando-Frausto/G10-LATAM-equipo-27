@@ -2151,10 +2151,13 @@ function ContentStudio() {
         id="panel-inbox"
         role="tabpanel"
         aria-labelledby="tab-btn-inbox"
-        className={activeContentTab === 'inbox' ? 'space-y-6' : 'hidden'}
+        className={activeContentTab === 'inbox' ? 'space-y-5' : 'hidden'}
       >
-      {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        {/* Layout 2 Columnas estilo Cristian (l-grid--side-main): Bandeja a la izquierda, Mesa de trabajo a la derecha */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-12 items-start">
+          {/* Columna Izquierda: Bandeja de mensajes */}
+          {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
+      <section className="lg:col-span-4 xl:col-span-4 flex flex-col rounded-2xl border border-slate-200 bg-white p-4 sm:p-4.5 shadow-sm">
         <div className="c-panel-head mb-3">
           <div className="c-panel-head__main">
             <div className="c-panel-head__icon bg-orange-100 text-orange-600">
@@ -2180,7 +2183,7 @@ function ContentStudio() {
           <div className="c-panel-head__actions">
             <form
               onSubmit={handleSearchById}
-              className="flex flex-col sm:items-end gap-0.5"
+              className="mt-2.5 flex flex-col gap-1 border-b border-slate-100 pb-2.5"
             >
               <div className="flex items-center gap-2">
                 <input
@@ -2206,7 +2209,7 @@ function ContentStudio() {
                       }
                     }
                   }}
-                  className="w-24 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+                  className="w-full flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
                 />
                 <button
                   type="submit"
@@ -2245,7 +2248,7 @@ function ContentStudio() {
         )}
 
         {!workflowLoading && !workflowError && displayedTrayMessages.length > 0 && (
-          <div className="flex gap-3 overflow-x-auto pb-3 pt-1 scrollbar-thin">
+          <div className="mt-3 space-y-2.5 max-h-[750px] overflow-y-auto pr-1 scrollbar-thin">
             {displayedTrayMessages.map((item) => {
               const isActive = selectedWorkflowId === item.interactionId
               const isPinnedById =
@@ -2267,7 +2270,7 @@ function ContentStudio() {
                     setSelectedWorkflowId(item.interactionId)
                     prepareWorkflowContent(item)
                   }}
-                  className={`min-w-[260px] max-w-[290px] shrink-0 rounded-xl border p-3 text-left transition ${
+                  className={`w-full rounded-xl border p-3 text-left transition ${
                     isActive
                       ? 'c-tray-card--active border-orange-500 bg-orange-50/70 shadow-xs ring-1 ring-orange-400'
                       : 'border-slate-200 bg-white hover:border-orange-300 hover:bg-slate-50/60'
@@ -2322,7 +2325,9 @@ function ContentStudio() {
         )}
       </section>
 
-      {/* Mensaje original */}
+          {/* Columna Derecha: Mensaje original de Discord y Mesa de Trabajo Multicanal (Orquestador LangGraph) */}
+          <div className="lg:col-span-8 xl:col-span-8 space-y-4">
+            {/* Mensaje original */}
       <section
         ref={originalMessageRef}
         className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
@@ -3262,8 +3267,10 @@ function ContentStudio() {
           </div>
         </section>
       </div>
+          </div>
+        </div>
 
-      {/* Barra de Decisión Global HITL (Human-in-the-Loop) */}
+        {/* Barra de Decisión Global HITL (Human-in-the-Loop) */}
       <section className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-purple-50/60 p-4 shadow-sm">
         <div className="c-panel-head c-panel-head--flat">
           <div className="c-panel-head__main">
