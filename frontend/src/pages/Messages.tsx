@@ -1490,7 +1490,7 @@ function Messages() {
                         return (
                             <div
                                 key={message.id}
-                                className="c-msg flex-col xl:flex-row xl:items-start"
+                                className="c-msg flex-col lg:flex-row lg:items-center"
                             >
                                 <div className="flex min-w-0 flex-1 items-start gap-3">
                                     <span className={`c-avatar ${getAvatarTone(message.author)}`}>
@@ -1513,6 +1513,8 @@ function Messages() {
                                                     message.workflowStage === 'en_aprobacion' ||
                                                     message.workflowStage === 'en_redaccion'
                                                         ? 'c-pill--success'
+                                                        : status === 'discarded'
+                                                        ? 'c-pill--danger'
                                                         : !message.isAnalyzed ||
                                                           message.workflowStage === 'ingesta' ||
                                                           message.workflowStage === 'en_ingesta'
@@ -1526,6 +1528,8 @@ function Messages() {
                                                       message.workflowStage === 'en_aprobacion' ||
                                                       message.workflowStage === 'en_redaccion'
                                                     ? 'Completo'
+                                                    : status === 'discarded'
+                                                    ? 'Descartado'
                                                     : !message.isAnalyzed ||
                                                       message.workflowStage === 'ingesta' ||
                                                       message.workflowStage === 'en_ingesta'
@@ -1567,11 +1571,16 @@ function Messages() {
                                                             ✓ Publicado en: {publishedPlatformsText}
                                                         </span>
                                                     )}
-                                                    {message.keywords.slice(0, 6).map((keyword) => (
-                                                        <span key={keyword} className="c-tag">
-                                                            #{keyword}
-                                                        </span>
-                                                    ))}
+                                                    {message.keywords
+                                                        .flatMap((kw) => kw.split(/\s+/))
+                                                        .map((kw) => kw.replace(/^#+/, '').trim())
+                                                        .filter(Boolean)
+                                                        .slice(0, 6)
+                                                        .map((keyword) => (
+                                                            <span key={keyword} className="c-tag">
+                                                                #{keyword}
+                                                            </span>
+                                                        ))}
                                                 </>
                                             ) : (
                                                 <>
@@ -1591,37 +1600,20 @@ function Messages() {
                                     </div>
                                 </div>
 
-                                {/* Columna derecha: Relevancia, Estado y Botones de Acción (CommunityLab DS) */}
-                                <aside className="c-msg__score w-full shrink-0 gap-2 border-t border-slate-100 pt-3 xl:w-64 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0">
-                                    <div className="flex w-full items-center justify-between gap-2.5">
-                                        <div className="min-w-0 flex-1">
-                                            <StatusBadge
-                                                status={status}
-                                                isAnalyzed={message.isAnalyzed}
-                                                isPublished={isMsgPublished}
-                                                workflowStage={message.workflowStage}
-                                            />
-                                        </div>
+                                {/* Columna derecha compacta: Relevancia, Estado y Botones de Acción (CommunityLab DS) */}
+                                <aside className="c-msg__score w-full shrink-0 gap-2 border-t border-slate-100 pt-2.5 lg:w-[21.5rem] lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0 xl:w-[22.5rem]">
+                                    <div className="flex w-full items-center justify-between gap-2">
+                                        <StatusBadge
+                                            status={status}
+                                            isAnalyzed={message.isAnalyzed}
+                                            isPublished={isMsgPublished}
+                                            workflowStage={message.workflowStage}
+                                        />
 
                                         {message.isAnalyzed && (
-                                            <div className="flex shrink-0 items-center gap-2">
-                                                <div className="flex flex-col items-end gap-0.5">
-                                                    <div className="flex items-baseline gap-1">
-                                                        <b>{relevanceScore}</b>
-                                                        <span className="t-caption">relevancia</span>
-                                                    </div>
-                                                    <div
-                                                        className="c-progress c-progress--sm"
-                                                        style={{ width: '3.75rem' }}
-                                                    >
-                                                        <div
-                                                            className="c-progress__bar"
-                                                            style={{ width: `${relevanceScore}%` }}
-                                                        />
-                                                    </div>
-                                                </div>
+                                            <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50/90 px-2.5 py-0.5">
                                                 <div
-                                                    className="score-ring"
+                                                    className="score-ring score-ring--sm"
                                                     style={
                                                         { '--p': relevanceScore } as React.CSSProperties
                                                     }
@@ -1630,6 +1622,23 @@ function Messages() {
                                                     <span className="tabular-nums">
                                                         {relevanceScore}%
                                                     </span>
+                                                </div>
+                                                <div className="flex flex-col items-end gap-0.5 pr-0.5">
+                                                    <div className="flex items-baseline gap-1 leading-none">
+                                                        <b className="c-msg__rel-val">{relevanceScore}</b>
+                                                        <span className="text-[10px] font-medium text-slate-500">
+                                                            relevancia
+                                                        </span>
+                                                    </div>
+                                                    <div
+                                                        className="c-progress c-progress--sm"
+                                                        style={{ width: '3rem', height: '4px' }}
+                                                    >
+                                                        <div
+                                                            className="c-progress__bar"
+                                                            style={{ width: `${relevanceScore}%` }}
+                                                        />
+                                                    </div>
                                                 </div>
                                             </div>
                                         )}
@@ -1779,7 +1788,7 @@ function StatusBadge({
 }) {
     if (isPublished || workflowStage === 'publicado') {
         return (
-            <span className="c-pill c-pill--success c-pill--dot w-full justify-center">
+            <span className="c-pill c-pill--success c-pill--dot">
                 Proceso completo
             </span>
         )
@@ -1787,7 +1796,7 @@ function StatusBadge({
 
     if (status === 'discarded') {
         return (
-            <span className="c-pill c-pill--danger w-full justify-center">
+            <span className="c-pill c-pill--danger">
                 <ShieldAlert size={11} />
                 Descartado
             </span>
@@ -1800,7 +1809,7 @@ function StatusBadge({
         workflowStage === 'en_redaccion'
     ) {
         return (
-            <span className="c-pill c-pill--success c-pill--dot w-full justify-center">
+            <span className="c-pill c-pill--success c-pill--dot">
                 Listo / Aprobado
             </span>
         )
@@ -1818,7 +1827,7 @@ function StatusBadge({
 
     // Ya analizado por IA, pero le falta la parte de redacción / publicación
     return (
-        <span className="c-pill c-pill--info w-full justify-center">
+        <span className="c-pill c-pill--info">
             <Sparkles size={11} />
             Falta redacción de publicación
         </span>
