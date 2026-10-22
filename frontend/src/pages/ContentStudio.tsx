@@ -1666,21 +1666,14 @@ function ContentStudio() {
     <div>
       {/* Encabezado */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-500">
-            <Sparkles size={21} />
-          </div>
+        <div>
+          <h1 className="t-page t-page--xl text-3xl font-bold tracking-tight text-slate-900">
+            Redacción de Contenidos
+          </h1>
 
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">
-              Redacción de Contenidos
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Convierte conversaciones de Discord en contenido
-              adaptado para diferentes canales
-            </p>
-          </div>
+          <p className="mt-1 text-sm text-slate-500">
+            Convierte conversaciones de Discord en contenido adaptado para diferentes canales
+          </p>
         </div>
 
         <div
