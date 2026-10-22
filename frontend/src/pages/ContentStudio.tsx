@@ -7,7 +7,6 @@ import {
   Copy,
   Cpu,
   FileText,
-  Inbox,
   Layers,
   Megaphone,
   MessageCircle,
@@ -2159,21 +2158,14 @@ function ContentStudio() {
       <section className="lg:col-span-4 xl:col-span-4 flex flex-col rounded-2xl border border-slate-200 bg-white p-4 sm:p-4.5 shadow-sm">
         <div className="c-panel-head mb-3">
           <div className="c-panel-head__main">
-            <div className="c-panel-head__icon bg-orange-100 text-orange-600">
-              <Inbox size={16} />
-            </div>
-
             <div className="c-panel-head__body">
               <div className="c-panel-head__row">
                 <h3 className="c-panel-head__title">
                   Bandeja de mensajes en Redacción
                 </h3>
-                <span className="c-chip c-chip--brand tabular-nums">
-                  {workflowMessages.length} listos para copy
-                </span>
               </div>
               <p className="c-panel-head__desc">
-                Interacciones de la comunidad analizadas por la IA con alta relevancia. Haz clic en cualquiera para cargarla en la mesa de trabajo.
+                Selecciona un mensaje para revisarlo
               </p>
             </div>
           </div>
@@ -2333,19 +2325,11 @@ function ContentStudio() {
       >
         <div className="c-panel-head">
           <div className="c-panel-head__main">
-            <div className="c-panel-head__icon bg-indigo-50 text-indigo-600">
-              <MessageCircle size={16} />
-            </div>
-
             <div className="c-panel-head__body">
               <div className="c-panel-head__row">
                 <h3 className="c-panel-head__title">
                   Mensaje original de Discord
                 </h3>
-
-                <span className="c-chip c-chip--success">
-                  Mesa de trabajo
-                </span>
 
                 {isCurrentlyPublished && (
                   <span className="c-chip c-chip--success">
@@ -2356,46 +2340,93 @@ function ContentStudio() {
               </div>
 
               <p className="c-panel-head__desc">
-                Insumo seleccionado para generación de contenido
+                Mensaje seleccionado para generación de contenido
               </p>
             </div>
           </div>
-
-          <div className="c-panel-head__actions">
-            <span className="c-chip">
-              Discord
-            </span>
-          </div>
         </div>
 
-        <div className="mt-3 rounded-xl border border-slate-200/90 bg-slate-50/60 p-3 sm:p-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-900">
-                @{selectedWorkflowMessage?.author ?? 'Sin autor'}
-              </span>
-              <span className="text-[11px] text-slate-400">·</span>
-              <span className="text-xs font-semibold text-slate-700">
-                {selectedWorkflowMessage?.topic ?? 'Selecciona una interacción'}
-              </span>
+        {selectedWorkflowMessage ? (
+          <div className="mt-3 rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-4.5 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="c-avatar c-avatar--indigo h-8 w-8 text-xs font-bold shrink-0">
+                  {(selectedWorkflowMessage.author || 'U').slice(0, 2).toUpperCase()}
+                </span>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-900">
+                      @{selectedWorkflowMessage.author}
+                    </span>
+                    <span className="c-tag c-tag--channel text-[10px]">
+                      #{selectedWorkflowMessage.channel.replace(/^#/, '')}
+                    </span>
+                    <span className="text-[11px] font-medium text-slate-400 tabular-nums">
+                      ID #{selectedWorkflowMessage.interactionId}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Tema: <span className="font-semibold text-slate-700">{selectedWorkflowMessage.topic || 'General'}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-center tabular-nums">
+                <span
+                  className={`c-pill c-pill--dot ${
+                    selectedWorkflowMessage.sentiment === 'positive'
+                      ? 'c-pill--success'
+                      : selectedWorkflowMessage.sentiment === 'negative'
+                      ? 'c-pill--danger'
+                      : ''
+                  }`}
+                >
+                  {selectedWorkflowMessage.sentiment === 'positive'
+                    ? 'Positivo'
+                    : selectedWorkflowMessage.sentiment === 'negative'
+                    ? 'Negativo'
+                    : 'Neutral'}
+                </span>
+
+                <div
+                  className="score-ring score-ring--sm"
+                  style={{ '--p': selectedWorkflowMessage.relevance } as React.CSSProperties}
+                  title={`Relevancia IA: ${selectedWorkflowMessage.relevance}%`}
+                >
+                  <span>{selectedWorkflowMessage.relevance}%</span>
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-1.5 tabular-nums">
-              <span className="c-chip c-chip--success">
-                Sentimiento {selectedWorkflowMessage?.sentiment ?? 'Sin datos'}
-              </span>
-              <span className="c-chip c-chip--brand">
-                Relevancia {selectedWorkflowMessage?.relevance ?? 'Sin datos'}%
-              </span>
+            <div className="mt-3">
+              <p className="text-xs sm:text-sm leading-relaxed text-slate-800 font-normal">
+                {selectedWorkflowMessage.content}
+              </p>
             </div>
+
+            {selectedWorkflowMessage.attachments && selectedWorkflowMessage.attachments.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-2.5">
+                {selectedWorkflowMessage.attachments.map((att) => (
+                  <a
+                    key={att.id || att.url}
+                    href={att.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-100"
+                  >
+                    📎 {att.filename}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
-
-          <div className="mt-2 rounded-r-lg border-l-3 border-[var(--color-brand,#ff7400)] bg-white p-2.5 shadow-2xs">
-            <p className="text-xs italic leading-relaxed text-slate-700">
-              "{selectedWorkflowMessage?.content ?? 'Selecciona una conversación de la bandeja para comenzar a redactar sus copys.'}"
+        ) : (
+          <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
+            <p className="text-xs text-slate-500">
+              Selecciona una conversación de la bandeja para cargar su contenido en la mesa de trabajo.
             </p>
           </div>
-        </div>
+        )}
       </section>
 
       {/* Orquestador LangGraph y Selector de formato */}
@@ -2489,26 +2520,20 @@ function ContentStudio() {
             activeFormat === 'linkedin' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
           }`}
         >
-          <div className="border-b border-slate-100 p-3.5">
+          <div className="border-b border-slate-100 p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                   <BriefcaseBusiness size={16} />
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="text-xs font-bold text-slate-900">LinkedIn</h3>
-                    <span className="c-chip c-chip--info">
-                      <Cpu size={10} />
-                      <span>{modelosUtilizados.linkedin}</span>
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">Publicación profesional y networking</p>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold text-slate-900 truncate">LinkedIn</h3>
+                  <p className="text-[11px] text-slate-400 truncate">Publicación profesional y networking</p>
                 </div>
               </div>
 
               <span
-                className={`c-chip ${
+                className={`shrink-0 c-chip ${
                   drafts.linkedin.submitted
                     ? 'c-chip--success'
                     : isOmittedByOrchestrator(drafts.linkedin.content)
@@ -2521,6 +2546,13 @@ function ContentStudio() {
                   : isOmittedByOrchestrator(drafts.linkedin.content)
                   ? 'Omitido'
                   : 'Borrador'}
+              </span>
+            </div>
+
+            <div className="mt-2 flex items-center min-w-0">
+              <span className="c-chip c-chip--info max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.linkedin}>
+                <Cpu size={10} className="shrink-0" />
+                <span className="truncate">{modelosUtilizados.linkedin}</span>
               </span>
             </div>
           </div>
@@ -2762,26 +2794,20 @@ function ContentStudio() {
             activeFormat === 'x' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
           }`}
         >
-          <div className="border-b border-slate-100 p-3.5">
+          <div className="border-b border-slate-100 p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
                   <MessageCircle size={16} />
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="text-xs font-bold text-slate-900">X (Twitter)</h3>
-                    <span className="c-chip">
-                      <Cpu size={10} />
-                      <span>{modelosUtilizados.x}</span>
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">Microblogging conciso de alto impacto</p>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold text-slate-900 truncate">X (Twitter)</h3>
+                  <p className="text-[11px] text-slate-400 truncate">Microblogging conciso de alto impacto</p>
                 </div>
               </div>
 
               <span
-                className={`c-chip ${
+                className={`shrink-0 c-chip ${
                   drafts.x.submitted
                     ? 'c-chip--success'
                     : isOmittedByOrchestrator(drafts.x.content)
@@ -2794,6 +2820,13 @@ function ContentStudio() {
                   : isOmittedByOrchestrator(drafts.x.content)
                   ? 'Omitido'
                   : 'Borrador'}
+              </span>
+            </div>
+
+            <div className="mt-2 flex items-center min-w-0">
+              <span className="c-chip max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.x}>
+                <Cpu size={10} className="shrink-0" />
+                <span className="truncate">{modelosUtilizados.x}</span>
               </span>
             </div>
           </div>
@@ -3001,26 +3034,20 @@ function ContentStudio() {
             activeFormat === 'discord' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
           }`}
         >
-          <div className="border-b border-slate-100 p-3.5">
+          <div className="border-b border-slate-100 p-3 sm:p-3.5">
             <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
                   <MessageCircle size={16} />
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="text-xs font-bold text-slate-900">Discord</h3>
-                    <span className="c-chip c-chip--purple">
-                      <Cpu size={10} />
-                      <span>{modelosUtilizados.discord}</span>
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">Publicación en hilos y canales de la comunidad</p>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold text-slate-900 truncate">Discord</h3>
+                  <p className="text-[11px] text-slate-400 truncate">Publicación en hilos y canales de la comunidad</p>
                 </div>
               </div>
 
               <span
-                className={`c-chip ${
+                className={`shrink-0 c-chip ${
                   drafts.discord.submitted
                     ? 'c-chip--success'
                     : isOmittedByOrchestrator(drafts.discord.content)
@@ -3033,6 +3060,13 @@ function ContentStudio() {
                   : isOmittedByOrchestrator(drafts.discord.content)
                   ? 'Omitido'
                   : 'Borrador'}
+              </span>
+            </div>
+
+            <div className="mt-2 flex items-center min-w-0">
+              <span className="c-chip c-chip--purple max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.discord}>
+                <Cpu size={10} className="shrink-0" />
+                <span className="truncate">{modelosUtilizados.discord}</span>
               </span>
             </div>
           </div>
