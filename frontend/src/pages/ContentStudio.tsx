@@ -1845,42 +1845,44 @@ function ContentStudio() {
           </div>
         )}
 
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Descripción del anuncio para generar con IA */}
-          <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50/50 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label
-                htmlFor="announcement-draft"
-                className="text-xs font-bold uppercase tracking-wide text-slate-700"
-              >
-                Descripción del anuncio para generar con IA
-              </label>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold text-slate-500">IA:</span>
-                <select
-                  value={selectedAnnouncementModel}
-                  onChange={(e) => setSelectedAnnouncementModel(e.target.value)}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 outline-none transition focus:border-indigo-400"
+          <div className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 sm:p-4">
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="announcement-draft"
+                  className="text-[11px] font-bold uppercase tracking-wider text-slate-700"
                 >
-                  <option value="gemini">Google Gemini Flash Lite</option>
-                  <option value="groq">Groq (Cerebro IA)</option>
-                  <option value="gemma">Google Gemma 4</option>
-                </select>
+                  Descripción del anuncio para generar con IA
+                </label>
 
-                <span className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                  🤖 {selectedAnnouncementModel === 'groq' ? 'Groq · llama-3.3-70b-versatile' : selectedAnnouncementModel === 'gemma' ? 'Google Gemma 4 · gemma-4-31b-it' : 'Google Gemini · gemini-2.5-flash-lite'}
-                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-semibold text-slate-500">IA:</span>
+                  <select
+                    value={selectedAnnouncementModel}
+                    onChange={(e) => setSelectedAnnouncementModel(e.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+                  >
+                    <option value="gemini">Google Gemini Flash Lite</option>
+                    <option value="groq">Groq (Cerebro IA)</option>
+                    <option value="gemma">Google Gemma 4</option>
+                  </select>
 
-                <span
-                  className={`text-xs font-medium tabular-nums ${
-                    draftText.length > 10000 ? 'font-bold text-rose-600' : 'text-slate-500'
-                  }`}
-                >
-                  {draftText.length.toLocaleString()} / 10,000
-                </span>
+                  <span className="c-chip c-chip--purple">
+                    <Cpu size={10} />
+                    <span>{selectedAnnouncementModel === 'groq' ? 'Groq' : selectedAnnouncementModel === 'gemma' ? 'Gemma 4' : 'Gemini'}</span>
+                  </span>
+
+                  <span
+                    className={`text-[11px] font-semibold tabular-nums ${
+                      draftText.length > 10000 ? 'font-bold text-rose-600' : 'text-slate-500'
+                    }`}
+                  >
+                    {draftText.length.toLocaleString()} / 10,000
+                  </span>
+                </div>
               </div>
-            </div>
 
             {selectedAnnouncementModel === 'gemma' && (
               <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-[11px] text-amber-800">
@@ -1899,9 +1901,10 @@ function ContentStudio() {
                 setAnnouncementGenerateError('')
               }}
               placeholder="Escribe aquí los puntos clave, fecha, temática o instrucciones para el anuncio. La IA generará automáticamente el texto del anuncio en el editor final siguiendo el manual de marca CloudEdTech..."
-              rows={8}
-              className="mt-2.5 w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white p-3.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+              rows={6}
+              className="mt-2.5 w-full min-h-[140px] flex-1 resize-y rounded-lg border border-slate-200 bg-white p-2.5 text-xs leading-relaxed text-slate-700 outline-none transition focus:border-orange-500 focus:ring-1 focus:ring-orange-200"
             />
+            </div>
 
             {draftText.length > 10000 && (
               <p className="mt-1.5 text-xs font-medium text-rose-600">
@@ -1938,7 +1941,7 @@ function ContentStudio() {
               </div>
             )}
 
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/60 pt-3">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5">
               <div>
                 {draftText && (
                   <button
@@ -1947,9 +1950,9 @@ function ContentStudio() {
                       setDraftText('')
                       setAnnouncementGenerateError('')
                     }}
-                    className="text-xs text-slate-400 transition hover:text-slate-600"
+                    className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
                   >
-                    Limpiar descripción
+                    Limpiar
                   </button>
                 )}
               </div>
@@ -1962,50 +1965,51 @@ function ContentStudio() {
                   draftText.length > 10000
                 }
                 onClick={handleGenerateAnnouncement}
-                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand,#ff7400)] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
               >
                 {isGeneratingAnnouncement ? (
-                  <RotateCcw size={14} className="animate-spin" />
+                  <RotateCcw size={13} className="animate-spin" />
                 ) : (
-                  <Sparkles size={14} />
+                  <Sparkles size={13} />
                 )}
-                {isGeneratingAnnouncement ? 'Generando anuncio con IA...' : 'Generar anuncio con IA'}
+                <span>{isGeneratingAnnouncement ? 'Generando...' : 'Generar anuncio con IA'}</span>
               </button>
             </div>
           </div>
 
           {/* Editor de Anuncio Final y Semáforo de Caracteres */}
-          <div className="flex flex-col rounded-xl border border-slate-200 bg-slate-50/50 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label
-                htmlFor="announcement-final"
-                className="text-xs font-bold uppercase tracking-wide text-slate-700"
-              >
-                Editor de Anuncio Final
-              </label>
-
-              {/* Semáforo cromático */}
-              <div className="flex items-center gap-2">
-                <span
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
-                    finalAnnouncement.length <= 1500
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : finalAnnouncement.length <= 2000
-                      ? 'border-amber-200 bg-amber-50 text-amber-700'
-                      : 'border-rose-200 bg-rose-50 text-rose-700'
-                  }`}
+          <div className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 sm:p-4">
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="announcement-final"
+                  className="text-[11px] font-bold uppercase tracking-wider text-slate-700"
                 >
-                  {finalAnnouncement.length <= 1500
-                    ? 'Recomendado por manual de marca'
-                    : finalAnnouncement.length <= 2000
-                    ? 'Extenso pero permitido por Discord'
-                    : 'Excede el límite máximo de 2000 caracteres de Discord'}
-                </span>
-                <span className="text-xs font-bold tabular-nums text-slate-700">
-                  {finalAnnouncement.length} / 2000
-                </span>
+                  Editor de Anuncio Final
+                </label>
+
+                {/* Semáforo cromático */}
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`c-chip ${
+                      finalAnnouncement.length <= 1500
+                        ? 'c-chip--success'
+                        : finalAnnouncement.length <= 2000
+                        ? 'c-chip--warning'
+                        : 'c-chip--danger'
+                    }`}
+                  >
+                    {finalAnnouncement.length <= 1500
+                      ? 'Manual de marca'
+                      : finalAnnouncement.length <= 2000
+                      ? 'Permitido Discord'
+                      : 'Excede 2000 car.'}
+                  </span>
+                  <span className="text-[11px] font-bold tabular-nums text-slate-700">
+                    {finalAnnouncement.length} / 2000
+                  </span>
+                </div>
               </div>
-            </div>
 
             <textarea
               id="announcement-final"
@@ -2016,8 +2020,8 @@ function ContentStudio() {
                 setAnnouncementPublishSuccess('')
               }}
               placeholder="El anuncio generado aparecerá aquí para revisión final, o puedes redactarlo / cargar un archivo .txt/.md directamente..."
-              rows={8}
-              className="mt-2.5 w-full flex-1 resize-y rounded-xl border border-slate-200 bg-white p-3.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+              rows={6}
+              className="mt-2.5 w-full min-h-[140px] flex-1 resize-y rounded-lg border border-slate-200 bg-white p-2.5 text-xs leading-relaxed text-slate-700 outline-none transition focus:border-orange-500 focus:ring-1 focus:ring-orange-200"
             />
 
             {/* Barra de progreso cromática */}
@@ -2036,9 +2040,10 @@ function ContentStudio() {
               />
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/60 pt-3">
-              {/* Botón de carga de archivo movido aquí al editor final */}
-              <div className="flex items-center gap-2">
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5">
+              {/* Botón de carga de archivo */}
+              <div className="flex items-center gap-1.5">
                 <input
                   type="file"
                   ref={fileInputRef}
@@ -2049,10 +2054,10 @@ function ContentStudio() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50"
                 >
-                  <Upload size={14} />
-                  Cargar archivo .txt / .md
+                  <Upload size={13} />
+                  <span>.txt / .md</span>
                 </button>
 
                 {finalAnnouncement && (
@@ -2063,7 +2068,7 @@ function ContentStudio() {
                       setAnnouncementPublishError('')
                       setAnnouncementPublishSuccess('')
                     }}
-                    className="text-xs text-slate-400 transition hover:text-slate-600"
+                    className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
                   >
                     Limpiar
                   </button>
@@ -2071,8 +2076,8 @@ function ContentStudio() {
               </div>
 
               {/* Selector de Canal y Botón Publicar */}
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex items-center gap-1">
                   <label htmlFor="announcement-channel" className="text-[11px] font-semibold text-slate-500">
                     Canal:
                   </label>
@@ -2080,7 +2085,7 @@ function ContentStudio() {
                     id="announcement-channel"
                     value={selectedDiscordChannel}
                     onChange={(e) => setSelectedDiscordChannel(e.target.value)}
-                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-400"
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-500"
                   >
                     {availableDiscordChannels.map((ch) => (
                       <option key={ch.id} value={ch.id}>
@@ -2099,10 +2104,10 @@ function ContentStudio() {
                     isPublishingAnnouncement
                   }
                   onClick={() => setShowConfirmModal(true)}
-                  className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand,#ff7400)] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
                 >
-                  <Send size={14} />
-                  Publicar anuncio en Discord
+                  <Send size={13} />
+                  <span>Publicar en Discord</span>
                 </button>
               </div>
             </div>
@@ -2110,7 +2115,7 @@ function ContentStudio() {
         </div>
 
         {/* Vista Previa en vivo estilo Discord Embed (Spec 019 RF-09) */}
-        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/40 p-4">
+        <div className="mt-3.5 rounded-xl border border-slate-200/90 bg-slate-50/40 p-3 sm:p-3.5">
           <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-bold uppercase tracking-wide text-slate-700">
               Vista previa en vivo · Discord Embed
@@ -2269,9 +2274,9 @@ function ContentStudio() {
                     setSelectedWorkflowId(item.interactionId)
                     prepareWorkflowContent(item)
                   }}
-                  className={`min-w-[280px] max-w-[320px] shrink-0 rounded-xl border p-4 text-left transition ${
+                  className={`min-w-[260px] max-w-[290px] shrink-0 rounded-xl border p-3 text-left transition ${
                     isActive
-                      ? 'c-tray-card--active border-orange-500 bg-orange-50/70 shadow-sm ring-1 ring-orange-400'
+                      ? 'c-tray-card--active border-orange-500 bg-orange-50/70 shadow-xs ring-1 ring-orange-400'
                       : 'border-slate-200 bg-white hover:border-orange-300 hover:bg-slate-50/60'
                   }`}
                 >
@@ -2301,11 +2306,11 @@ function ContentStudio() {
                     <span className="truncate text-slate-600">{item.topic}</span>
                   </div>
 
-                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                  <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-slate-600">
                     "{item.content}"
                   </p>
 
-                  <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
+                  <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[11px]">
                     <span
                       className={`font-semibold ${
                         isActive ? 'text-orange-600' : 'text-slate-400'
@@ -2366,35 +2371,30 @@ function ContentStudio() {
           </div>
         </div>
 
-        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="font-semibold text-slate-900">
-                {selectedWorkflowMessage?.author ?? 'Sin mensaje seleccionado'}
-              </p>
-
-              <p className="mt-1 text-xs text-slate-400">
-                Conversación seleccionada
-              </p>
+        <div className="mt-3 rounded-xl border border-slate-200/90 bg-slate-50/60 p-3 sm:p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-900">
+                @{selectedWorkflowMessage?.author ?? 'Sin autor'}
+              </span>
+              <span className="text-[11px] text-slate-400">·</span>
+              <span className="text-xs font-semibold text-slate-700">
+                {selectedWorkflowMessage?.topic ?? 'Selecciona una interacción'}
+              </span>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+            <div className="flex items-center gap-1.5 tabular-nums">
+              <span className="c-chip c-chip--success">
                 Sentimiento {selectedWorkflowMessage?.sentiment ?? 'Sin datos'}
               </span>
-
-              <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700">
-                Relevancia {selectedWorkflowMessage?.relevance ?? 'Sin datos'}
+              <span className="c-chip c-chip--brand">
+                Relevancia {selectedWorkflowMessage?.relevance ?? 'Sin datos'}%
               </span>
             </div>
           </div>
 
-          <h4 className="mt-4 font-bold text-slate-900">
-            {selectedWorkflowMessage?.topic ?? 'Selecciona una interacción'}
-          </h4>
-
-          <div className="mt-3 rounded-r-xl border-l-4 border-orange-500 bg-white/90 p-4 shadow-xs">
-            <p className="text-sm italic leading-relaxed text-slate-700">
+          <div className="mt-2 rounded-r-lg border-l-3 border-[var(--color-brand,#ff7400)] bg-white p-2.5 shadow-2xs">
+            <p className="text-xs italic leading-relaxed text-slate-700">
               "{selectedWorkflowMessage?.content ?? 'Selecciona una conversación de la bandeja para comenzar a redactar sus copys.'}"
             </p>
           </div>
@@ -2485,78 +2485,84 @@ function ContentStudio() {
       </section>
 
       {/* Tarjetas Especializadas Multicanal con Trazabilidad de Modelos de IA */}
-      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
         {/* TARJETA LINKEDIN */}
         <section
           className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
             activeFormat === 'linkedin' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
           }`}
         >
-          <div className="border-b border-slate-100 p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                  <BriefcaseBusiness size={18} />
+          <div className="border-b border-slate-100 p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <BriefcaseBusiness size={16} />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900">LinkedIn</h3>
-                  <p className="text-xs text-slate-400">Publicación profesional y networking</p>
-                  <div className="mt-1.5 flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50/80 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
-                    <Cpu size={12} />
-                    <span>🤖 Modelo IA: {modelosUtilizados.linkedin}</span>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-xs font-bold text-slate-900">LinkedIn</h3>
+                    <span className="c-chip c-chip--info">
+                      <Cpu size={10} />
+                      <span>{modelosUtilizados.linkedin}</span>
+                    </span>
                   </div>
+                  <p className="text-[11px] text-slate-400">Publicación profesional y networking</p>
                 </div>
               </div>
 
               <span
-                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                className={`c-chip ${
                   drafts.linkedin.submitted
-                    ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                    ? 'c-chip--success'
                     : isOmittedByOrchestrator(drafts.linkedin.content)
-                    ? 'border border-amber-200 bg-amber-50 text-amber-800'
-                    : 'bg-amber-50 text-amber-700'
+                    ? 'c-chip--warning'
+                    : 'c-chip--brand'
                 }`}
               >
                 {drafts.linkedin.submitted
-                  ? '✓ Publicado en LinkedIn'
+                  ? '✓ Publicado'
                   : isOmittedByOrchestrator(drafts.linkedin.content)
-                  ? 'Omitido por orquestador'
+                  ? 'Omitido'
                   : 'Borrador'}
               </span>
             </div>
           </div>
 
-          <div className="flex flex-1 flex-col p-5">
-            <label htmlFor="linkedin-title" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Título del Post
-            </label>
-            <input
-              id="linkedin-title"
-              type="text"
-              value={linkedinTitle}
-              disabled={drafts.linkedin.submitted}
-              onChange={(e) => setLinkedinTitle(e.target.value)}
-              placeholder="Ej: Reflexiones sobre nuestra comunidad de aprendizaje..."
-              className="mt-1.5 rounded-lg border border-slate-200 p-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 disabled:bg-slate-50"
-            />
+          <div className="flex flex-1 flex-col p-3.5 space-y-2">
+            <div>
+              <label htmlFor="linkedin-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Título del Post
+              </label>
+              <input
+                id="linkedin-title"
+                type="text"
+                value={linkedinTitle}
+                disabled={drafts.linkedin.submitted}
+                onChange={(e) => setLinkedinTitle(e.target.value)}
+                placeholder="Ej: Reflexiones sobre nuestra comunidad de aprendizaje..."
+                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-100 disabled:bg-slate-50"
+              />
+            </div>
 
-            <label htmlFor="content-linkedin" className="mt-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <Pencil size={13} />
-              Copy persuasivo editable
-            </label>
-            <textarea
-              id="content-linkedin"
-              value={drafts.linkedin.content}
-              disabled={drafts.linkedin.submitted}
-              onFocus={() => setActiveFormat('linkedin')}
-              onChange={(event) => updateContent('linkedin', event.target.value)}
-              placeholder="Copy persuasivo para LinkedIn..."
-              className={`mt-1.5 min-h-60 flex-1 resize-y rounded-xl border p-3.5 text-sm leading-6 outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
-                isOmittedByOrchestrator(drafts.linkedin.content)
-                  ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
-                  : 'border-slate-200 text-slate-700 focus:border-blue-400 focus:ring-2 focus:ring-blue-50'
-              }`}
-            />
+            <div>
+              <label htmlFor="content-linkedin" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <Pencil size={11} />
+                <span>Copy persuasivo editable</span>
+              </label>
+              <textarea
+                id="content-linkedin"
+                value={drafts.linkedin.content}
+                disabled={drafts.linkedin.submitted}
+                onFocus={() => setActiveFormat('linkedin')}
+                onChange={(event) => updateContent('linkedin', event.target.value)}
+                placeholder="Copy persuasivo para LinkedIn..."
+                className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+                  isOmittedByOrchestrator(drafts.linkedin.content)
+                    ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                    : 'border-slate-200 text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-50'
+                }`}
+              />
+            </div>
 
             {isOmittedByOrchestrator(drafts.linkedin.content) && (
               <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
@@ -2759,71 +2765,77 @@ function ContentStudio() {
             activeFormat === 'x' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
           }`}
         >
-          <div className="border-b border-slate-100 p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-white">
-                  <MessageCircle size={18} />
+          <div className="border-b border-slate-100 p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
+                  <MessageCircle size={16} />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900">X (Twitter)</h3>
-                  <p className="text-xs text-slate-400">Microblogging conciso de alto impacto</p>
-                  <div className="mt-1.5 flex items-center gap-1 rounded-md border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-800">
-                    <Cpu size={12} />
-                    <span>🤖 Modelo IA: {modelosUtilizados.x}</span>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-xs font-bold text-slate-900">X (Twitter)</h3>
+                    <span className="c-chip">
+                      <Cpu size={10} />
+                      <span>{modelosUtilizados.x}</span>
+                    </span>
                   </div>
+                  <p className="text-[11px] text-slate-400">Microblogging conciso de alto impacto</p>
                 </div>
               </div>
 
               <span
-                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                className={`c-chip ${
                   drafts.x.submitted
-                    ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                    ? 'c-chip--success'
                     : isOmittedByOrchestrator(drafts.x.content)
-                    ? 'border border-amber-200 bg-amber-50 text-amber-800'
-                    : 'bg-amber-50 text-amber-700'
+                    ? 'c-chip--warning'
+                    : 'c-chip--brand'
                 }`}
               >
                 {drafts.x.submitted
-                  ? '✓ Publicado en X'
+                  ? '✓ Publicado'
                   : isOmittedByOrchestrator(drafts.x.content)
-                  ? 'Omitido por orquestador'
+                  ? 'Omitido'
                   : 'Borrador'}
               </span>
             </div>
           </div>
 
-          <div className="flex flex-1 flex-col p-5">
-            <label htmlFor="x-title" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Título / Hook del Tweet
-            </label>
-            <input
-              id="x-title"
-              type="text"
-              value={xTitle}
-              disabled={drafts.x.submitted}
-              onChange={(e) => setXTitle(e.target.value)}
-              placeholder="Ej: ¿Sabías esto sobre nuestra comunidad? 👇"
-              className="mt-1.5 rounded-lg border border-slate-200 p-2.5 text-xs font-medium text-slate-800 outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-100 disabled:bg-slate-50"
-            />
+          <div className="flex flex-1 flex-col p-3.5 space-y-2">
+            <div>
+              <label htmlFor="x-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Título / Hook del Tweet
+              </label>
+              <input
+                id="x-title"
+                type="text"
+                value={xTitle}
+                disabled={drafts.x.submitted}
+                onChange={(e) => setXTitle(e.target.value)}
+                placeholder="Ej: ¿Sabías esto sobre nuestra comunidad? 👇"
+                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-slate-600 focus:ring-1 focus:ring-slate-100 disabled:bg-slate-50"
+              />
+            </div>
 
-            <label htmlFor="content-x" className="mt-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <Pencil size={13} />
-              Tweet editable
-            </label>
-            <textarea
-              id="content-x"
-              value={drafts.x.content}
-              disabled={drafts.x.submitted}
-              onFocus={() => setActiveFormat('x')}
-              onChange={(event) => updateContent('x', event.target.value)}
-              placeholder="Tweet conciso..."
-              className={`mt-1.5 min-h-60 flex-1 resize-y rounded-xl border p-3.5 text-sm leading-6 outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
-                isOmittedByOrchestrator(drafts.x.content)
-                  ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
-                  : 'border-slate-200 text-slate-700 focus:border-slate-500 focus:ring-2 focus:ring-slate-100'
-              }`}
-            />
+            <div>
+              <label htmlFor="content-x" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <Pencil size={11} />
+                <span>Tweet editable</span>
+              </label>
+              <textarea
+                id="content-x"
+                value={drafts.x.content}
+                disabled={drafts.x.submitted}
+                onFocus={() => setActiveFormat('x')}
+                onChange={(event) => updateContent('x', event.target.value)}
+                placeholder="Tweet conciso..."
+                className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+                  isOmittedByOrchestrator(drafts.x.content)
+                    ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                    : 'border-slate-200 text-slate-700 focus:border-slate-600 focus:ring-1 focus:ring-slate-100'
+                }`}
+              />
+            </div>
 
             {isOmittedByOrchestrator(drafts.x.content) && (
               <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
@@ -2992,43 +3004,45 @@ function ContentStudio() {
             activeFormat === 'discord' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
           }`}
         >
-          <div className="border-b border-slate-100 p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                  <MessageCircle size={18} />
+          <div className="border-b border-slate-100 p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                  <MessageCircle size={16} />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900">Discord</h3>
-                  <p className="text-xs text-slate-400">Publicación en hilos y canales de la comunidad</p>
-                  <div className="mt-1.5 flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-                    <Cpu size={12} />
-                    <span>🤖 Modelo IA: {modelosUtilizados.discord}</span>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-xs font-bold text-slate-900">Discord</h3>
+                    <span className="c-chip c-chip--purple">
+                      <Cpu size={10} />
+                      <span>{modelosUtilizados.discord}</span>
+                    </span>
                   </div>
+                  <p className="text-[11px] text-slate-400">Publicación en hilos y canales de la comunidad</p>
                 </div>
               </div>
 
               <span
-                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                className={`c-chip ${
                   drafts.discord.submitted
-                    ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                    ? 'c-chip--success'
                     : isOmittedByOrchestrator(drafts.discord.content)
-                    ? 'border border-amber-200 bg-amber-50 text-amber-800'
-                    : 'bg-amber-50 text-amber-700'
+                    ? 'c-chip--warning'
+                    : 'c-chip--brand'
                 }`}
               >
                 {drafts.discord.submitted
-                  ? '✓ Publicado en Discord'
+                  ? '✓ Publicado'
                   : isOmittedByOrchestrator(drafts.discord.content)
-                  ? 'Omitido por orquestador'
+                  ? 'Omitido'
                   : 'Borrador'}
               </span>
             </div>
           </div>
 
-          <div className="flex flex-1 flex-col p-5">
+          <div className="flex flex-1 flex-col p-3.5 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <label htmlFor="discord-channel-select" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <label htmlFor="discord-channel-select" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                 Canal de Destino
               </label>
               <select
@@ -3036,7 +3050,7 @@ function ContentStudio() {
                 value={discordSelectedChannel}
                 disabled={drafts.discord.submitted}
                 onChange={(e) => setDiscordSelectedChannel(e.target.value)}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 outline-none focus:border-indigo-400"
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 outline-none focus:border-indigo-500"
               >
                 <option value="general">#general</option>
                 <option value="faq">#faq</option>
@@ -3047,36 +3061,40 @@ function ContentStudio() {
               </select>
             </div>
 
-            <label htmlFor="discord-title" className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Título del Post
-            </label>
-            <input
-              id="discord-title"
-              type="text"
-              value={discordTitle}
-              disabled={drafts.discord.submitted}
-              onChange={(e) => setDiscordTitle(e.target.value)}
-              placeholder="Ej: [Comunidad] Debate abierto..."
-              className="mt-1.5 rounded-lg border border-slate-200 p-2.5 text-xs font-medium text-slate-800 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100 disabled:bg-slate-50"
-            />
+            <div>
+              <label htmlFor="discord-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Título del Post
+              </label>
+              <input
+                id="discord-title"
+                type="text"
+                value={discordTitle}
+                disabled={drafts.discord.submitted}
+                onChange={(e) => setDiscordTitle(e.target.value)}
+                placeholder="Ej: [Comunidad] Debate abierto..."
+                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 disabled:bg-slate-50"
+              />
+            </div>
 
-            <label htmlFor="content-discord" className="mt-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <Pencil size={13} />
-              Cuerpo del Post
-            </label>
-            <textarea
-              id="content-discord"
-              value={drafts.discord.content}
-              disabled={drafts.discord.submitted}
-              onFocus={() => setActiveFormat('discord')}
-              onChange={(event) => updateContent('discord', event.target.value)}
-              placeholder="Mensaje para la comunidad..."
-              className={`mt-1.5 min-h-44 flex-1 resize-y rounded-xl border p-3.5 text-sm leading-6 outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
-                isOmittedByOrchestrator(drafts.discord.content)
-                  ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
-                  : 'border-slate-200 text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50'
-              }`}
-            />
+            <div>
+              <label htmlFor="content-discord" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <Pencil size={11} />
+                <span>Cuerpo del Post</span>
+              </label>
+              <textarea
+                id="content-discord"
+                value={drafts.discord.content}
+                disabled={drafts.discord.submitted}
+                onFocus={() => setActiveFormat('discord')}
+                onChange={(event) => updateContent('discord', event.target.value)}
+                placeholder="Mensaje para la comunidad..."
+                className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+                  isOmittedByOrchestrator(drafts.discord.content)
+                    ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                    : 'border-slate-200 text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-50'
+                }`}
+              />
+            </div>
 
             {isOmittedByOrchestrator(drafts.discord.content) && (
               <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
@@ -3457,39 +3475,41 @@ function ContentStudio() {
           </p>
         )}
 
-        <div className="mt-5 max-h-[480px] overflow-y-auto pr-1.5 space-y-3">
+        <div className="mt-3 max-h-[500px] overflow-y-auto pr-1.5 space-y-2.5">
           {!complaintsLoading && !complaintsError && complaints.length === 0 && (
-            <p className="text-sm text-slate-500">
-              No hay interacciones negativas para revisar.
-            </p>
+            <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center">
+              <p className="text-xs text-slate-500">
+                No hay interacciones negativas para revisar en este momento.
+              </p>
+            </div>
           )}
 
           {complaints.map((complaint) => (
             <div
               key={complaint.id}
-              className="rounded-xl border border-rose-100 bg-rose-50/30 p-4"
+              className="rounded-xl border border-rose-100 bg-rose-50/20 p-3 sm:p-3.5 transition hover:bg-rose-50/40"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="c-chip c-chip--danger">
                     Posible queja
                   </span>
 
-                  <span className="text-xs text-slate-500">
-                    {complaint.canal || 'Discord'} · {complaint.autor || 'Autor desconocido'}
+                  <span className="text-xs font-semibold text-slate-600">
+                    #{complaint.canal || 'Discord'} · @{complaint.autor || 'Autor desconocido'}
                   </span>
                 </div>
 
-                <span className="text-xs font-medium text-orange-600">
-                  Relevancia: {complaint.relevancia ?? 'Sin evaluar'}
+                <span className="c-chip c-chip--brand tabular-nums">
+                  Relevancia: {complaint.relevancia ?? 'Sin evaluar'}%
                 </span>
               </div>
 
-              <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
+              <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
                 {complaint.texto}
               </p>
 
-              <div className="mt-4 flex justify-end">
+              <div className="mt-3 flex justify-end border-t border-rose-100/60 pt-2">
                 <button
                   type="button"
                   disabled={complaintPublishing}
@@ -3504,9 +3524,10 @@ function ContentStudio() {
                     setComplaintGenerationError('')
                     setComplaintResponse('')
                   }}
-                  className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand,#ff7400)] px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-orange-600"
                 >
-                  Preparar respuesta
+                  <MessageCircle size={13} />
+                  <span>Preparar respuesta</span>
                 </button>
               </div>
             </div>
@@ -3971,19 +3992,19 @@ function ContentStudio() {
       )}
 
       {/* Flujo editorial directo */}
-      <section className="mt-6 rounded-2xl border border-orange-100 bg-orange-50/50 p-5">
-        <div className="flex items-start gap-3">
+      <section className="mt-4 rounded-xl border border-orange-100 bg-orange-50/40 p-3 sm:p-3.5 shadow-2xs">
+        <div className="flex items-start gap-2.5">
           <Sparkles
-            size={18}
+            size={16}
             className="mt-0.5 shrink-0 text-orange-500"
           />
 
           <div>
-            <p className="text-sm font-semibold text-slate-800">
+            <p className="text-xs font-bold text-slate-800">
               Flujo editorial directo
             </p>
 
-            <p className="mt-1 text-sm leading-6 text-slate-600">
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
               El contenido generado y personalizado aquí se guarda directamente en la base de datos de la plataforma. Puedes copiar los textos optimizados para LinkedIn y X para publicarlos en tus redes, mientras que las respuestas a quejas y soporte de Discord se envían en tiempo real con el bot oficial.
             </p>
           </div>
