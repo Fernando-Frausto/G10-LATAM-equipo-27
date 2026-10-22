@@ -10,6 +10,7 @@ import {
   Layers,
   Megaphone,
   MessageCircle,
+  MessageSquare,
   Pencil,
   RotateCcw,
   Search,
@@ -160,6 +161,8 @@ function ContentStudio() {
 
   const [activeFormat, setActiveFormat] =
     useState<ContentFormat>('linkedin')
+  const [workspaceViewMode, setWorkspaceViewMode] =
+    useState<'tabs' | 'grid'>('tabs')
   const [copiedFormat, setCopiedFormat] =
     useState<ContentFormat | null>(null)
   const [showDiscordFiles, setShowDiscordFiles] =
@@ -2512,12 +2515,109 @@ function ContentStudio() {
         )}
       </section>
 
-      {/* Tarjetas Especializadas Multicanal con Trazabilidad de Modelos de IA */}
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+      {/* Selector de Canales / Pestañas de la Mesa de Trabajo (CommunityLab DS) */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-2 sm:p-2.5">
+        <div className="c-segmented" role="tablist" aria-label="Canales de redacción">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeFormat === 'linkedin'}
+            onClick={() => setActiveFormat('linkedin')}
+            className={`c-segmented__btn inline-flex items-center gap-1.5 ${
+              activeFormat === 'linkedin' ? 'is-active text-blue-700 font-bold' : 'text-slate-600'
+            }`}
+          >
+            <BriefcaseBusiness size={13} className={activeFormat === 'linkedin' ? 'text-blue-600' : 'text-slate-400'} />
+            <span>LinkedIn</span>
+            {drafts.linkedin.submitted ? (
+              <span className="c-chip c-chip--success text-[10px] py-0 px-1.5">✓ Publicado</span>
+            ) : isOmittedByOrchestrator(drafts.linkedin.content) ? (
+              <span className="c-chip c-chip--warning text-[10px] py-0 px-1.5">Omitido</span>
+            ) : drafts.linkedin.content.trim() ? (
+              <span className="c-chip c-chip--brand text-[10px] py-0 px-1.5">Borrador</span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeFormat === 'x'}
+            onClick={() => setActiveFormat('x')}
+            className={`c-segmented__btn inline-flex items-center gap-1.5 ${
+              activeFormat === 'x' ? 'is-active text-slate-900 font-bold' : 'text-slate-600'
+            }`}
+          >
+            <MessageCircle size={13} className={activeFormat === 'x' ? 'text-slate-900' : 'text-slate-400'} />
+            <span>X (Twitter)</span>
+            {drafts.x.submitted ? (
+              <span className="c-chip c-chip--success text-[10px] py-0 px-1.5">✓ Publicado</span>
+            ) : isOmittedByOrchestrator(drafts.x.content) ? (
+              <span className="c-chip c-chip--warning text-[10px] py-0 px-1.5">Omitido</span>
+            ) : drafts.x.content.trim() ? (
+              <span className="c-chip c-chip--brand text-[10px] py-0 px-1.5">Borrador</span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeFormat === 'discord'}
+            onClick={() => setActiveFormat('discord')}
+            className={`c-segmented__btn inline-flex items-center gap-1.5 ${
+              activeFormat === 'discord' ? 'is-active text-indigo-700 font-bold' : 'text-slate-600'
+            }`}
+          >
+            <MessageSquare size={13} className={activeFormat === 'discord' ? 'text-indigo-600' : 'text-slate-400'} />
+            <span>Discord</span>
+            {drafts.discord.submitted ? (
+              <span className="c-chip c-chip--success text-[10px] py-0 px-1.5">✓ Publicado</span>
+            ) : isOmittedByOrchestrator(drafts.discord.content) ? (
+              <span className="c-chip c-chip--warning text-[10px] py-0 px-1.5">Omitido</span>
+            ) : drafts.discord.content.trim() ? (
+              <span className="c-chip c-chip--brand text-[10px] py-0 px-1.5">Borrador</span>
+            ) : null}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Alternancia de visualización: Canal individual vs Todas en paralelo */}
+          <div className="c-segmented text-[11px]" role="group" aria-label="Modo de visualización">
+            <button
+              type="button"
+              onClick={() => setWorkspaceViewMode('tabs')}
+              className={`c-segmented__btn ${workspaceViewMode === 'tabs' ? 'is-active' : ''}`}
+              title="Ver un canal a la vez (layout equilibrado y compacto)"
+            >
+              Pestaña activa
+            </button>
+            <button
+              type="button"
+              onClick={() => setWorkspaceViewMode('grid')}
+              className={`c-segmented__btn ${workspaceViewMode === 'grid' ? 'is-active' : ''}`}
+              title="Ver los 3 canales en paralelo"
+            >
+              Ver las 3
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Contenedor de Tarjetas Multicanal */}
+      <div
+        className={
+          workspaceViewMode === 'grid'
+            ? 'mt-3 grid grid-cols-1 gap-4 xl:grid-cols-3'
+            : 'mt-3'
+        }
+      >
         {/* TARJETA LINKEDIN */}
         <section
-          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
-            activeFormat === 'linkedin' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+          className={`flex-col rounded-2xl border bg-white shadow-sm transition border-slate-200 ${
+            workspaceViewMode === 'grid'
+              ? 'flex'
+              : activeFormat === 'linkedin'
+              ? 'flex ring-1 ring-blue-100'
+              : 'hidden'
           }`}
         >
           <div className="border-b border-slate-100 p-3 sm:p-3.5">
@@ -2790,8 +2890,12 @@ function ContentStudio() {
 
         {/* TARJETA X (TWITTER) */}
         <section
-          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
-            activeFormat === 'x' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+          className={`flex-col rounded-2xl border bg-white shadow-sm transition border-slate-200 ${
+            workspaceViewMode === 'grid'
+              ? 'flex'
+              : activeFormat === 'x'
+              ? 'flex ring-1 ring-slate-200'
+              : 'hidden'
           }`}
         >
           <div className="border-b border-slate-100 p-3 sm:p-3.5">
@@ -3030,8 +3134,12 @@ function ContentStudio() {
 
         {/* TARJETA DISCORD */}
         <section
-          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
-            activeFormat === 'discord' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+          className={`flex-col rounded-2xl border bg-white shadow-sm transition border-slate-200 ${
+            workspaceViewMode === 'grid'
+              ? 'flex'
+              : activeFormat === 'discord'
+              ? 'flex ring-1 ring-indigo-100'
+              : 'hidden'
           }`}
         >
           <div className="border-b border-slate-100 p-3 sm:p-3.5">
