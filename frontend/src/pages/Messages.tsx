@@ -381,7 +381,10 @@ function Messages() {
             return false
         }
 
-        const isMsgPublished = Boolean(message.isPublished) || message.workflowStage === 'publicado'
+        const isMsgPublished =
+            Boolean(message.isPublished) ||
+            message.workflowStage === 'publicado' ||
+            (Array.isArray(message.publishedPlatforms) && message.publishedPlatforms.length > 0)
         const currentCuration = curationStatus[message.id] ?? 'pending'
 
         // Precedencia humana (HITL):
@@ -396,12 +399,8 @@ function Messages() {
                     currentCuration !== 'curated' &&
                     currentCuration !== 'pending'))
 
-        const isCompleted =
-            !isDiscarded &&
-            (isMsgPublished ||
-                currentCuration === 'curated' ||
-                message.workflowStage === 'en_aprobacion' ||
-                message.workflowStage === 'en_redaccion')
+        // Solo se considera proceso completo si efectivamente fue publicado en >= 1 red social
+        const isCompleted = !isDiscarded && isMsgPublished
 
         const isPendingEval =
             !isDiscarded &&
@@ -572,18 +571,18 @@ function Messages() {
 
             totalInRange++
 
-            const isMsgPublished = Boolean(msg.isPublished) || msg.workflowStage === 'publicado'
+            const isMsgPublished =
+                Boolean(msg.isPublished) ||
+                msg.workflowStage === 'publicado' ||
+                (Array.isArray(msg.publishedPlatforms) && msg.publishedPlatforms.length > 0)
             const st = curationStatus[msg.id] ?? 'pending'
             if (!isMsgPublished && st === 'discarded') {
                 discardedInRange++
                 continue
             }
 
-            const isCompleted =
-                isMsgPublished ||
-                st === 'curated' ||
-                msg.workflowStage === 'en_aprobacion' ||
-                msg.workflowStage === 'en_redaccion'
+            // Solo se contabiliza como completo si ya fue publicado en >= 1 red social
+            const isCompleted = isMsgPublished
 
             const isPendingEval =
                 !isCompleted &&
@@ -1412,7 +1411,9 @@ function Messages() {
 
                     {filteredMessages.map((message) => {
                         const isMsgPublished =
-                            Boolean(message.isPublished) || message.workflowStage === 'publicado'
+                            Boolean(message.isPublished) ||
+                            message.workflowStage === 'publicado' ||
+                            (Array.isArray(message.publishedPlatforms) && message.publishedPlatforms.length > 0)
                         const currentCuration = curationStatus[message.id] ?? 'pending'
                         const status = isMsgPublished
                             ? 'curated'
@@ -1436,7 +1437,11 @@ function Messages() {
                             rawPublished.includes(p)
                         )
                         const effectivePublished =
-                            canonicalPublished.length > 0 ? canonicalPublished : ['Discord']
+                            canonicalPublished.length > 0
+                                ? canonicalPublished
+                                : isMsgPublished
+                                ? ['Discord']
+                                : []
                         const missingPlatforms = ALL_PLATFORMS.filter(
                             (p) => !effectivePublished.includes(p)
                         )
@@ -1741,8 +1746,9 @@ function StatusBadge({
         workflowStage === 'en_redaccion'
     ) {
         return (
-            <span className="c-pill c-pill--success c-pill--dot">
-                Listo / Aprobado
+            <span className="c-pill c-pill--info">
+                <Sparkles size={11} />
+                Pendiente de publicar
             </span>
         )
     }

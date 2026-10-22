@@ -35,6 +35,7 @@ interface SidebarMessagesApiResponse {
             relevance?: number
             curation_status?: string
             is_published?: boolean
+            published_platforms?: string[]
         }
     }>
 }
@@ -206,16 +207,17 @@ function Sidebar({
                     ? data.messages.filter((item) => {
                           const analysis = item?.analysis
                           if (!analysis) return false
-                          const workflow_stage = analysis.workflow_stage
                           const relevance = Number(analysis.relevance ?? 0)
                           const curation_status = analysis.curation_status
                           const is_published = Boolean(analysis.is_published)
+                          const has_published_platforms =
+                              Array.isArray(analysis.published_platforms) &&
+                              analysis.published_platforms.length > 0
                           return (
-                              (workflow_stage === 'en_redaccion' ||
-                                  workflow_stage === 'en_analisis') &&
                               relevance >= 70 &&
                               curation_status !== 'discarded' &&
-                              !is_published
+                              !is_published &&
+                              !has_published_platforms
                           )
                       }).length
                     : null

@@ -245,6 +245,32 @@ def _asegurar_esquema_sqlite():
     """Garantiza la existencia de tablas y columnas necesarias en motor-ia/communitylab.db."""
     motor_bd.crear_tabla()
     with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "contenidos_generados" in tables and "interacciones" in tables:
+            # Saneamiento de falsos positivos históricos donde se marcó publicado sin contenido real
+            conn.execute("""
+                UPDATE contenidos_generados
+                SET estado = 'pendiente_revision', estado_publicacion = 'no_publicado', publicado_en = NULL
+                WHERE (contenido IS NULL OR trim(contenido) = '')
+                  AND (estado = 'publicado' OR estado_publicacion = 'publicado')
+            """)
+            if "respuestas_quejas_discord" in tables:
+                conn.execute("""
+                    UPDATE interacciones
+                    SET etapa_flujo = 'en_redaccion', estado_curaduria = 'curated'
+                    WHERE etapa_flujo = 'publicado'
+                      AND id NOT IN (
+                          SELECT DISTINCT interaccion_id
+                          FROM contenidos_generados
+                          WHERE (estado = 'publicado' OR estado_publicacion = 'publicado')
+                            AND contenido IS NOT NULL AND trim(contenido) != ''
+                      )
+                      AND id NOT IN (
+                          SELECT DISTINCT interaccion_id
+                          FROM respuestas_quejas_discord
+                          WHERE publicado_en IS NOT NULL
+                      )
+                """)
         cols_int = {row[1] for row in conn.execute("PRAGMA table_info(interacciones)").fetchall()}
         if "estado_curaduria" not in cols_int:
             conn.execute("ALTER TABLE interacciones ADD COLUMN estado_curaduria TEXT DEFAULT 'pending'")
@@ -3779,7 +3805,8 @@ def consultar_mensajes_comunidad_enriquecido(limite: int = 100):
                 """
                 SELECT interaccion_id, LOWER(COALESCE(plataforma, formato)) as plat
                 FROM contenidos_generados
-                WHERE estado_publicacion = 'publicado'
+                WHERE (estado_publicacion = 'publicado' OR estado = 'publicado')
+                  AND contenido IS NOT NULL AND trim(contenido) != ''
                 """
             ).fetchall()
             for r in rows:
@@ -4697,7 +4724,7 @@ def api_mototradis_checkpoint(id_mensaje: int):
     plataformas_publicadas = []
     with sqlite3.connect(motor_bd.RUTA_BD) as conn:
         rows = conn.execute(
-            "SELECT LOWER(COALESCE(plataforma, formato)) FROM contenidos_generados WHERE interaccion_id = ? AND estado_publicacion = 'publicado'",
+            "SELECT LOWER(COALESCE(plataforma, formato)) FROM contenidos_generados WHERE interaccion_id = ? AND (estado_publicacion = 'publicado' OR estado = 'publicado') AND contenido IS NOT NULL AND trim(contenido) != ''",
             (id_mensaje,)
         ).fetchall()
         for r in rows:
@@ -4870,7 +4897,7 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
     # Actualizar estado de curaduría en SQLite
     with sqlite3.connect(motor_bd.RUTA_BD) as conn:
         conn.execute(
-            "UPDATE interacciones SET etapa_flujo = 'procesado', estado_curaduria = 'procesado' WHERE id = ?",
+            "UPDATE interacciones SET etapa_flujo = 'en_redaccion', estado_curaduria = 'curated' WHERE id = ? AND etapa_flujo != 'publicado'",
             (id_msg,)
         )
         conn.commit()

@@ -322,11 +322,10 @@ function ContentStudio() {
         let messages = data.messages
           .filter(
             (item) =>
-              (item.analysis.workflow_stage === 'en_redaccion' ||
-                item.analysis.workflow_stage === 'en_analisis') &&
               item.analysis.relevance >= 70 &&
               item.analysis.curation_status !== 'discarded' &&
-              !item.analysis.is_published,
+              !item.analysis.is_published &&
+              (!item.analysis.published_platforms || item.analysis.published_platforms.length === 0),
           )
           .map((item) => ({
             interactionId: item.message.interaction_id,
