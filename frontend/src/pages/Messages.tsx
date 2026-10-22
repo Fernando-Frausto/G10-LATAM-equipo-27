@@ -1593,7 +1593,7 @@ function Messages() {
                                                 title="Restaurar mensaje a pendientes"
                                                 aria-label="Restaurar mensaje a pendientes"
                                                 disabled={savingCurationId !== null}
-                                                onClick={() => markCuration(message, 'pending')}
+                                                onClick={() => markCuration(message, message.isAnalyzed ? 'curated' : 'pending')}
                                                 className="c-btn c-btn--secondary c-btn--icon c-btn--sm text-emerald-600 hover:text-emerald-700"
                                             >
                                                 <RotateCcw size={14} />
