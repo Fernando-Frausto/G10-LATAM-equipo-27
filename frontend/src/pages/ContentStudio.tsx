@@ -7,6 +7,7 @@ import {
   Copy,
   Cpu,
   FileText,
+  Inbox,
   Layers,
   Megaphone,
   MessageCircle,
@@ -183,6 +184,11 @@ function ContentStudio() {
 
   const [workflowLoading, setWorkflowLoading] = useState(true)
   const [workflowError, setWorkflowError] = useState('')
+
+  // Pestañas de organización visual (Design System de Cristian): Bandeja, Anuncios oficiales y Quejas y soporte
+  const [activeContentTab, setActiveContentTab] = useState<
+    'inbox' | 'announcements' | 'complaints'
+  >(() => (location.hash === '#panel-quejas' ? 'complaints' : 'inbox'))
 
   const originalMessageRef = useRef<HTMLElement | null>(null)
   const trayCardRefs = useRef<Record<number, HTMLButtonElement | null>>({})
@@ -450,6 +456,7 @@ function ContentStudio() {
 
   useEffect(() => {
     if (!targetInteractionId || Number.isNaN(targetInteractionId)) return
+    setActiveContentTab('inbox')
     setManualIdInput(String(targetInteractionId))
   }, [targetInteractionId])
 
@@ -743,6 +750,7 @@ function ContentStudio() {
 
   useEffect(() => {
     if (location.hash === '#panel-quejas') {
+      setActiveContentTab('complaints')
       const timer = setTimeout(() => {
         const el = document.getElementById('panel-quejas')
         if (el) {
@@ -1684,53 +1692,104 @@ function ContentStudio() {
         </div>
       </div>
 
-      {/* Panel de Anuncios Oficiales de la Comunidad (Discord Webhook) */}
-      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        {/* Cabecera del Panel */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600">
-              <Megaphone size={20} />
-            </div>
+      {/* Selector de pestañas (Design System de Cristian) */}
+      <div className="c-tabs mt-6" role="tablist" aria-label="Secciones de Redacción" style={{ marginBottom: '1.5rem' }}>
+        <button
+          type="button"
+          role="tab"
+          id="tab-btn-inbox"
+          aria-selected={activeContentTab === 'inbox'}
+          aria-controls="panel-inbox"
+          onClick={() => setActiveContentTab('inbox')}
+          className={`c-tab ${activeContentTab === 'inbox' ? 'is-active' : ''}`}
+        >
+          Bandeja
+          <span className="c-tab__count">{workflowMessages.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="tab-btn-announcements"
+          aria-selected={activeContentTab === 'announcements'}
+          aria-controls="panel-announcements"
+          onClick={() => setActiveContentTab('announcements')}
+          className={`c-tab ${activeContentTab === 'announcements' ? 'is-active' : ''}`}
+        >
+          Anuncios oficiales
+          <span className="c-tab__count">
+            {announcementStatus?.channels?.length ?? 1}
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="tab-btn-complaints"
+          aria-selected={activeContentTab === 'complaints'}
+          aria-controls="panel-quejas"
+          onClick={() => setActiveContentTab('complaints')}
+          className={`c-tab ${activeContentTab === 'complaints' ? 'is-active' : ''}`}
+        >
+          Quejas y soporte
+          <span className="c-tab__count">{complaints.length}</span>
+        </button>
+      </div>
 
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900">
-                  Panel de Anuncios Oficiales de la Comunidad (Discord Webhook)
-                </h3>
-
-                <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
-                  #{announcementStatus?.channel_hint || 'anuncios'}
-                </span>
-
-                <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50/80 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700">
-                  <Cpu size={12} />
-                  🤖 Modelo IA: {selectedAnnouncementModel === 'groq' ? 'Groq · llama-3.3-70b-versatile' : selectedAnnouncementModel === 'gemma' ? 'Google Gemma 4 · gemma-4-31b-it' : 'Google Gemini · gemini-2.5-flash-lite'}
-                </span>
+      {/* PESTAÑA: ANUNCIOS OFICIALES */}
+      <div
+        id="panel-announcements"
+        role="tabpanel"
+        aria-labelledby="tab-btn-announcements"
+        className={activeContentTab === 'announcements' ? 'space-y-6' : 'hidden'}
+      >
+        {/* Panel de Anuncios Oficiales de la Comunidad (Discord Webhook) */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          {/* Cabecera compacta del Panel (CommunityLab Design System) */}
+          <div className="c-panel-head">
+            <div className="c-panel-head__main">
+              <div className="c-panel-head__icon bg-orange-100 text-orange-600">
+                <Megaphone size={16} />
               </div>
 
-              <p className="mt-1 text-xs text-slate-500">
-                Redacta comunicados oficiales, optimízalos con IA o carga archivos .txt/.md y publícalos directamente vía Webhook.
-              </p>
+              <div className="c-panel-head__body">
+                <div className="c-panel-head__row">
+                  <h3 className="c-panel-head__title">
+                    Panel de Anuncios Oficiales de la Comunidad (Discord Webhook)
+                  </h3>
+
+                  <span className="c-chip c-chip--info">
+                    #{announcementStatus?.channel_hint || 'anuncios'}
+                  </span>
+
+                  <span className="c-chip c-chip--purple">
+                    <Cpu size={11} />
+                    <span>
+                      🤖 Modelo IA: {selectedAnnouncementModel === 'groq' ? 'Groq · llama-3.3-70b-versatile' : selectedAnnouncementModel === 'gemma' ? 'Google Gemma 4 · gemma-4-31b-it' : 'Google Gemini · gemini-2.5-flash-lite'}
+                    </span>
+                  </span>
+                </div>
+
+                <p className="c-panel-head__desc">
+                  Redacta comunicados oficiales, optimízalos con IA o carga archivos .txt/.md y publícalos directamente vía Webhook.
+                </p>
+              </div>
+            </div>
+
+            <div className="c-panel-head__actions">
+              {announcementStatusLoading ? (
+                <span className="text-xs text-slate-400">Consultando webhook...</span>
+              ) : announcementStatus?.configured ? (
+                <span className="c-chip c-chip--success">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span>Webhook configurado</span>
+                </span>
+              ) : (
+                <span className="c-chip c-chip--warning">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  <span>Webhook no configurado</span>
+                </span>
+              )}
             </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            {announcementStatusLoading ? (
-              <span className="text-xs text-slate-400">Consultando webhook...</span>
-            ) : announcementStatus?.configured ? (
-              <span className="c-live rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                <span className="c-live__dot" aria-hidden="true" />
-                <span>Webhook configurado</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                <span className="h-2 w-2 rounded-full bg-amber-500" />
-                Webhook no configurado
-              </span>
-            )}
-          </div>
-        </div>
 
         {/* Alerta ámbar si configured === false */}
         {!announcementStatusLoading && announcementStatus && !announcementStatus.configured && (
@@ -2087,70 +2146,86 @@ function ContentStudio() {
           </div>
         </div>
       </section>
+      </div>
 
+      {/* PESTAÑA: BANDEJA Y MESA DE TRABAJO */}
+      <div
+        id="panel-inbox"
+        role="tabpanel"
+        aria-labelledby="tab-btn-inbox"
+        className={activeContentTab === 'inbox' ? 'space-y-6' : 'hidden'}
+      >
       {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
-      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h3 className="font-bold text-slate-900">
-                Bandeja de mensajes en Redacción
-              </h3>
-              <span className="tabular-nums rounded-full border border-orange-200 bg-orange-50 px-3 py-0.5 text-xs font-bold text-orange-600">
-                {workflowMessages.length} listos para copy
-              </span>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="c-panel-head mb-3">
+          <div className="c-panel-head__main">
+            <div className="c-panel-head__icon bg-orange-100 text-orange-600">
+              <Inbox size={16} />
             </div>
-            <p className="mt-1 text-xs text-slate-500">
-              Interacciones de la comunidad analizadas por la IA con alta relevancia. Haz clic en cualquiera para cargarla en la mesa de trabajo.
-            </p>
+
+            <div className="c-panel-head__body">
+              <div className="c-panel-head__row">
+                <h3 className="c-panel-head__title">
+                  Bandeja de mensajes en Redacción
+                </h3>
+                <span className="c-chip c-chip--brand tabular-nums">
+                  {workflowMessages.length} listos para copy
+                </span>
+              </div>
+              <p className="c-panel-head__desc">
+                Interacciones de la comunidad analizadas por la IA con alta relevancia. Haz clic en cualquiera para cargarla en la mesa de trabajo.
+              </p>
+            </div>
           </div>
 
           {/* Buscador y Carga directa por ID específico (Estilo Enoc / HITL) */}
-          <form
-            onSubmit={handleSearchById}
-            className="flex flex-col sm:items-end gap-1"
-          >
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min="1"
-                placeholder="ID ej: 42"
-                value={manualIdInput}
-                onChange={(e) => {
-                  const nextVal = e.target.value
-                  setManualIdInput(nextVal)
-                  setManualIdError(null)
-                  if (pinnedSearchMessage !== null) {
-                    const pinnedId = pinnedSearchMessage.interactionId
-                    setPinnedSearchMessage(null)
-                    if (
-                      selectedMessageId === pinnedId ||
-                      activeWorkbenchMessage?.interactionId === pinnedId
-                    ) {
-                      const firstNatural = workflowMessages[0] ?? null
-                      setSelectedMessageId(firstNatural?.interactionId ?? null)
-                      setActiveWorkbenchMessage(firstNatural)
-                      setDrafts(buildDefaultDrafts(firstNatural))
+          <div className="c-panel-head__actions">
+            <form
+              onSubmit={handleSearchById}
+              className="flex flex-col sm:items-end gap-0.5"
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="ID ej: 42"
+                  value={manualIdInput}
+                  onChange={(e) => {
+                    const nextVal = e.target.value
+                    setManualIdInput(nextVal)
+                    setManualIdError(null)
+                    if (pinnedSearchMessage !== null) {
+                      const pinnedId = pinnedSearchMessage.interactionId
+                      setPinnedSearchMessage(null)
+                      if (
+                        selectedMessageId === pinnedId ||
+                        activeWorkbenchMessage?.interactionId === pinnedId
+                      ) {
+                        const firstNatural = workflowMessages[0] ?? null
+                        setSelectedMessageId(firstNatural?.interactionId ?? null)
+                        setActiveWorkbenchMessage(firstNatural)
+                        setDrafts(buildDefaultDrafts(firstNatural))
+                      }
                     }
-                  }
-                }}
-                className="w-28 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold tabular-nums text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
-              />
-              <button
-                type="submit"
-                disabled={!manualIdInput.trim() || workflowLoading}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Search size={13} />
-                Cargar ID
-              </button>
-            </div>
-            {manualIdError && (
-              <span className="text-[11px] font-medium text-rose-600">
-                {manualIdError}
-              </span>
-            )}
-          </form>
+                  }}
+                  className="w-24 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+                />
+                <button
+                  type="submit"
+                  disabled={!manualIdInput.trim() || workflowLoading}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1 text-xs font-semibold text-white shadow-xs transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Search size={12} />
+                  <span>Cargar ID</span>
+                </button>
+              </div>
+              {manualIdError && (
+                <span className="text-[10px] font-medium text-rose-600">
+                  {manualIdError}
+                </span>
+              )}
+            </form>
+          </div>
         </div>
 
         {workflowLoading && (
@@ -2252,41 +2327,43 @@ function ContentStudio() {
       {/* Mensaje original */}
       <section
         ref={originalMessageRef}
-        className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
       >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-              <MessageCircle size={19} />
+        <div className="c-panel-head">
+          <div className="c-panel-head__main">
+            <div className="c-panel-head__icon bg-indigo-50 text-indigo-600">
+              <MessageCircle size={16} />
             </div>
 
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900">
+            <div className="c-panel-head__body">
+              <div className="c-panel-head__row">
+                <h3 className="c-panel-head__title">
                   Mensaje original de Discord
                 </h3>
 
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                <span className="c-chip c-chip--success">
                   Mesa de trabajo
                 </span>
 
                 {isCurrentlyPublished && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-                    <CheckCircle size={13} className="text-emerald-600" />
-                    ✓ Publicado en: {publishedPlatformNames.join(', ')}
+                  <span className="c-chip c-chip--success">
+                    <CheckCircle size={11} className="text-emerald-600" />
+                    <span>✓ Publicado en: {publishedPlatformNames.join(', ')}</span>
                   </span>
                 )}
               </div>
 
-              <p className="mt-1 text-xs text-slate-400">
+              <p className="c-panel-head__desc">
                 Insumo seleccionado para generación de contenido
               </p>
             </div>
           </div>
 
-          <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
-            Discord
-          </span>
+          <div className="c-panel-head__actions">
+            <span className="c-chip">
+              Discord
+            </span>
+          </div>
         </div>
 
         <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
@@ -2325,50 +2402,50 @@ function ContentStudio() {
       </section>
 
       {/* Orquestador LangGraph y Selector de formato */}
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600">
-              <Sparkles size={20} />
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="c-panel-head">
+          <div className="c-panel-head__main">
+            <div className="c-panel-head__icon bg-orange-100 text-orange-600">
+              <Sparkles size={16} />
             </div>
 
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900">
+            <div className="c-panel-head__body">
+              <div className="c-panel-head__row">
+                <h3 className="c-panel-head__title">
                   Mesa de Trabajo Multicanal (Orquestador LangGraph)
                 </h3>
 
                 {isCurrentlyPublished && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
-                    <CheckCircle size={13} className="text-emerald-600" />
-                    ✓ Publicado en: {publishedPlatformNames.join(', ')}
+                  <span className="c-chip c-chip--success">
+                    <CheckCircle size={11} className="text-emerald-600" />
+                    <span>✓ Publicado en: {publishedPlatformNames.join(', ')}</span>
                   </span>
                 )}
 
-                <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
-                  <Cpu size={12} />
-                  🤖 Orquestador IA: {modelosUtilizados.orquestador}
+                <span className="c-chip c-chip--info">
+                  <Cpu size={11} />
+                  <span>🤖 Orquestador IA: {modelosUtilizados.orquestador}</span>
                 </span>
 
-                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
+                <span className="c-chip">
                   Estado: {pipelineData?.estado_pipeline || 'listo'}
                 </span>
 
                 {pipelineData?.rutas_activas && (
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
+                  <span className="c-chip c-chip--success">
                     Rutas: {pipelineData.rutas_activas.join(', ')}
                   </span>
                 )}
               </div>
 
-              <p className="mt-1 text-sm text-slate-500">
+              <p className="c-panel-head__desc">
                 Pipeline de redacción adaptativa con soberanía humana (HITL). Revisa, edita o regenera cada canal antes de publicar.
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
+          <div className="c-panel-head__actions">
+            <div className="flex items-center gap-1.5">
               <label
                 htmlFor="workspace-ai-provider"
                 className="text-xs font-semibold text-slate-600"
@@ -2380,7 +2457,7 @@ function ContentStudio() {
                 value={workspaceAiProvider}
                 disabled={Object.values(drafts).some((d) => d.regenerating)}
                 onChange={(event) => setWorkspaceAiProvider(event.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
               >
                 {AI_PROVIDERS.map((provider) => (
                   <option key={provider} value={provider}>
@@ -2394,10 +2471,10 @@ function ContentStudio() {
               type="button"
               disabled={pipelineExecuting || !selectedWorkflowMessage}
               onClick={handleExecuteMototradisPipeline}
-              className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition hover:from-indigo-700 hover:to-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:from-indigo-700 hover:to-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <RotateCcw size={14} className={pipelineExecuting ? 'animate-spin' : ''} />
-              {pipelineExecuting ? 'Ejecutando LangGraph...' : '⚡ Ejecutar Pipeline de Redacción (LangGraph)'}
+              <RotateCcw size={13} className={pipelineExecuting ? 'animate-spin' : ''} />
+              <span>{pipelineExecuting ? 'Ejecutando LangGraph...' : '⚡ Ejecutar Pipeline (LangGraph)'}</span>
             </button>
           </div>
         </div>
@@ -3176,41 +3253,47 @@ function ContentStudio() {
       </div>
 
       {/* Barra de Decisión Global HITL (Human-in-the-Loop) */}
-      <section className="mt-6 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-purple-50/60 p-6 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h4 className="font-bold text-slate-900">
-                Decisión Humana Global HITL (Human-in-the-Loop)
-              </h4>
-              <span className="rounded-full bg-indigo-100 px-3 py-0.5 text-xs font-bold text-indigo-800">
-                Revisión: {pipelineData?.estado_revision || 'pendiente_hitl'}
-              </span>
+      <section className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-purple-50/60 p-4 shadow-sm">
+        <div className="c-panel-head c-panel-head--flat">
+          <div className="c-panel-head__main">
+            <div className="c-panel-head__icon bg-indigo-100 text-indigo-700">
+              <CheckCircle size={16} />
             </div>
-            <p className="mt-1 text-xs text-slate-600">
-              Soberanía humana completa: Tus modificaciones manuales en los títulos y copys tienen prevalencia estricta sobre las sugerencias de la IA.
-            </p>
+
+            <div className="c-panel-head__body">
+              <div className="c-panel-head__row">
+                <h4 className="c-panel-head__title">
+                  Decisión Humana Global HITL (Human-in-the-Loop)
+                </h4>
+                <span className="c-chip c-chip--info">
+                  Revisión: {pipelineData?.estado_revision || 'pendiente_hitl'}
+                </span>
+              </div>
+              <p className="c-panel-head__desc">
+                Soberanía humana completa: Tus modificaciones manuales en los títulos y copys tienen prevalencia estricta sobre las sugerencias de la IA.
+              </p>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="c-panel-head__actions">
             <button
               type="button"
               disabled={pipelineExecuting || !selectedWorkflowMessage}
               onClick={() => handleSubmitHitlDecision(false)}
-              className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-bold text-rose-600 shadow-xs transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 shadow-xs transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <XCircle size={15} />
-              Desaprobar y limpiar hilo (Regenerar)
+              <XCircle size={13} />
+              <span>Desaprobar y limpiar hilo</span>
             </button>
 
             <button
               type="button"
               disabled={pipelineExecuting || !selectedWorkflowMessage}
               onClick={() => handleSubmitHitlDecision(true)}
-              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <CheckCircle size={15} />
-              Aprobar y publicar en canales (HITL)
+              <CheckCircle size={13} />
+              <span>Aprobar y publicar en canales (HITL)</span>
             </button>
           </div>
         </div>
@@ -3231,71 +3314,71 @@ function ContentStudio() {
       </section>
 
       {/* Procesamiento Masivo con Gemma 4 para Baja Relevancia (< 35) */}
-      <section className="mt-6 rounded-2xl border border-purple-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600">
-              <Layers size={20} />
+      <section className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
+        <div className="c-panel-head">
+          <div className="c-panel-head__main">
+            <div className="c-panel-head__icon bg-purple-100 text-purple-600">
+              <Layers size={16} />
             </div>
 
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900">
+            <div className="c-panel-head__body">
+              <div className="c-panel-head__row">
+                <h3 className="c-panel-head__title">
                   Procesamiento Masivo de Baja Relevancia (&lt; 35)
                 </h3>
 
-                <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-xs font-semibold text-purple-700">
-                  <Cpu size={12} />
-                  🤖 Modelo IA: {modelosUtilizados.masivo}
+                <span className="c-chip c-chip--purple">
+                  <Cpu size={11} />
+                  <span>🤖 Modelo IA: {modelosUtilizados.masivo}</span>
                 </span>
 
                 <span
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold transition ${
-                    massQueueLoading
-                      ? 'border-slate-200 bg-slate-50 text-slate-500'
-                      : massQueueCount > 0
-                      ? 'border-purple-300 bg-purple-100/70 text-purple-800'
-                      : 'border-slate-200 bg-slate-100 text-slate-500'
+                  className={`c-chip ${
+                    massQueueCount > 0 ? 'c-chip--purple font-bold' : ''
                   }`}
                   title="Cantidad de mensajes en cola pendientes con relevancia menor a 35"
                 >
-                  📥 {massQueueLoading ? 'Consultando cola...' : `Cola pendiente: ${massQueueCount} ${massQueueCount === 1 ? 'mensaje' : 'mensajes'}`}
+                  <span>📥 {massQueueLoading ? 'Consultando cola...' : `Cola: ${massQueueCount} ${massQueueCount === 1 ? 'mensaje' : 'mensajes'}`}</span>
                 </span>
               </div>
 
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="c-panel-head__desc">
                 Filtra y despacha en bloque interacciones con relevancia menor a 35 mediante Google Gemma 4 con directivas concisas, liberando la mesa de trabajo principal.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <label htmlFor="mass-limit-input" className="text-xs font-semibold text-slate-600">
-              Límite:
-            </label>
-            <input
-              id="mass-limit-input"
-              type="number"
-              min={1}
-              max={50}
-              value={massLimit}
-              disabled={massProcessing || massQueueCount === 0}
-              onChange={(e) => setMassLimit(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs font-bold text-slate-700 outline-none focus:border-purple-400 disabled:bg-slate-50 disabled:text-slate-400"
-            />
+          <div className="c-panel-head__actions">
+            <div className="flex items-center gap-1.5">
+              <label htmlFor="mass-limit-input" className="text-xs font-semibold text-slate-600">
+                Límite:
+              </label>
+              <input
+                id="mass-limit-input"
+                type="number"
+                min={1}
+                max={50}
+                value={massLimit}
+                disabled={massProcessing || massQueueCount === 0}
+                onChange={(e) => setMassLimit(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="w-14 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs font-bold text-slate-700 outline-none focus:border-purple-400 disabled:bg-slate-50 disabled:text-slate-400"
+              />
+            </div>
             <button
               type="button"
               disabled={massProcessing || massQueueLoading || massQueueCount === 0}
               onClick={handleRunMassGemma}
-              className="flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
+              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
               title={massQueueCount === 0 ? 'Sin mensajes en cola con relevancia menor a 35' : undefined}
             >
-              <RotateCcw size={14} className={massProcessing ? 'animate-spin' : ''} />
-              {massProcessing
-                ? 'Procesando con Gemma 4...'
-                : massQueueCount === 0
-                ? 'Sin mensajes en cola (< 35)'
-                : '⚡ Procesar cola (< 35) con Gemma 4'}
+              <RotateCcw size={13} className={massProcessing ? 'animate-spin' : ''} />
+              <span>
+                {massProcessing
+                  ? 'Procesando...'
+                  : massQueueCount === 0
+                  ? 'Sin pendientes (< 35)'
+                  : '⚡ Procesar (< 35)'}
+              </span>
             </button>
           </div>
         </div>
@@ -3327,36 +3410,45 @@ function ContentStudio() {
           </div>
         )}
       </section>
+      </div>
 
+      {/* PESTAÑA: QUEJAS Y SOPORTE */}
+      <div
+        id="panel-complaints"
+        role="tabpanel"
+        aria-labelledby="tab-btn-complaints"
+        className={activeContentTab === 'complaints' ? 'space-y-6' : 'hidden'}
+      >
       {/* Quejas, reclamos y soporte crítico */}
-      <section id="panel-quejas" className="mt-6 rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
-              <MessageCircle size={19} />
+      <section id="panel-quejas" className="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
+        <div className="c-panel-head">
+          <div className="c-panel-head__main">
+            <div className="c-panel-head__icon bg-rose-50 text-rose-600">
+              <MessageCircle size={16} />
             </div>
 
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900">
+            <div className="c-panel-head__body">
+              <div className="c-panel-head__row">
+                <h3 className="c-panel-head__title">
                   Panel de Quejas, Reclamos y Soporte Crítico
                 </h3>
 
-                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-600">
+                <span className="c-chip c-chip--purple">
                   IA + revisión humana
                 </span>
               </div>
 
-              <p className="mt-1 text-sm text-slate-500">
-                Interacciones negativas de Discord que requieren revisión
-                para determinar si necesitan una respuesta.
+              <p className="c-panel-head__desc">
+                Interacciones negativas de Discord que requieren revisión para determinar si necesitan una respuesta.
               </p>
             </div>
           </div>
 
-          <span className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600">
-            {complaintsLoading ? 'Cargando...' : `${complaints.length} posibles quejas`}
-          </span>
+          <div className="c-panel-head__actions">
+            <span className="c-chip c-chip--danger">
+              {complaintsLoading ? 'Cargando...' : `${complaints.length} posibles quejas`}
+            </span>
+          </div>
         </div>
 
         {complaintsError && (
@@ -3421,6 +3513,7 @@ function ContentStudio() {
           ))}
         </div>
       </section>
+      </div>
 
       {/* Ventana de respuesta a quejas */}
       {activeComplaint !== null && (
