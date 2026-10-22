@@ -375,8 +375,10 @@ function Analytics() {
                     <div className="l-grid l-grid--4" style={{ marginTop: 'var(--space-5)' }}>
                         {metrics.map((m) => (
                             <div className="c-meter" key={m.label}>
-                                <span className="c-stat__label">{m.label}</span>
-                                <span className="t-kpi font-extrabold tabular-nums">
+                                <span className="c-stat__label text-xs font-semibold text-slate-500">
+                                    {m.label}
+                                </span>
+                                <span className="t-kpi font-extrabold tabular-nums text-slate-900" style={{ fontSize: 'var(--text-3xl)' }}>
                                     {m.value}
                                     {m.suffix}
                                 </span>
@@ -390,7 +392,7 @@ function Analytics() {
                                         style={{ width: `${m.progress}%` }}
                                     />
                                 </div>
-                                <span className="t-caption">{m.note}</span>
+                                <span className="t-caption text-xs text-slate-400">{m.note}</span>
                             </div>
                         ))}
                     </div>
@@ -415,7 +417,7 @@ function Analytics() {
                                     <Lightbulb size={20} />
                                 </span>
                                 <div>
-                                    <h2 className="t-card text-base font-bold text-white">
+                                    <h2 className="t-card text-base font-bold" style={{ color: '#ffffff' }}>
                                         Insight destacado
                                     </h2>
                                     <p className="text-xs text-orange-300">
@@ -614,10 +616,10 @@ function Analytics() {
                                     <YAxis
                                         type="category"
                                         dataKey="label"
-                                        tick={{ fontSize: 12, fill: '#475569', fontWeight: 600 }}
+                                        tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
                                         axisLine={false}
                                         tickLine={false}
-                                        width={95}
+                                        width={145}
                                     />
                                     <Tooltip
                                         contentStyle={{
