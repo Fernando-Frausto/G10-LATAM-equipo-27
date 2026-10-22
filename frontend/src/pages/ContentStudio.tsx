@@ -16,11 +16,12 @@ import {
   Send,
   Sparkles,
   Upload,
+  X,
   XCircle,
 } from 'lucide-react'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 
 import {
   createContentDraft,
@@ -160,6 +161,9 @@ function ContentStudio() {
 
   const [activeFormat, setActiveFormat] =
     useState<ContentFormat>('linkedin')
+  const [workspaceModalChannel, setWorkspaceModalChannel] = useState<
+    'linkedin' | 'x' | 'discord' | 'all' | null
+  >(null)
   const [copiedFormat, setCopiedFormat] =
     useState<ContentFormat | null>(null)
   const [showDiscordFiles, setShowDiscordFiles] =
@@ -276,6 +280,16 @@ function ContentStudio() {
     return () => {
       isMounted = false
     }
+  }, [])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setWorkspaceModalChannel(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
   useEffect(() => {
@@ -1298,6 +1312,7 @@ function ContentStudio() {
   const handleExecuteMototradisPipeline = async () => {
     if (!selectedMessageId) return
     setPipelineExecuting(true)
+    setWorkspaceModalChannel('all')
     setPipelineActionMessage('')
     setPipelineActionError('')
 
@@ -1659,6 +1674,857 @@ function ContentStudio() {
   }
 
   const announcementDraft = finalAnnouncement.trim() || draftText.trim()
+
+  const renderLinkedinCard = () => (
+    <section
+      className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
+        activeFormat === 'linkedin' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+      }`}
+    >
+      <div className="border-b border-slate-100 p-3 sm:p-3.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+              <BriefcaseBusiness size={16} />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold text-slate-900 truncate">LinkedIn</h3>
+              <p className="text-[11px] text-slate-400 truncate">Publicación profesional y networking</p>
+            </div>
+          </div>
+
+          <span
+            className={`shrink-0 c-chip ${
+              drafts.linkedin.submitted
+                ? 'c-chip--success'
+                : isOmittedByOrchestrator(drafts.linkedin.content)
+                ? 'c-chip--warning'
+                : 'c-chip--brand'
+            }`}
+          >
+            {drafts.linkedin.submitted
+              ? '✓ Publicado'
+              : isOmittedByOrchestrator(drafts.linkedin.content)
+              ? 'Omitido'
+              : 'Borrador'}
+          </span>
+        </div>
+
+        <div className="mt-2 flex items-center min-w-0">
+          <span className="c-chip c-chip--info max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.linkedin}>
+            <Cpu size={10} className="shrink-0" />
+            <span className="truncate">{modelosUtilizados.linkedin}</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col p-3.5 space-y-2">
+        <div>
+          <label htmlFor="linkedin-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            Título del Post
+          </label>
+          <input
+            id="linkedin-title"
+            type="text"
+            value={linkedinTitle}
+            disabled={drafts.linkedin.submitted}
+            onChange={(e) => setLinkedinTitle(e.target.value)}
+            placeholder="Ej: Reflexiones sobre nuestra comunidad de aprendizaje..."
+            className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-100 disabled:bg-slate-50"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="content-linkedin" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <Pencil size={11} />
+            <span>Copy persuasivo editable</span>
+          </label>
+          <textarea
+            id="content-linkedin"
+            value={drafts.linkedin.content}
+            disabled={drafts.linkedin.submitted}
+            onFocus={() => setActiveFormat('linkedin')}
+            onChange={(event) => updateContent('linkedin', event.target.value)}
+            placeholder="Copy persuasivo para LinkedIn..."
+            className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+              isOmittedByOrchestrator(drafts.linkedin.content)
+                ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                : 'border-slate-200 text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-50'
+            }`}
+          />
+        </div>
+
+        {isOmittedByOrchestrator(drafts.linkedin.content) && (
+          <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+            <div className="flex items-center gap-1.5">
+              <Sparkles size={14} className="shrink-0 text-amber-600" />
+              <span>¿Deseas redactar copy para LinkedIn de todos modos?</span>
+            </div>
+            <button
+              type="button"
+              disabled={drafts.linkedin.regenerating}
+              onClick={() => handleRegenerateChannelCopy('linkedin')}
+              className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
+            >
+              <RotateCcw size={12} className={drafts.linkedin.regenerating ? 'animate-spin' : ''} />
+              {drafts.linkedin.regenerating ? 'Generando...' : 'Regenerar con IA'}
+            </button>
+          </div>
+        )}
+
+        {/* Extras Plegables (Copy tono, Newsletter, FAQ) */}
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <button
+            type="button"
+            onClick={() => setShowLinkedinExtras((prev) => !prev)}
+            className="flex w-full items-center justify-between text-xs font-semibold text-slate-700 hover:text-blue-600"
+          >
+            <span>Formatos adicionales (Newsletter & FAQ)</span>
+            {showLinkedinExtras ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+
+          {showLinkedinExtras && (
+            <div className="mt-3 space-y-3 border-t border-slate-200 pt-3 text-xs">
+              <div>
+                <label className="font-semibold text-slate-600">Copy de Tono / Alternativo:</label>
+                <textarea
+                  value={linkedinCopyTono}
+                  onChange={(e) => setLinkedinCopyTono(e.target.value)}
+                  placeholder="Variación en tono formal o reflexivo..."
+                  rows={2}
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-600">Newsletter (Destaque & Resumen):</label>
+                <input
+                  type="text"
+                  value={linkedinNewsletter?.destaque || ''}
+                  onChange={(e) =>
+                    setLinkedinNewsletter((prev) => ({ ...prev, destaque: e.target.value }))
+                  }
+                  placeholder="Destaque de Newsletter..."
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                />
+                <textarea
+                  value={linkedinNewsletter?.resumen || ''}
+                  onChange={(e) =>
+                    setLinkedinNewsletter((prev) => ({ ...prev, resumen: e.target.value }))
+                  }
+                  placeholder="Resumen para la entrega semanal..."
+                  rows={2}
+                  className="mt-1.5 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-600">Sugerencia FAQ de la Comunidad:</label>
+                <input
+                  type="text"
+                  value={linkedinFaq?.sugerencia || ''}
+                  onChange={(e) =>
+                    setLinkedinFaq((prev) => ({ ...prev, sugerencia: e.target.value }))
+                  }
+                  placeholder="Pregunta frecuente sugerida..."
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                />
+                <textarea
+                  value={linkedinFaq?.respuesta || ''}
+                  onChange={(e) =>
+                    setLinkedinFaq((prev) => ({ ...prev, respuesta: e.target.value }))
+                  }
+                  placeholder="Respuesta oficial sugerida..."
+                  rows={2}
+                  className="mt-1.5 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Acciones auxiliares */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => handleCopy('linkedin')}
+            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+          >
+            {copiedFormat === 'linkedin' ? <CheckCircle size={14} /> : <Copy size={14} />}
+            {copiedFormat === 'linkedin' ? 'Copiado' : 'Copiar'}
+          </button>
+
+          <button
+            type="button"
+            disabled={drafts.linkedin.submitted || drafts.linkedin.regenerating}
+            onClick={() => handleRegenerateChannelCopy('linkedin')}
+            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
+          >
+            <RotateCcw size={14} className={drafts.linkedin.regenerating ? 'animate-spin' : ''} />
+            {drafts.linkedin.regenerating ? 'Regenerando...' : 'Regenerar'}
+          </button>
+        </div>
+
+        {/* Publicar individual directo */}
+        <button
+          type="button"
+          disabled={
+            drafts.linkedin.submitted ||
+            channelPublishing['linkedin'] ||
+            !drafts.linkedin.content.trim() ||
+            isOmittedByOrchestrator(drafts.linkedin.content)
+          }
+          title={
+            drafts.linkedin.submitted
+              ? 'Este contenido ya fue publicado exitosamente en LinkedIn'
+              : isOmittedByOrchestrator(drafts.linkedin.content)
+              ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
+              : undefined
+          }
+          onClick={() => handlePublishChannelIndividual('linkedin')}
+          className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
+            drafts.linkedin.submitted
+              ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200'
+          }`}
+        >
+          {drafts.linkedin.submitted ? (
+            <>
+              <CheckCircle size={14} className="text-emerald-600" />
+              ✓ Publicado en LinkedIn
+            </>
+          ) : (
+            <>
+              <Send size={14} />
+              {channelPublishing['linkedin'] ? 'Publicando...' : 'Publicar en LinkedIn'}
+            </>
+          )}
+        </button>
+
+        {/* Guardar en base de datos */}
+        <button
+          type="button"
+          onClick={() => handleSubmit('linkedin')}
+          disabled={
+            drafts.linkedin.submitted ||
+            drafts.linkedin.submitting ||
+            drafts.linkedin.regenerating ||
+            isOmittedByOrchestrator(drafts.linkedin.content)
+          }
+          className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+            drafts.linkedin.submitted
+              ? 'cursor-not-allowed bg-green-50 text-green-700'
+              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          {drafts.linkedin.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
+          {drafts.linkedin.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
+        </button>
+
+        {drafts.linkedin.savedId && (
+          <p className="mt-2 text-center text-xs font-medium text-green-700">
+            Borrador #{drafts.linkedin.savedId} registrado exitosamente.
+          </p>
+        )}
+
+        {channelPublishResult['linkedin'] && (
+          <div
+            className={`mt-2 text-center text-xs font-medium ${
+              channelPublishResult['linkedin'].ok ? 'text-green-700' : 'text-rose-600'
+            }`}
+          >
+            <p>{channelPublishResult['linkedin'].detalle}</p>
+            {channelPublishResult['linkedin'].ok && (
+              <a
+                href={channelPublishResult['linkedin'].url || "https://www.linkedin.com/feed/"}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
+              >
+                ↗ Ver publicación en LinkedIn
+              </a>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+
+  const renderXCard = () => (
+    <section
+      className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
+        activeFormat === 'x' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+      }`}
+    >
+      <div className="border-b border-slate-100 p-3 sm:p-3.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
+              <MessageCircle size={16} />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold text-slate-900 truncate">X (Twitter)</h3>
+              <p className="text-[11px] text-slate-400 truncate">Microblogging conciso de alto impacto</p>
+            </div>
+          </div>
+
+          <span
+            className={`shrink-0 c-chip ${
+              drafts.x.submitted
+                ? 'c-chip--success'
+                : isOmittedByOrchestrator(drafts.x.content)
+                ? 'c-chip--warning'
+                : 'c-chip--brand'
+            }`}
+          >
+            {drafts.x.submitted
+              ? '✓ Publicado'
+              : isOmittedByOrchestrator(drafts.x.content)
+              ? 'Omitido'
+              : 'Borrador'}
+          </span>
+        </div>
+
+        <div className="mt-2 flex items-center min-w-0">
+          <span className="c-chip max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.x}>
+            <Cpu size={10} className="shrink-0" />
+            <span className="truncate">{modelosUtilizados.x}</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col p-3.5 space-y-2">
+        <div>
+          <label htmlFor="x-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            Título / Hook del Tweet
+          </label>
+          <input
+            id="x-title"
+            type="text"
+            value={xTitle}
+            disabled={drafts.x.submitted}
+            onChange={(e) => setXTitle(e.target.value)}
+            placeholder="Ej: ¿Sabías esto sobre nuestra comunidad? 👇"
+            className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-slate-600 focus:ring-1 focus:ring-slate-100 disabled:bg-slate-50"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="content-x" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <Pencil size={11} />
+            <span>Tweet editable</span>
+          </label>
+          <textarea
+            id="content-x"
+            value={drafts.x.content}
+            disabled={drafts.x.submitted}
+            onFocus={() => setActiveFormat('x')}
+            onChange={(event) => updateContent('x', event.target.value)}
+            placeholder="Tweet conciso..."
+            className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+              isOmittedByOrchestrator(drafts.x.content)
+                ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                : 'border-slate-200 text-slate-700 focus:border-slate-600 focus:ring-1 focus:ring-slate-100'
+            }`}
+          />
+        </div>
+
+        {isOmittedByOrchestrator(drafts.x.content) && (
+          <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+            <div className="flex items-center gap-1.5">
+              <Sparkles size={14} className="shrink-0 text-amber-600" />
+              <span>¿Deseas redactar tweet para X de todos modos?</span>
+            </div>
+            <button
+              type="button"
+              disabled={drafts.x.regenerating}
+              onClick={() => handleRegenerateChannelCopy('x')}
+              className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
+            >
+              <RotateCcw size={12} className={drafts.x.regenerating ? 'animate-spin' : ''} />
+              {drafts.x.regenerating ? 'Generando...' : 'Regenerar con IA'}
+            </button>
+          </div>
+        )}
+
+        {/* Contador Dinámico de Caracteres Cromático */}
+        {(() => {
+          const fullXContent = (xTitle ? `${xTitle}\n\n` : '') + drafts.x.content
+          const totalChars = [...fullXContent].length
+          const isOverLimit = totalChars > 280
+          const isWarning = totalChars > 210 && totalChars <= 280
+
+          return (
+            <div className="mt-3 flex items-center justify-between rounded-lg border p-2 text-xs transition"
+              style={{
+                backgroundColor: isOverLimit ? '#fef2f2' : isWarning ? '#fffbeb' : '#f0fdf4',
+                borderColor: isOverLimit ? '#fecaca' : isWarning ? '#fde68a' : '#bbf7d0',
+                color: isOverLimit ? '#b91c1c' : isWarning ? '#b45309' : '#15803d',
+              }}
+            >
+              <span className="font-semibold text-[11px]">
+                {isOverLimit
+                  ? '⚠️ Excede el límite máximo de 280 caracteres'
+                  : isWarning
+                  ? '⚠️ Cerca del límite técnico de X'
+                  : '✓ Longitud óptima para publicación'}
+              </span>
+              <span className={`font-mono font-bold ${isOverLimit ? 'text-rose-600' : ''}`}>
+                {totalChars} / 280
+              </span>
+            </div>
+          )
+        })()}
+
+        {/* Acciones auxiliares */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => handleCopy('x')}
+            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+          >
+            {copiedFormat === 'x' ? <CheckCircle size={14} /> : <Copy size={14} />}
+            {copiedFormat === 'x' ? 'Copiado' : 'Copiar'}
+          </button>
+
+          <button
+            type="button"
+            disabled={drafts.x.submitted || drafts.x.regenerating}
+            onClick={() => handleRegenerateChannelCopy('x')}
+            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
+          >
+            <RotateCcw size={14} className={drafts.x.regenerating ? 'animate-spin' : ''} />
+            {drafts.x.regenerating ? 'Regenerando...' : 'Regenerar'}
+          </button>
+        </div>
+
+        {/* Publicar individual directo */}
+        {(() => {
+          const fullXContent = (xTitle ? `${xTitle}\n\n` : '') + drafts.x.content
+          const isOverLimit = [...fullXContent].length > 280
+          return (
+            <button
+              type="button"
+              disabled={
+                drafts.x.submitted ||
+                channelPublishing['x'] ||
+                !drafts.x.content.trim() ||
+                isOverLimit ||
+                isOmittedByOrchestrator(drafts.x.content)
+              }
+              title={
+                drafts.x.submitted
+                  ? 'Este tweet ya fue publicado exitosamente en X'
+                  : isOmittedByOrchestrator(drafts.x.content)
+                  ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
+                  : undefined
+              }
+              onClick={() => handlePublishChannelIndividual('x')}
+              className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
+                drafts.x.submitted
+                  ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'bg-slate-900 text-white hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-400'
+              }`}
+            >
+              {drafts.x.submitted ? (
+                <>
+                  <CheckCircle size={14} className="text-emerald-600" />
+                  ✓ Publicado en X
+                </>
+              ) : (
+                <>
+                  <Send size={14} />
+                  {channelPublishing['x'] ? 'Publicando...' : 'Publicar en X'}
+                </>
+              )}
+            </button>
+          )
+        })()}
+
+        {/* Guardar en base de datos */}
+        <button
+          type="button"
+          onClick={() => handleSubmit('x')}
+          disabled={
+            drafts.x.submitted ||
+            drafts.x.submitting ||
+            drafts.x.regenerating ||
+            [...(xTitle ? `${xTitle}\n\n` : '') + drafts.x.content].length > 280 ||
+            isOmittedByOrchestrator(drafts.x.content)
+          }
+          className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+            drafts.x.submitted
+              ? 'cursor-not-allowed bg-green-50 text-green-700'
+              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          {drafts.x.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
+          {drafts.x.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
+        </button>
+
+        {drafts.x.savedId && (
+          <p className="mt-2 text-center text-xs font-medium text-green-700">
+            Borrador #{drafts.x.savedId} registrado exitosamente.
+          </p>
+        )}
+
+        {channelPublishResult['x'] && (
+          <div
+            className={`mt-2 text-center text-xs font-medium ${
+              channelPublishResult['x'].ok ? 'text-green-700' : 'text-rose-600'
+            }`}
+          >
+            <p>{channelPublishResult['x'].detalle}</p>
+            {channelPublishResult['x'].ok && (
+              <a
+                href={channelPublishResult['x'].url || "https://x.com/CloudEdTech_1"}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
+              >
+                ↗ Ver publicación en X
+              </a>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+
+  const renderDiscordCard = () => (
+    <section
+      className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
+        activeFormat === 'discord' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
+      }`}
+    >
+      <div className="border-b border-slate-100 p-3 sm:p-3.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+              <MessageCircle size={16} />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold text-slate-900 truncate">Discord</h3>
+              <p className="text-[11px] text-slate-400 truncate">Publicación en hilos y canales de la comunidad</p>
+            </div>
+          </div>
+
+          <span
+            className={`shrink-0 c-chip ${
+              drafts.discord.submitted
+                ? 'c-chip--success'
+                : isOmittedByOrchestrator(drafts.discord.content)
+                ? 'c-chip--warning'
+                : 'c-chip--brand'
+            }`}
+          >
+            {drafts.discord.submitted
+              ? '✓ Publicado'
+              : isOmittedByOrchestrator(drafts.discord.content)
+              ? 'Omitido'
+              : 'Borrador'}
+          </span>
+        </div>
+
+        <div className="mt-2 flex items-center min-w-0">
+          <span className="c-chip c-chip--purple max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.discord}>
+            <Cpu size={10} className="shrink-0" />
+            <span className="truncate">{modelosUtilizados.discord}</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col p-3.5 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor="discord-channel-select" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            Canal de Destino
+          </label>
+          <select
+            id="discord-channel-select"
+            value={discordSelectedChannel}
+            disabled={drafts.discord.submitted}
+            onChange={(e) => setDiscordSelectedChannel(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 outline-none focus:border-indigo-500"
+          >
+            <option value="general">#general</option>
+            <option value="faq">#faq</option>
+            <option value="notificaciones">#notificaciones</option>
+            <option value="pqrs">#pqrs</option>
+            <option value="chat-egresados">#chat-egresados</option>
+            <option value="oportunidades-laborales">#oportunidades-laborales</option>
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="discord-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            Título del Post
+          </label>
+          <input
+            id="discord-title"
+            type="text"
+            value={discordTitle}
+            disabled={drafts.discord.submitted}
+            onChange={(e) => setDiscordTitle(e.target.value)}
+            placeholder="Ej: [Comunidad] Debate abierto..."
+            className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 disabled:bg-slate-50"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="content-discord" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <Pencil size={11} />
+            <span>Cuerpo del Post</span>
+          </label>
+          <textarea
+            id="content-discord"
+            value={drafts.discord.content}
+            disabled={drafts.discord.submitted}
+            onFocus={() => setActiveFormat('discord')}
+            onChange={(event) => updateContent('discord', event.target.value)}
+            placeholder="Mensaje para la comunidad..."
+            className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
+              isOmittedByOrchestrator(drafts.discord.content)
+                ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
+                : 'border-slate-200 text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-50'
+            }`}
+          />
+        </div>
+
+        {isOmittedByOrchestrator(drafts.discord.content) && (
+          <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+            <div className="flex items-center gap-1.5">
+              <Sparkles size={14} className="shrink-0 text-amber-600" />
+              <span>¿Deseas redactar mensaje para Discord de todos modos?</span>
+            </div>
+            <button
+              type="button"
+              disabled={drafts.discord.regenerating}
+              onClick={() => handleRegenerateChannelCopy('discord')}
+              className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
+            >
+              <RotateCcw size={12} className={drafts.discord.regenerating ? 'animate-spin' : ''} />
+              {drafts.discord.regenerating ? 'Generando...' : 'Regenerar con IA'}
+            </button>
+          </div>
+        )}
+
+        {/* Vista previa visual en vivo de la Cita en Bloque */}
+        <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+          <span className="text-[11px] font-bold text-indigo-800 uppercase tracking-wide">
+            Vista previa de cita contextual (Discord Blockquote):
+          </span>
+          <div className="mt-1.5 rounded-lg border-l-4 border-indigo-500 bg-white p-2.5 text-xs text-slate-700 shadow-2xs">
+            <p className="font-semibold text-indigo-600">
+              💬 Contexto de @{selectedWorkflowMessage?.author || 'autor'}:
+            </p>
+            <blockquote className="mt-1 line-clamp-2 italic text-slate-600">
+              "{selectedWorkflowMessage?.content || 'Selecciona un mensaje de la bandeja...'}"
+            </blockquote>
+          </div>
+        </div>
+
+        {/* Archivos adjuntos de Discord */}
+        {discordFiles.length > 0 && (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-700">
+                {discordFiles.length} archivo(s) adjunto(s)
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowDiscordFiles((curr) => !curr)}
+                className="text-xs font-semibold text-indigo-600 hover:underline"
+              >
+                {showDiscordFiles ? 'Ocultar' : 'Ver'}
+              </button>
+            </div>
+
+            {showDiscordFiles && (
+              <div className="mt-2 space-y-1.5">
+                {discordFiles.map((file) => (
+                  <div
+                    key={file.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-slate-700">{file.filename}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {file.content_type || 'Archivo'} · {formatDiscordFileSize(file.size)}
+                      </p>
+                    </div>
+                    <a
+                      href={file.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-orange-600 hover:underline"
+                    >
+                      Descargar
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Acciones auxiliares */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => handleCopy('discord')}
+            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+          >
+            {copiedFormat === 'discord' ? <CheckCircle size={14} /> : <Copy size={14} />}
+            {copiedFormat === 'discord' ? 'Copiado' : 'Copiar'}
+          </button>
+
+          <button
+            type="button"
+            disabled={drafts.discord.submitted || drafts.discord.regenerating}
+            onClick={() => handleRegenerateChannelCopy('discord')}
+            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
+          >
+            <RotateCcw size={14} className={drafts.discord.regenerating ? 'animate-spin' : ''} />
+            {drafts.discord.regenerating ? 'Regenerando...' : 'Regenerar'}
+          </button>
+        </div>
+
+        {/* Publicar individual directo */}
+        <button
+          type="button"
+          disabled={
+            drafts.discord.submitted ||
+            channelPublishing['discord'] ||
+            !drafts.discord.content.trim() ||
+            isOmittedByOrchestrator(drafts.discord.content)
+          }
+          title={
+            drafts.discord.submitted
+              ? 'Este contenido ya fue publicado exitosamente en Discord'
+              : isOmittedByOrchestrator(drafts.discord.content)
+              ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
+              : undefined
+          }
+          onClick={() => handlePublishChannelIndividual('discord')}
+          className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
+            drafts.discord.submitted
+              ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200'
+          }`}
+        >
+          {drafts.discord.submitted ? (
+            <>
+              <CheckCircle size={14} className="text-emerald-600" />
+              ✓ Publicado en Discord
+            </>
+          ) : (
+            <>
+              <Send size={14} />
+              {channelPublishing['discord'] ? 'Publicando...' : 'Publicar en Discord'}
+            </>
+          )}
+        </button>
+
+        {/* Guardar en base de datos */}
+        <button
+          type="button"
+          onClick={() => handleSubmit('discord')}
+          disabled={
+            drafts.discord.submitted ||
+            drafts.discord.submitting ||
+            drafts.discord.regenerating ||
+            isOmittedByOrchestrator(drafts.discord.content)
+          }
+          className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+            drafts.discord.submitted
+              ? 'cursor-not-allowed bg-green-50 text-green-700'
+              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          {drafts.discord.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
+          {drafts.discord.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
+        </button>
+
+        {drafts.discord.savedId && (
+          <p className="mt-2 text-center text-xs font-medium text-green-700">
+            Borrador #{drafts.discord.savedId} registrado exitosamente.
+          </p>
+        )}
+
+        {channelPublishResult['discord'] && (
+          <p
+            className={`mt-2 text-center text-xs font-medium ${
+              channelPublishResult['discord'].ok ? 'text-green-700' : 'text-rose-600'
+            }`}
+          >
+            {channelPublishResult['discord'].detalle}
+          </p>
+        )}
+      </div>
+    </section>
+  )
+
+  const renderHitlBar = () => (
+    <section className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-purple-50/60 p-4 shadow-sm">
+      <div className="c-panel-head c-panel-head--flat">
+        <div className="c-panel-head__main">
+          <div className="c-panel-head__icon bg-indigo-100 text-indigo-700">
+            <CheckCircle size={16} />
+          </div>
+
+          <div className="c-panel-head__body">
+            <div className="c-panel-head__row">
+              <h4 className="c-panel-head__title">
+                Decisión Humana Global HITL (Human-in-the-Loop)
+              </h4>
+              <span className="c-chip c-chip--info">
+                Revisión: {pipelineData?.estado_revision || 'pendiente_hitl'}
+              </span>
+            </div>
+            <p className="c-panel-head__desc">
+              Soberanía humana completa: Tus modificaciones manuales en los títulos y copys tienen prevalencia estricta sobre las sugerencias de la IA.
+            </p>
+          </div>
+        </div>
+
+        <div className="c-panel-head__actions">
+          <button
+            type="button"
+            disabled={pipelineExecuting || !selectedWorkflowMessage}
+            onClick={() => handleSubmitHitlDecision(false)}
+            className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 shadow-xs transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <XCircle size={13} />
+            <span>Desaprobar y limpiar hilo</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={pipelineExecuting || !selectedWorkflowMessage}
+            onClick={() => handleSubmitHitlDecision(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <CheckCircle size={13} />
+            <span>Aprobar y publicar en canales (HITL)</span>
+          </button>
+        </div>
+      </div>
+
+      {pipelineActionMessage && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">
+          <CheckCircle size={16} className="shrink-0 text-emerald-600" />
+          <span>{pipelineActionMessage}</span>
+        </div>
+      )}
+
+      {pipelineActionError && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
+          <AlertTriangle size={16} className="shrink-0 text-rose-600" />
+          <span>{pipelineActionError}</span>
+        </div>
+      )}
+    </section>
+  )
 
   return (
     <div>
@@ -2317,1106 +3183,362 @@ function ContentStudio() {
               )}
             </section>
 
-            {/* Tarjeta complementaria de Estado de la Cola y Resumen Editorial (CommunityLab DS) */}
-            <section className="rounded-2xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/70 p-4 sm:p-4.5 shadow-xs">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-100 text-orange-600">
-                    <Layers size={14} />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900">
-                      Estado de la cola
-                    </h4>
-                    <p className="text-[10px] text-slate-500">
-                      Control del flujo editorial multicanal
+          </div>
+
+          {/* Columna Derecha: Mesa de Trabajo Multicanal (Orquestador LangGraph) unificada con Mensaje Original de Discord */}
+          <div className="lg:col-span-8 xl:col-span-8 space-y-4">
+            {/* Tarjeta Fusionada: Mesa de Trabajo Multicanal (Orquestador LangGraph) */}
+            <section
+              ref={originalMessageRef}
+              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            >
+              <div className="c-panel-head">
+                <div className="c-panel-head__main">
+                  <div className="c-panel-head__body">
+                    <div className="c-panel-head__row">
+                      <h3 className="c-panel-head__title">
+                        Mesa de Trabajo Multicanal (Orquestador LangGraph)
+                      </h3>
+
+                      {isCurrentlyPublished && (
+                        <span className="c-chip c-chip--success">
+                          <CheckCircle size={11} className="text-emerald-600" />
+                          <span>✓ Publicado en: {publishedPlatformNames.join(', ')}</span>
+                        </span>
+                      )}
+
+                      <span className="c-chip c-chip--info">
+                        <Cpu size={11} />
+                        <span>🤖 Orquestador IA: {modelosUtilizados.orquestador}</span>
+                      </span>
+
+                      {pipelineData?.rutas_activas && (
+                        <span className="c-chip c-chip--success">
+                          Rutas: {pipelineData.rutas_activas.join(', ')}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="c-panel-head__desc">
+                      Mensaje seleccionado para generación de contenido y orquestación adaptativa multicanal.
                     </p>
                   </div>
                 </div>
-                <span className="c-pill c-pill--outline text-[10px]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  Activo
-                </span>
-              </div>
 
-              {/* Métricas clave en formato tabular */}
-              <div className="mt-3 grid grid-cols-2 gap-2 text-center">
-                <div className="rounded-xl border border-slate-100 bg-white p-2.5 shadow-2xs">
-                  <span className="text-[10px] font-semibold text-slate-400">Listos en cola</span>
-                  <p className="mt-0.5 text-base font-black tabular-nums text-slate-900">
-                    {displayedTrayMessages.length}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-100 bg-white p-2.5 shadow-2xs">
-                  <span className="text-[10px] font-semibold text-slate-400">En mesa de trabajo</span>
-                  <p className="mt-0.5 text-xs font-bold truncate text-orange-600">
-                    {selectedWorkflowMessage ? `@${selectedWorkflowMessage.author}` : 'Ninguno'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Guía rápida y soberanía humana (HITL) */}
-              <div className="mt-3 rounded-xl border border-indigo-100/80 bg-indigo-50/50 p-2.5 text-[11px] leading-relaxed text-indigo-900">
-                <div className="flex items-start gap-1.5">
-                  <span className="font-bold text-indigo-700 shrink-0">💡 Tip:</span>
-                  <span>
-                    Tus ediciones manuales en LinkedIn, X y Discord prevalecen siempre sobre las sugerencias de la IA.
-                  </span>
-                </div>
-              </div>
-
-              {/* Enlace rápido de navegación a Ingesta */}
-              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
-                <span className="text-slate-500">¿Deseas evaluar más mensajes?</span>
-                <Link
-                  to="/messages"
-                  className="font-semibold text-orange-600 hover:text-orange-700 hover:underline"
-                >
-                  Ir a Ingesta →
-                </Link>
-              </div>
-            </section>
-          </div>
-
-          {/* Columna Derecha: Mensaje original de Discord y Mesa de Trabajo Multicanal (Orquestador LangGraph) */}
-          <div className="lg:col-span-8 xl:col-span-8 space-y-4">
-            {/* Mensaje original */}
-      <section
-        ref={originalMessageRef}
-        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-      >
-        <div className="c-panel-head">
-          <div className="c-panel-head__main">
-            <div className="c-panel-head__body">
-              <div className="c-panel-head__row">
-                <h3 className="c-panel-head__title">
-                  Mensaje original de Discord
-                </h3>
-
-                {isCurrentlyPublished && (
-                  <span className="c-chip c-chip--success">
-                    <CheckCircle size={11} className="text-emerald-600" />
-                    <span>✓ Publicado en: {publishedPlatformNames.join(', ')}</span>
-                  </span>
-                )}
-              </div>
-
-              <p className="c-panel-head__desc">
-                Mensaje seleccionado para generación de contenido
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {selectedWorkflowMessage ? (
-          <div className="mt-3 rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-4.5 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <span className="c-avatar c-avatar--indigo h-8 w-8 text-xs font-bold shrink-0">
-                  {(selectedWorkflowMessage.author || 'U').slice(0, 2).toUpperCase()}
-                </span>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-900">
-                      @{selectedWorkflowMessage.author}
-                    </span>
-                    <span className="c-tag c-tag--channel text-[10px]">
-                      #{selectedWorkflowMessage.channel.replace(/^#/, '')}
-                    </span>
-                    <span className="text-[11px] font-medium text-slate-400 tabular-nums">
-                      ID #{selectedWorkflowMessage.interactionId}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Tema: <span className="font-semibold text-slate-700">{selectedWorkflowMessage.topic || 'General'}</span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 self-start sm:self-center tabular-nums">
-                <span
-                  className={`c-pill c-pill--dot ${
-                    selectedWorkflowMessage.sentiment === 'positive'
-                      ? 'c-pill--success'
-                      : selectedWorkflowMessage.sentiment === 'negative'
-                      ? 'c-pill--danger'
-                      : ''
-                  }`}
-                >
-                  {selectedWorkflowMessage.sentiment === 'positive'
-                    ? 'Positivo'
-                    : selectedWorkflowMessage.sentiment === 'negative'
-                    ? 'Negativo'
-                    : 'Neutral'}
-                </span>
-
-                <div
-                  className="score-ring score-ring--sm"
-                  style={{ '--p': selectedWorkflowMessage.relevance } as React.CSSProperties}
-                  title={`Relevancia IA: ${selectedWorkflowMessage.relevance}%`}
-                >
-                  <span>{selectedWorkflowMessage.relevance}%</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <p className="text-xs sm:text-sm leading-relaxed text-slate-800 font-normal">
-                {selectedWorkflowMessage.content}
-              </p>
-            </div>
-
-            {selectedWorkflowMessage.attachments && selectedWorkflowMessage.attachments.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-2.5">
-                {selectedWorkflowMessage.attachments.map((att) => (
-                  <a
-                    key={att.id || att.url}
-                    href={att.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-100"
-                  >
-                    📎 {att.filename}
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
-            <p className="text-xs text-slate-500">
-              Selecciona una conversación de la bandeja para cargar su contenido en la mesa de trabajo.
-            </p>
-          </div>
-        )}
-      </section>
-
-      {/* Orquestador LangGraph y Selector de formato */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="c-panel-head">
-          <div className="c-panel-head__main">
-            <div className="c-panel-head__body">
-              <div className="c-panel-head__row">
-                <h3 className="c-panel-head__title">
-                  Mesa de Trabajo Multicanal (Orquestador LangGraph)
-                </h3>
-
-                {isCurrentlyPublished && (
-                  <span className="c-chip c-chip--success">
-                    <CheckCircle size={11} className="text-emerald-600" />
-                    <span>✓ Publicado en: {publishedPlatformNames.join(', ')}</span>
-                  </span>
-                )}
-
-                <span className="c-chip c-chip--info">
-                  <Cpu size={11} />
-                  <span>🤖 Orquestador IA: {modelosUtilizados.orquestador}</span>
-                </span>
-
-                {pipelineData?.rutas_activas && (
-                  <span className="c-chip c-chip--success">
-                    Rutas: {pipelineData.rutas_activas.join(', ')}
-                  </span>
-                )}
-              </div>
-
-              <p className="c-panel-head__desc">
-                Pipeline de redacción adaptativa con soberanía humana (HITL). Revisa, edita o regenera cada canal antes de publicar.
-              </p>
-            </div>
-          </div>
-
-          <div className="c-panel-head__actions">
-            <div className="flex items-center gap-1.5">
-              <label
-                htmlFor="workspace-ai-provider"
-                className="text-xs font-semibold text-slate-600"
-              >
-                Fallback IA:
-              </label>
-              <select
-                id="workspace-ai-provider"
-                value={workspaceAiProvider}
-                disabled={Object.values(drafts).some((d) => d.regenerating)}
-                onChange={(event) => setWorkspaceAiProvider(event.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-              >
-                {AI_PROVIDERS.map((provider) => (
-                  <option key={provider} value={provider}>
-                    {provider}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              type="button"
-              disabled={pipelineExecuting || !selectedWorkflowMessage}
-              onClick={handleExecuteMototradisPipeline}
-              className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:from-indigo-700 hover:to-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <RotateCcw size={13} className={pipelineExecuting ? 'animate-spin' : ''} />
-              <span>{pipelineExecuting ? 'Ejecutando LangGraph...' : '⚡ Ejecutar Pipeline (LangGraph)'}</span>
-            </button>
-          </div>
-        </div>
-
-        {pipelineLoading && (
-          <p className="mt-3 text-xs text-indigo-600">Sincronizando checkpoint del orquestador...</p>
-        )}
-      </section>
-
-      {/* Tarjetas Especializadas Multicanal con Trazabilidad de Modelos de IA */}
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {/* TARJETA LINKEDIN */}
-        <section
-          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
-            activeFormat === 'linkedin' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
-          }`}
-        >
-          <div className="border-b border-slate-100 p-3 sm:p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                  <BriefcaseBusiness size={16} />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-xs font-bold text-slate-900 truncate">LinkedIn</h3>
-                  <p className="text-[11px] text-slate-400 truncate">Publicación profesional y networking</p>
-                </div>
-              </div>
-
-              <span
-                className={`shrink-0 c-chip ${
-                  drafts.linkedin.submitted
-                    ? 'c-chip--success'
-                    : isOmittedByOrchestrator(drafts.linkedin.content)
-                    ? 'c-chip--warning'
-                    : 'c-chip--brand'
-                }`}
-              >
-                {drafts.linkedin.submitted
-                  ? '✓ Publicado'
-                  : isOmittedByOrchestrator(drafts.linkedin.content)
-                  ? 'Omitido'
-                  : 'Borrador'}
-              </span>
-            </div>
-
-            <div className="mt-2 flex items-center min-w-0">
-              <span className="c-chip c-chip--info max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.linkedin}>
-                <Cpu size={10} className="shrink-0" />
-                <span className="truncate">{modelosUtilizados.linkedin}</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-1 flex-col p-3.5 space-y-2">
-            <div>
-              <label htmlFor="linkedin-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Título del Post
-              </label>
-              <input
-                id="linkedin-title"
-                type="text"
-                value={linkedinTitle}
-                disabled={drafts.linkedin.submitted}
-                onChange={(e) => setLinkedinTitle(e.target.value)}
-                placeholder="Ej: Reflexiones sobre nuestra comunidad de aprendizaje..."
-                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="content-linkedin" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <Pencil size={11} />
-                <span>Copy persuasivo editable</span>
-              </label>
-              <textarea
-                id="content-linkedin"
-                value={drafts.linkedin.content}
-                disabled={drafts.linkedin.submitted}
-                onFocus={() => setActiveFormat('linkedin')}
-                onChange={(event) => updateContent('linkedin', event.target.value)}
-                placeholder="Copy persuasivo para LinkedIn..."
-                className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
-                  isOmittedByOrchestrator(drafts.linkedin.content)
-                    ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
-                    : 'border-slate-200 text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-50'
-                }`}
-              />
-            </div>
-
-            {isOmittedByOrchestrator(drafts.linkedin.content) && (
-              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles size={14} className="shrink-0 text-amber-600" />
-                  <span>¿Deseas redactar copy para LinkedIn de todos modos?</span>
-                </div>
-                <button
-                  type="button"
-                  disabled={drafts.linkedin.regenerating}
-                  onClick={() => handleRegenerateChannelCopy('linkedin')}
-                  className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
-                >
-                  <RotateCcw size={12} className={drafts.linkedin.regenerating ? 'animate-spin' : ''} />
-                  {drafts.linkedin.regenerating ? 'Generando...' : 'Regenerar con IA'}
-                </button>
-              </div>
-            )}
-
-            {/* Extras Plegables (Copy tono, Newsletter, FAQ) */}
-            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <button
-                type="button"
-                onClick={() => setShowLinkedinExtras((prev) => !prev)}
-                className="flex w-full items-center justify-between text-xs font-semibold text-slate-700 hover:text-blue-600"
-              >
-                <span>Formatos adicionales (Newsletter & FAQ)</span>
-                {showLinkedinExtras ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </button>
-
-              {showLinkedinExtras && (
-                <div className="mt-3 space-y-3 border-t border-slate-200 pt-3 text-xs">
-                  <div>
-                    <label className="font-semibold text-slate-600">Copy de Tono / Alternativo:</label>
-                    <textarea
-                      value={linkedinCopyTono}
-                      onChange={(e) => setLinkedinCopyTono(e.target.value)}
-                      placeholder="Variación en tono formal o reflexivo..."
-                      rows={2}
-                      className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
-                    />
+                <div className="c-panel-head__actions flex-wrap gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <label
+                      htmlFor="workspace-ai-provider"
+                      className="text-xs font-semibold text-slate-600"
+                    >
+                      Fallback IA:
+                    </label>
+                    <select
+                      id="workspace-ai-provider"
+                      value={workspaceAiProvider}
+                      disabled={Object.values(drafts).some((d) => d.regenerating)}
+                      onChange={(event) => setWorkspaceAiProvider(event.target.value)}
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      {AI_PROVIDERS.map((provider) => (
+                        <option key={provider} value={provider}>
+                          {provider}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
-                  <div>
-                    <label className="font-semibold text-slate-600">Newsletter (Destaque & Resumen):</label>
-                    <input
-                      type="text"
-                      value={linkedinNewsletter?.destaque || ''}
-                      onChange={(e) =>
-                        setLinkedinNewsletter((prev) => ({ ...prev, destaque: e.target.value }))
-                      }
-                      placeholder="Destaque de Newsletter..."
-                      className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
-                    />
-                    <textarea
-                      value={linkedinNewsletter?.resumen || ''}
-                      onChange={(e) =>
-                        setLinkedinNewsletter((prev) => ({ ...prev, resumen: e.target.value }))
-                      }
-                      placeholder="Resumen para la entrega semanal..."
-                      rows={2}
-                      className="mt-1.5 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="font-semibold text-slate-600">Sugerencia FAQ de la Comunidad:</label>
-                    <input
-                      type="text"
-                      value={linkedinFaq?.sugerencia || ''}
-                      onChange={(e) =>
-                        setLinkedinFaq((prev) => ({ ...prev, sugerencia: e.target.value }))
-                      }
-                      placeholder="Pregunta frecuente sugerida..."
-                      className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
-                    />
-                    <textarea
-                      value={linkedinFaq?.respuesta || ''}
-                      onChange={(e) =>
-                        setLinkedinFaq((prev) => ({ ...prev, respuesta: e.target.value }))
-                      }
-                      placeholder="Respuesta oficial sugerida..."
-                      rows={2}
-                      className="mt-1.5 w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Acciones auxiliares */}
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleCopy('linkedin')}
-                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-              >
-                {copiedFormat === 'linkedin' ? <CheckCircle size={14} /> : <Copy size={14} />}
-                {copiedFormat === 'linkedin' ? 'Copiado' : 'Copiar'}
-              </button>
-
-              <button
-                type="button"
-                disabled={drafts.linkedin.submitted || drafts.linkedin.regenerating}
-                onClick={() => handleRegenerateChannelCopy('linkedin')}
-                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
-              >
-                <RotateCcw size={14} className={drafts.linkedin.regenerating ? 'animate-spin' : ''} />
-                {drafts.linkedin.regenerating ? 'Regenerando...' : 'Regenerar'}
-              </button>
-            </div>
-
-            {/* Publicar individual directo */}
-            <button
-              type="button"
-              disabled={
-                drafts.linkedin.submitted ||
-                channelPublishing['linkedin'] ||
-                !drafts.linkedin.content.trim() ||
-                isOmittedByOrchestrator(drafts.linkedin.content)
-              }
-              title={
-                drafts.linkedin.submitted
-                  ? 'Este contenido ya fue publicado exitosamente en LinkedIn'
-                  : isOmittedByOrchestrator(drafts.linkedin.content)
-                  ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
-                  : undefined
-              }
-              onClick={() => handlePublishChannelIndividual('linkedin')}
-              className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
-                drafts.linkedin.submitted
-                  ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : 'bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200'
-              }`}
-            >
-              {drafts.linkedin.submitted ? (
-                <>
-                  <CheckCircle size={14} className="text-emerald-600" />
-                  ✓ Publicado en LinkedIn
-                </>
-              ) : (
-                <>
-                  <Send size={14} />
-                  {channelPublishing['linkedin'] ? 'Publicando...' : 'Publicar en LinkedIn'}
-                </>
-              )}
-            </button>
-
-            {/* Guardar en base de datos */}
-            <button
-              type="button"
-              onClick={() => handleSubmit('linkedin')}
-              disabled={
-                drafts.linkedin.submitted ||
-                drafts.linkedin.submitting ||
-                drafts.linkedin.regenerating ||
-                isOmittedByOrchestrator(drafts.linkedin.content)
-              }
-              className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                drafts.linkedin.submitted
-                  ? 'cursor-not-allowed bg-green-50 text-green-700'
-                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {drafts.linkedin.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
-              {drafts.linkedin.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
-            </button>
-
-            {drafts.linkedin.savedId && (
-              <p className="mt-2 text-center text-xs font-medium text-green-700">
-                Borrador #{drafts.linkedin.savedId} registrado exitosamente.
-              </p>
-            )}
-
-            {channelPublishResult['linkedin'] && (
-              <div
-                className={`mt-2 text-center text-xs font-medium ${
-                  channelPublishResult['linkedin'].ok ? 'text-green-700' : 'text-rose-600'
-                }`}
-              >
-                <p>{channelPublishResult['linkedin'].detalle}</p>
-                {channelPublishResult['linkedin'].ok && (
-                  <a
-                    href={channelPublishResult['linkedin'].url || "https://www.linkedin.com/feed/"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
-                  >
-                    ↗ Ver publicación en LinkedIn
-                  </a>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* TARJETA X (TWITTER) */}
-        <section
-          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
-            activeFormat === 'x' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
-          }`}
-        >
-          <div className="border-b border-slate-100 p-3 sm:p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
-                  <MessageCircle size={16} />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-xs font-bold text-slate-900 truncate">X (Twitter)</h3>
-                  <p className="text-[11px] text-slate-400 truncate">Microblogging conciso de alto impacto</p>
-                </div>
-              </div>
-
-              <span
-                className={`shrink-0 c-chip ${
-                  drafts.x.submitted
-                    ? 'c-chip--success'
-                    : isOmittedByOrchestrator(drafts.x.content)
-                    ? 'c-chip--warning'
-                    : 'c-chip--brand'
-                }`}
-              >
-                {drafts.x.submitted
-                  ? '✓ Publicado'
-                  : isOmittedByOrchestrator(drafts.x.content)
-                  ? 'Omitido'
-                  : 'Borrador'}
-              </span>
-            </div>
-
-            <div className="mt-2 flex items-center min-w-0">
-              <span className="c-chip max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.x}>
-                <Cpu size={10} className="shrink-0" />
-                <span className="truncate">{modelosUtilizados.x}</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-1 flex-col p-3.5 space-y-2">
-            <div>
-              <label htmlFor="x-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Título / Hook del Tweet
-              </label>
-              <input
-                id="x-title"
-                type="text"
-                value={xTitle}
-                disabled={drafts.x.submitted}
-                onChange={(e) => setXTitle(e.target.value)}
-                placeholder="Ej: ¿Sabías esto sobre nuestra comunidad? 👇"
-                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-slate-600 focus:ring-1 focus:ring-slate-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="content-x" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <Pencil size={11} />
-                <span>Tweet editable</span>
-              </label>
-              <textarea
-                id="content-x"
-                value={drafts.x.content}
-                disabled={drafts.x.submitted}
-                onFocus={() => setActiveFormat('x')}
-                onChange={(event) => updateContent('x', event.target.value)}
-                placeholder="Tweet conciso..."
-                className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
-                  isOmittedByOrchestrator(drafts.x.content)
-                    ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
-                    : 'border-slate-200 text-slate-700 focus:border-slate-600 focus:ring-1 focus:ring-slate-100'
-                }`}
-              />
-            </div>
-
-            {isOmittedByOrchestrator(drafts.x.content) && (
-              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles size={14} className="shrink-0 text-amber-600" />
-                  <span>¿Deseas redactar tweet para X de todos modos?</span>
-                </div>
-                <button
-                  type="button"
-                  disabled={drafts.x.regenerating}
-                  onClick={() => handleRegenerateChannelCopy('x')}
-                  className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
-                >
-                  <RotateCcw size={12} className={drafts.x.regenerating ? 'animate-spin' : ''} />
-                  {drafts.x.regenerating ? 'Generando...' : 'Regenerar con IA'}
-                </button>
-              </div>
-            )}
-
-            {/* Contador Dinámico de Caracteres Cromático */}
-            {(() => {
-              const fullXContent = (xTitle ? `${xTitle}\n\n` : '') + drafts.x.content
-              const totalChars = [...fullXContent].length
-              const isOverLimit = totalChars > 280
-              const isWarning = totalChars > 210 && totalChars <= 280
-
-              return (
-                <div className="mt-3 flex items-center justify-between rounded-lg border p-2 text-xs transition"
-                  style={{
-                    backgroundColor: isOverLimit ? '#fef2f2' : isWarning ? '#fffbeb' : '#f0fdf4',
-                    borderColor: isOverLimit ? '#fecaca' : isWarning ? '#fde68a' : '#bbf7d0',
-                    color: isOverLimit ? '#b91c1c' : isWarning ? '#b45309' : '#15803d',
-                  }}
-                >
-                  <span className="font-semibold text-[11px]">
-                    {isOverLimit
-                      ? '⚠️ Excede el límite máximo de 280 caracteres'
-                      : isWarning
-                      ? '⚠️ Cerca del límite técnico de X'
-                      : '✓ Longitud óptima para publicación'}
-                  </span>
-                  <span className={`font-mono font-bold ${isOverLimit ? 'text-rose-600' : ''}`}>
-                    {totalChars} / 280
-                  </span>
-                </div>
-              )
-            })()}
-
-            {/* Acciones auxiliares */}
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleCopy('x')}
-                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-              >
-                {copiedFormat === 'x' ? <CheckCircle size={14} /> : <Copy size={14} />}
-                {copiedFormat === 'x' ? 'Copiado' : 'Copiar'}
-              </button>
-
-              <button
-                type="button"
-                disabled={drafts.x.submitted || drafts.x.regenerating}
-                onClick={() => handleRegenerateChannelCopy('x')}
-                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
-              >
-                <RotateCcw size={14} className={drafts.x.regenerating ? 'animate-spin' : ''} />
-                {drafts.x.regenerating ? 'Regenerando...' : 'Regenerar'}
-              </button>
-            </div>
-
-            {/* Publicar individual directo */}
-            {(() => {
-              const fullXContent = (xTitle ? `${xTitle}\n\n` : '') + drafts.x.content
-              const isOverLimit = [...fullXContent].length > 280
-              return (
-                <button
-                  type="button"
-                  disabled={
-                    drafts.x.submitted ||
-                    channelPublishing['x'] ||
-                    !drafts.x.content.trim() ||
-                    isOverLimit ||
-                    isOmittedByOrchestrator(drafts.x.content)
-                  }
-                  title={
-                    drafts.x.submitted
-                      ? 'Este tweet ya fue publicado exitosamente en X'
-                      : isOmittedByOrchestrator(drafts.x.content)
-                      ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
-                      : undefined
-                  }
-                  onClick={() => handlePublishChannelIndividual('x')}
-                  className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
-                    drafts.x.submitted
-                      ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : 'bg-slate-900 text-white hover:bg-black disabled:cursor-not-allowed disabled:bg-slate-400'
-                  }`}
-                >
-                  {drafts.x.submitted ? (
-                    <>
-                      <CheckCircle size={14} className="text-emerald-600" />
-                      ✓ Publicado en X
-                    </>
-                  ) : (
-                    <>
-                      <Send size={14} />
-                      {channelPublishing['x'] ? 'Publicando...' : 'Publicar en X'}
-                    </>
-                  )}
-                </button>
-              )
-            })()}
-
-            {/* Guardar en base de datos */}
-            <button
-              type="button"
-              onClick={() => handleSubmit('x')}
-              disabled={
-                drafts.x.submitted ||
-                drafts.x.submitting ||
-                drafts.x.regenerating ||
-                [...(xTitle ? `${xTitle}\n\n` : '') + drafts.x.content].length > 280 ||
-                isOmittedByOrchestrator(drafts.x.content)
-              }
-              className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                drafts.x.submitted
-                  ? 'cursor-not-allowed bg-green-50 text-green-700'
-                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {drafts.x.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
-              {drafts.x.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
-            </button>
-
-            {drafts.x.savedId && (
-              <p className="mt-2 text-center text-xs font-medium text-green-700">
-                Borrador #{drafts.x.savedId} registrado exitosamente.
-              </p>
-            )}
-
-            {channelPublishResult['x'] && (
-              <div
-                className={`mt-2 text-center text-xs font-medium ${
-                  channelPublishResult['x'].ok ? 'text-green-700' : 'text-rose-600'
-                }`}
-              >
-                <p>{channelPublishResult['x'].detalle}</p>
-                {channelPublishResult['x'].ok && (
-                  <a
-                    href={channelPublishResult['x'].url || "https://x.com/CloudEdTech_1"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 font-semibold text-blue-600 underline hover:text-blue-800"
-                  >
-                    ↗ Ver publicación en X
-                  </a>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* TARJETA DISCORD */}
-        <section
-          className={`flex flex-col rounded-2xl border bg-white shadow-sm transition ${
-            activeFormat === 'discord' ? 'border-orange-300 ring-2 ring-orange-50' : 'border-slate-200'
-          }`}
-        >
-          <div className="border-b border-slate-100 p-3 sm:p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                  <MessageCircle size={16} />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-xs font-bold text-slate-900 truncate">Discord</h3>
-                  <p className="text-[11px] text-slate-400 truncate">Publicación en hilos y canales de la comunidad</p>
-                </div>
-              </div>
-
-              <span
-                className={`shrink-0 c-chip ${
-                  drafts.discord.submitted
-                    ? 'c-chip--success'
-                    : isOmittedByOrchestrator(drafts.discord.content)
-                    ? 'c-chip--warning'
-                    : 'c-chip--brand'
-                }`}
-              >
-                {drafts.discord.submitted
-                  ? '✓ Publicado'
-                  : isOmittedByOrchestrator(drafts.discord.content)
-                  ? 'Omitido'
-                  : 'Borrador'}
-              </span>
-            </div>
-
-            <div className="mt-2 flex items-center min-w-0">
-              <span className="c-chip c-chip--purple max-w-full truncate inline-flex items-center gap-1" title={modelosUtilizados.discord}>
-                <Cpu size={10} className="shrink-0" />
-                <span className="truncate">{modelosUtilizados.discord}</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-1 flex-col p-3.5 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <label htmlFor="discord-channel-select" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Canal de Destino
-              </label>
-              <select
-                id="discord-channel-select"
-                value={discordSelectedChannel}
-                disabled={drafts.discord.submitted}
-                onChange={(e) => setDiscordSelectedChannel(e.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 outline-none focus:border-indigo-500"
-              >
-                <option value="general">#general</option>
-                <option value="faq">#faq</option>
-                <option value="notificaciones">#notificaciones</option>
-                <option value="pqrs">#pqrs</option>
-                <option value="chat-egresados">#chat-egresados</option>
-                <option value="oportunidades-laborales">#oportunidades-laborales</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="discord-title" className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Título del Post
-              </label>
-              <input
-                id="discord-title"
-                type="text"
-                value={discordTitle}
-                disabled={drafts.discord.submitted}
-                onChange={(e) => setDiscordTitle(e.target.value)}
-                placeholder="Ej: [Comunidad] Debate abierto..."
-                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 disabled:bg-slate-50"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="content-discord" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <Pencil size={11} />
-                <span>Cuerpo del Post</span>
-              </label>
-              <textarea
-                id="content-discord"
-                value={drafts.discord.content}
-                disabled={drafts.discord.submitted}
-                onFocus={() => setActiveFormat('discord')}
-                onChange={(event) => updateContent('discord', event.target.value)}
-                placeholder="Mensaje para la comunidad..."
-                className={`mt-1 w-full min-h-[140px] flex-1 resize-y rounded-lg border p-2.5 text-xs leading-relaxed outline-none transition disabled:bg-slate-50 disabled:text-slate-500 ${
-                  isOmittedByOrchestrator(drafts.discord.content)
-                    ? 'border-amber-200 bg-amber-50/40 text-slate-700 italic'
-                    : 'border-slate-200 text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-50'
-                }`}
-              />
-            </div>
-
-            {isOmittedByOrchestrator(drafts.discord.content) && (
-              <div className="mt-2.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles size={14} className="shrink-0 text-amber-600" />
-                  <span>¿Deseas redactar mensaje para Discord de todos modos?</span>
-                </div>
-                <button
-                  type="button"
-                  disabled={drafts.discord.regenerating}
-                  onClick={() => handleRegenerateChannelCopy('discord')}
-                  className="flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-bold text-white shadow-xs transition hover:bg-amber-700 disabled:bg-amber-400"
-                >
-                  <RotateCcw size={12} className={drafts.discord.regenerating ? 'animate-spin' : ''} />
-                  {drafts.discord.regenerating ? 'Generando...' : 'Regenerar con IA'}
-                </button>
-              </div>
-            )}
-
-            {/* Vista previa visual en vivo de la Cita en Bloque */}
-            <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
-              <span className="text-[11px] font-bold text-indigo-800 uppercase tracking-wide">
-                Vista previa de cita contextual (Discord Blockquote):
-              </span>
-              <div className="mt-1.5 rounded-lg border-l-4 border-indigo-500 bg-white p-2.5 text-xs text-slate-700 shadow-2xs">
-                <p className="font-semibold text-indigo-600">
-                  💬 Contexto de @{selectedWorkflowMessage?.author || 'autor'}:
-                </p>
-                <blockquote className="mt-1 line-clamp-2 italic text-slate-600">
-                  "{selectedWorkflowMessage?.content || 'Selecciona un mensaje de la bandeja...'}"
-                </blockquote>
-              </div>
-            </div>
-
-            {/* Archivos adjuntos de Discord */}
-            {discordFiles.length > 0 && (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs font-semibold text-slate-700">
-                    {discordFiles.length} archivo(s) adjunto(s)
-                  </p>
                   <button
                     type="button"
-                    onClick={() => setShowDiscordFiles((curr) => !curr)}
-                    className="text-xs font-semibold text-indigo-600 hover:underline"
+                    disabled={!selectedWorkflowMessage}
+                    onClick={() => setWorkspaceModalChannel('all')}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Abrir editor manual con los 3 canales en paralelo"
                   >
-                    {showDiscordFiles ? 'Ocultar' : 'Ver'}
+                    <Pencil size={13} className="text-slate-600" />
+                    <span>✏️ Editar manualmente</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={pipelineExecuting || !selectedWorkflowMessage}
+                    onClick={handleExecuteMototradisPipeline}
+                    className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:from-indigo-700 hover:to-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RotateCcw size={13} className={pipelineExecuting ? 'animate-spin' : ''} />
+                    <span>{pipelineExecuting ? 'Ejecutando LangGraph...' : '⚡ Ejecutar Pipeline (LangGraph)'}</span>
                   </button>
                 </div>
-
-                {showDiscordFiles && (
-                  <div className="mt-2 space-y-1.5">
-                    {discordFiles.map((file) => (
-                      <div
-                        key={file.id}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-slate-700">{file.filename}</p>
-                          <p className="text-[10px] text-slate-400">
-                            {file.content_type || 'Archivo'} · {formatDiscordFileSize(file.size)}
-                          </p>
-                        </div>
-                        <a
-                          href={file.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="shrink-0 text-orange-600 hover:underline"
-                        >
-                          Descargar
-                        </a>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
-            )}
 
-            {/* Acciones auxiliares */}
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleCopy('discord')}
-                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-              >
-                {copiedFormat === 'discord' ? <CheckCircle size={14} /> : <Copy size={14} />}
-                {copiedFormat === 'discord' ? 'Copiado' : 'Copiar'}
-              </button>
-
-              <button
-                type="button"
-                disabled={drafts.discord.submitted || drafts.discord.regenerating}
-                onClick={() => handleRegenerateChannelCopy('discord')}
-                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-50"
-              >
-                <RotateCcw size={14} className={drafts.discord.regenerating ? 'animate-spin' : ''} />
-                {drafts.discord.regenerating ? 'Regenerando...' : 'Regenerar'}
-              </button>
-            </div>
-
-            {/* Publicar individual directo */}
-            <button
-              type="button"
-              disabled={
-                drafts.discord.submitted ||
-                channelPublishing['discord'] ||
-                !drafts.discord.content.trim() ||
-                isOmittedByOrchestrator(drafts.discord.content)
-              }
-              title={
-                drafts.discord.submitted
-                  ? 'Este contenido ya fue publicado exitosamente en Discord'
-                  : isOmittedByOrchestrator(drafts.discord.content)
-                  ? "Pulsa 'Generar con IA' o escribe tu propio texto antes de publicar"
-                  : undefined
-              }
-              onClick={() => handlePublishChannelIndividual('discord')}
-              className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold shadow-xs transition ${
-                drafts.discord.submitted
-                  ? 'cursor-not-allowed border border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200'
-              }`}
-            >
-              {drafts.discord.submitted ? (
-                <>
-                  <CheckCircle size={14} className="text-emerald-600" />
-                  ✓ Publicado en Discord
-                </>
-              ) : (
-                <>
-                  <Send size={14} />
-                  {channelPublishing['discord'] ? 'Publicando...' : 'Publicar en Discord'}
-                </>
+              {pipelineLoading && (
+                <p className="mt-3 text-xs text-indigo-600">Sincronizando checkpoint del orquestador...</p>
               )}
-            </button>
 
-            {/* Guardar en base de datos */}
-            <button
-              type="button"
-              onClick={() => handleSubmit('discord')}
-              disabled={
-                drafts.discord.submitted ||
-                drafts.discord.submitting ||
-                drafts.discord.regenerating ||
-                isOmittedByOrchestrator(drafts.discord.content)
-              }
-              className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                drafts.discord.submitted
-                  ? 'cursor-not-allowed bg-green-50 text-green-700'
-                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {drafts.discord.submitted ? <CheckCircle size={14} /> : <FileText size={14} />}
-              {drafts.discord.submitted ? 'Guardado en plataforma' : 'Guardar borrador'}
-            </button>
+              {/* Mensaje original de Discord seleccionado */}
+              {selectedWorkflowMessage ? (
+                <div className="mt-4 rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-4.5 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="c-avatar c-avatar--indigo h-8 w-8 text-xs font-bold shrink-0">
+                        {(selectedWorkflowMessage.author || 'U').slice(0, 2).toUpperCase()}
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-slate-900">
+                            @{selectedWorkflowMessage.author}
+                          </span>
+                          <span className="c-tag c-tag--channel text-[10px]">
+                            #{selectedWorkflowMessage.channel.replace(/^#/, '')}
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-400 tabular-nums">
+                            ID #{selectedWorkflowMessage.interactionId}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Tema: <span className="font-semibold text-slate-700">{selectedWorkflowMessage.topic || 'General'}</span>
+                        </p>
+                      </div>
+                    </div>
 
-            {drafts.discord.savedId && (
-              <p className="mt-2 text-center text-xs font-medium text-green-700">
-                Borrador #{drafts.discord.savedId} registrado exitosamente.
-              </p>
-            )}
+                    <div className="flex items-center gap-2 self-start sm:self-center tabular-nums">
+                      <span
+                        className={`c-pill c-pill--dot ${
+                          selectedWorkflowMessage.sentiment === 'positive'
+                            ? 'c-pill--success'
+                            : selectedWorkflowMessage.sentiment === 'negative'
+                            ? 'c-pill--danger'
+                            : ''
+                        }`}
+                      >
+                        {selectedWorkflowMessage.sentiment === 'positive'
+                          ? 'Positivo'
+                          : selectedWorkflowMessage.sentiment === 'negative'
+                          ? 'Negativo'
+                          : 'Neutral'}
+                      </span>
 
-            {channelPublishResult['discord'] && (
-              <p
-                className={`mt-2 text-center text-xs font-medium ${
-                  channelPublishResult['discord'].ok ? 'text-green-700' : 'text-rose-600'
-                }`}
-              >
-                {channelPublishResult['discord'].detalle}
-              </p>
-            )}
-          </div>
-        </section>
-      </div>
-          </div>
-        </div>
+                      <div
+                        className="score-ring score-ring--sm"
+                        style={{ '--p': selectedWorkflowMessage.relevance } as React.CSSProperties}
+                        title={`Relevancia IA: ${selectedWorkflowMessage.relevance}%`}
+                      >
+                        <span>{selectedWorkflowMessage.relevance}%</span>
+                      </div>
+                    </div>
+                  </div>
 
-        {/* Barra de Decisión Global HITL (Human-in-the-Loop) */}
-      <section className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-purple-50/60 p-4 shadow-sm">
-        <div className="c-panel-head c-panel-head--flat">
-          <div className="c-panel-head__main">
-            <div className="c-panel-head__icon bg-indigo-100 text-indigo-700">
-              <CheckCircle size={16} />
-            </div>
+                  <div className="mt-3">
+                    <p className="text-xs sm:text-sm leading-relaxed text-slate-800 font-normal">
+                      {selectedWorkflowMessage.content}
+                    </p>
+                  </div>
 
-            <div className="c-panel-head__body">
-              <div className="c-panel-head__row">
-                <h4 className="c-panel-head__title">
-                  Decisión Humana Global HITL (Human-in-the-Loop)
-                </h4>
-                <span className="c-chip c-chip--info">
-                  Revisión: {pipelineData?.estado_revision || 'pendiente_hitl'}
-                </span>
+                  {selectedWorkflowMessage.attachments && selectedWorkflowMessage.attachments.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-2.5">
+                      {selectedWorkflowMessage.attachments.map((att) => (
+                        <a
+                          key={att.id || att.url}
+                          href={att.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-100"
+                        >
+                          📎 {att.filename}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
+                  <p className="text-xs text-slate-500">
+                    Selecciona una conversación de la bandeja para cargar su contenido en la mesa de trabajo.
+                  </p>
+                </div>
+              )}
+
+              {pipelineActionMessage && (
+                <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">
+                  <CheckCircle size={16} className="shrink-0 text-emerald-600" />
+                  <span>{pipelineActionMessage}</span>
+                </div>
+              )}
+
+              {pipelineActionError && (
+                <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
+                  <AlertTriangle size={16} className="shrink-0 text-rose-600" />
+                  <span>{pipelineActionError}</span>
+                </div>
+              )}
+            </section>
+
+            {/* Lanzadores de Redes Sociales: LinkedIn, X (Twitter) y Discord */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              {/* Botón / Tarjeta Lanzadora: LinkedIn */}
+              <div className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs transition hover:border-blue-300 hover:shadow-sm">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                        <BriefcaseBusiness size={16} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900">LinkedIn</h4>
+                        <p className="text-[10px] text-slate-400">Networking profesional</p>
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 c-chip ${
+                        drafts.linkedin.submitted
+                          ? 'c-chip--success'
+                          : isOmittedByOrchestrator(drafts.linkedin.content)
+                          ? 'c-chip--warning'
+                          : drafts.linkedin.content.trim()
+                          ? 'c-chip--brand'
+                          : ''
+                      }`}
+                    >
+                      {drafts.linkedin.submitted
+                        ? '✓ Publicado'
+                        : isOmittedByOrchestrator(drafts.linkedin.content)
+                        ? 'Omitido'
+                        : drafts.linkedin.content.trim()
+                        ? 'Borrador'
+                        : 'Pendiente'}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
+                    <span className="truncate">
+                      {drafts.linkedin.content.trim() ? `${drafts.linkedin.content.length} caracteres` : 'Sin borrador aún'}
+                    </span>
+                    <span className="truncate font-medium text-slate-400">
+                      {modelosUtilizados.linkedin.split(' ')[0]}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceModalChannel('linkedin')}
+                  className="mt-3.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs font-bold text-blue-700 shadow-2xs transition hover:bg-blue-100"
+                >
+                  <Pencil size={13} />
+                  <span>Abrir editor LinkedIn</span>
+                </button>
               </div>
-              <p className="c-panel-head__desc">
-                Soberanía humana completa: Tus modificaciones manuales en los títulos y copys tienen prevalencia estricta sobre las sugerencias de la IA.
-              </p>
+
+              {/* Botón / Tarjeta Lanzadora: X (Twitter) */}
+              <div className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs transition hover:border-slate-400 hover:shadow-sm">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
+                        <MessageCircle size={16} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900">X (Twitter)</h4>
+                        <p className="text-[10px] text-slate-400">Microblogging sintético</p>
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 c-chip ${
+                        drafts.x.submitted
+                          ? 'c-chip--success'
+                          : isOmittedByOrchestrator(drafts.x.content)
+                          ? 'c-chip--warning'
+                          : drafts.x.content.trim()
+                          ? 'c-chip--brand'
+                          : ''
+                      }`}
+                    >
+                      {drafts.x.submitted
+                        ? '✓ Publicado'
+                        : isOmittedByOrchestrator(drafts.x.content)
+                        ? 'Omitido'
+                        : drafts.x.content.trim()
+                        ? 'Borrador'
+                        : 'Pendiente'}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
+                    <span className="tabular-nums">
+                      {drafts.x.content.trim() ? `${drafts.x.content.length}/280 caracteres` : 'Sin borrador aún'}
+                    </span>
+                    <span className="truncate font-medium text-slate-400">
+                      {modelosUtilizados.x.split(' ')[0]}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceModalChannel('x')}
+                  className="mt-3.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800 shadow-2xs transition hover:bg-slate-100"
+                >
+                  <Pencil size={13} />
+                  <span>Abrir editor X</span>
+                </button>
+              </div>
+
+              {/* Botón / Tarjeta Lanzadora: Discord */}
+              <div className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-xs transition hover:border-indigo-300 hover:shadow-sm">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                        <MessageCircle size={16} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900">Discord</h4>
+                        <p className="text-[10px] text-slate-400">Comunidad y soporte</p>
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 c-chip ${
+                        drafts.discord.submitted
+                          ? 'c-chip--success'
+                          : isOmittedByOrchestrator(drafts.discord.content)
+                          ? 'c-chip--warning'
+                          : drafts.discord.content.trim()
+                          ? 'c-chip--brand'
+                          : ''
+                      }`}
+                    >
+                      {drafts.discord.submitted
+                        ? '✓ Publicado'
+                        : isOmittedByOrchestrator(drafts.discord.content)
+                        ? 'Omitido'
+                        : drafts.discord.content.trim()
+                        ? 'Borrador'
+                        : 'Pendiente'}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
+                    <span className="tabular-nums">
+                      {drafts.discord.content.trim() ? `${drafts.discord.content.length}/2000 caracteres` : 'Sin borrador aún'}
+                    </span>
+                    <span className="truncate font-medium text-slate-400">
+                      {modelosUtilizados.discord.split(' ')[0]}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceModalChannel('discord')}
+                  className="mt-3.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-3 py-2 text-xs font-bold text-indigo-700 shadow-2xs transition hover:bg-indigo-100"
+                >
+                  <Pencil size={13} />
+                  <span>Abrir editor Discord</span>
+                </button>
+              </div>
             </div>
           </div>
-
-          <div className="c-panel-head__actions">
-            <button
-              type="button"
-              disabled={pipelineExecuting || !selectedWorkflowMessage}
-              onClick={() => handleSubmitHitlDecision(false)}
-              className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 shadow-xs transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <XCircle size={13} />
-              <span>Desaprobar y limpiar hilo</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={pipelineExecuting || !selectedWorkflowMessage}
-              onClick={() => handleSubmitHitlDecision(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <CheckCircle size={13} />
-              <span>Aprobar y publicar en canales (HITL)</span>
-            </button>
-          </div>
         </div>
-
-        {pipelineActionMessage && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">
-            <CheckCircle size={16} className="shrink-0 text-emerald-600" />
-            <span>{pipelineActionMessage}</span>
-          </div>
-        )}
-
-        {pipelineActionError && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
-            <AlertTriangle size={16} className="shrink-0 text-rose-600" />
-            <span>{pipelineActionError}</span>
-          </div>
-        )}
-      </section>
 
       {/* Procesamiento Masivo con Gemma 4 para Baja Relevancia (< 35) */}
       <section className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
@@ -3515,6 +3637,124 @@ function ContentStudio() {
           </div>
         )}
       </section>
+
+      {/* Modal de Mesa de Trabajo Multicanal (Redacción Individual o Paralela) */}
+      <div
+        className={`c-modal ${workspaceModalChannel !== null ? 'is-open' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-workspace-title"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setWorkspaceModalChannel(null)
+        }}
+      >
+        <div
+          className="c-modal__dialog w-full flex flex-col bg-white overflow-hidden shadow-2xl"
+          style={{
+            maxWidth: workspaceModalChannel === 'all' ? '88rem' : '44rem',
+            maxHeight: '92vh',
+          }}
+        >
+          {/* Cabecera del Modal */}
+          <div className="c-modal__head flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-orange-600 font-bold">
+                {workspaceModalChannel === 'all' ? (
+                  <Cpu size={18} />
+                ) : workspaceModalChannel === 'linkedin' ? (
+                  <BriefcaseBusiness size={18} />
+                ) : (
+                  <MessageCircle size={18} />
+                )}
+              </div>
+              <div className="min-w-0">
+                <h3 id="modal-workspace-title" className="text-sm font-bold text-slate-900 truncate">
+                  {workspaceModalChannel === 'all'
+                    ? 'Mesa de Trabajo Multicanal — Edición y Publicación Paralela'
+                    : workspaceModalChannel === 'linkedin'
+                    ? 'Editor Multicanal — LinkedIn'
+                    : workspaceModalChannel === 'x'
+                    ? 'Editor Multicanal — X (Twitter)'
+                    : 'Editor Multicanal — Discord'}
+                </h3>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {selectedWorkflowMessage
+                    ? `Insumo: @${selectedWorkflowMessage.author} (#${selectedWorkflowMessage.channel}) • ID #${selectedWorkflowMessage.interactionId}`
+                    : 'Soberanía humana (HITL): Edita o publica según tus necesidades'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {workspaceModalChannel !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceModalChannel('all')}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+                  title="Ver los 3 canales en paralelo"
+                >
+                  Ver los 3 canales
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setWorkspaceModalChannel(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                title="Cerrar ventana (Esc)"
+                aria-label="Cerrar ventana"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Cuerpo del Modal */}
+          <div className="c-modal__body p-4 sm:p-5 overflow-y-auto max-h-[calc(92vh-130px)] space-y-4">
+            {workspaceModalChannel === 'all' && (
+              <>
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                  {renderLinkedinCard()}
+                  {renderXCard()}
+                  {renderDiscordCard()}
+                </div>
+                {renderHitlBar()}
+              </>
+            )}
+
+            {workspaceModalChannel === 'linkedin' && (
+              <div className="w-full">
+                {renderLinkedinCard()}
+              </div>
+            )}
+
+            {workspaceModalChannel === 'x' && (
+              <div className="w-full">
+                {renderXCard()}
+              </div>
+            )}
+
+            {workspaceModalChannel === 'discord' && (
+              <div className="w-full">
+                {renderDiscordCard()}
+              </div>
+            )}
+          </div>
+
+          {/* Pie del Modal */}
+          <div className="c-modal__foot flex items-center justify-between border-t border-slate-200 bg-slate-50/70 px-5 py-3">
+            <span className="text-[11px] text-slate-500">
+              Presiona <kbd className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">Esc</kbd> o haz clic fuera para cerrar
+            </span>
+            <button
+              type="button"
+              onClick={() => setWorkspaceModalChannel(null)}
+              className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs transition"
+            >
+              Cerrar ventana
+            </button>
+          </div>
+        </div>
+      </div>
       </div>
 
       {/* PESTAÑA: QUEJAS Y SOPORTE */}
