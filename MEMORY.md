@@ -15,7 +15,7 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
   - **Hashtags y Temas (`.l-grid.l-grid--halves`):**
     - Mitad 1: Gráfico de barras horizontal con selector segmentado de métrica (`Volumen` / `Crecimiento`).
     - Mitad 2: Gráfico de radar semántico (`Relevancia` vs. `Participación`) con botones interactivos para aislar u ocultar series en vivo.
-- **Redacción de Contenidos y Mesa de Trabajo (ContentStudio.tsx - Enoc):** Integración multicanal Mototradis (Discord, LinkedIn, X), persistencia SQLite, panel de quejas con resolución de canales, anuncios oficiales con vista previa Discord Embed y buscador dinámico de mensajes por ID.
+- **Redacción de Contenidos Homologada (Spec 020):** Navegación por pestañas (`Bandeja`, `Anuncios oficiales`, `Quejas y soporte`) según el Design System de Cristian, cabeceras compactas `.c-panel-head` con chips semánticos, integración multicanal Mototradis (Discord, LinkedIn, X), persistencia SQLite, panel de quejas con resolución de canales, anuncios oficiales con vista previa Discord Embed y buscador dinámico por ID.
 - **Informes y Almacenamiento OCI (OCIStorage.tsx - Tania):** Conectado con `reporte_semanal.py` y `oci_uploader.py`, panel de estado de bucket y generación de paquetes.
 - **Infraestructura y Tests:** Netlify + Render con Cloudflare Worker proxy. 100% tests pasando (100/100 en verde), build frontend exitoso con código 0 (`npm run build`). Inmutabilidad absoluta de los 17 archivos protegidos de la raíz, `backend/`, `motor-ia/` y `src/`.
 
