@@ -69,6 +69,8 @@ function Analytics() {
 
     const [periodDays, setPeriodDays] = useState<7 | 30 | 90>(30)
     const [hashtagMode, setHashtagMode] = useState<'count' | 'change'>('count')
+    const [showRelevance, setShowRelevance] = useState(true)
+    const [showParticipation, setShowParticipation] = useState(true)
     const [motorAnalytics, setMotorAnalytics] =
         useState<MotorAnalyticsResponse | null>(null)
     const [analyticsError, setAnalyticsError] = useState<string | null>(null)
@@ -374,25 +376,42 @@ function Analytics() {
                     </p>
                     <div className="l-grid l-grid--4" style={{ marginTop: 'var(--space-5)' }}>
                         {metrics.map((m) => (
-                            <div className="c-meter" key={m.label}>
-                                <span className="c-stat__label text-xs font-semibold text-slate-500">
+                            <div
+                                key={m.label}
+                                className="flex flex-col gap-2 min-w-0"
+                                style={{ minHeight: '105px', height: 'auto', overflow: 'visible' }}
+                            >
+                                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     {m.label}
                                 </span>
-                                <span className="t-kpi font-extrabold tabular-nums text-slate-900" style={{ fontSize: 'var(--text-3xl)' }}>
+                                <span
+                                    className="font-extrabold tabular-nums text-slate-900 leading-tight"
+                                    style={{ fontSize: 'var(--text-3xl, 1.875rem)' }}
+                                >
                                     {m.value}
                                     {m.suffix}
                                 </span>
                                 <div
-                                    className={`c-progress c-progress--sm ${
+                                    className={`c-progress c-progress--sm w-full ${
                                         m.kind ? `c-progress--${m.kind}` : ''
                                     }`}
+                                    style={{
+                                        height: '0.375rem',
+                                        borderRadius: '9999px',
+                                        background: 'var(--slate-100, #f1f5f9)',
+                                        overflow: 'hidden',
+                                    }}
                                 >
                                     <div
                                         className="c-progress__bar"
-                                        style={{ width: `${m.progress}%` }}
+                                        style={{
+                                            width: `${m.progress}%`,
+                                            height: '100%',
+                                            borderRadius: 'inherit',
+                                        }}
                                     />
                                 </div>
-                                <span className="t-caption text-xs text-slate-400">{m.note}</span>
+                                <span className="text-xs text-slate-400 mt-0.5">{m.note}</span>
                             </div>
                         ))}
                     </div>
@@ -686,42 +705,78 @@ function Analytics() {
                                         itemStyle={{ color: '#ffffff' }}
                                         formatter={(val, name) => [`${val}%`, name]}
                                     />
-                                    <Radar
-                                        name="Relevancia"
-                                        dataKey="relevance"
-                                        stroke="#ff7400"
-                                        fill="#ff7400"
-                                        fillOpacity={0.25}
-                                    />
-                                    <Radar
-                                        name="Participación"
-                                        dataKey="participation"
-                                        stroke="#6366f1"
-                                        fill="#6366f1"
-                                        fillOpacity={0.2}
-                                    />
+                                    {showRelevance && (
+                                        <Radar
+                                            name="Relevancia"
+                                            dataKey="relevance"
+                                            stroke="#ff7400"
+                                            fill="#ff7400"
+                                            fillOpacity={0.25}
+                                        />
+                                    )}
+                                    {showParticipation && (
+                                        <Radar
+                                            name="Participación"
+                                            dataKey="participation"
+                                            stroke="#6366f1"
+                                            fill="#6366f1"
+                                            fillOpacity={0.2}
+                                        />
+                                    )}
                                 </RadarChart>
                             </ResponsiveContainer>
                         </div>
                         <div
                             id="lg-an-topics"
                             className="c-legend"
-                            style={{ justifyContent: 'center' }}
+                            style={{ justifyContent: 'center', marginTop: 'var(--space-4)' }}
                         >
-                            <div className="c-legend__item" style={{ cursor: 'default' }}>
+                            <button
+                                type="button"
+                                className={`c-legend__item cursor-pointer transition ${
+                                    !showRelevance ? 'is-off opacity-40 line-through' : ''
+                                }`}
+                                onClick={() => setShowRelevance((prev) => !prev)}
+                                title={
+                                    showRelevance
+                                        ? 'Ocultar serie de Relevancia'
+                                        : 'Mostrar serie de Relevancia'
+                                }
+                            >
                                 <span
                                     className="c-legend__swatch"
                                     style={{ background: '#ff7400' }}
                                 />
-                                <span>Relevancia</span>
-                            </div>
-                            <div className="c-legend__item" style={{ cursor: 'default' }}>
+                                <span className="font-semibold text-slate-700">Relevancia</span>
+                                {!showRelevance && (
+                                    <span className="text-[10px] font-normal text-slate-400">
+                                        (oculta)
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                type="button"
+                                className={`c-legend__item cursor-pointer transition ${
+                                    !showParticipation ? 'is-off opacity-40 line-through' : ''
+                                }`}
+                                onClick={() => setShowParticipation((prev) => !prev)}
+                                title={
+                                    showParticipation
+                                        ? 'Ocultar serie de Participación'
+                                        : 'Mostrar serie de Participación'
+                                }
+                            >
                                 <span
                                     className="c-legend__swatch"
                                     style={{ background: '#6366f1' }}
                                 />
-                                <span>Participación</span>
-                            </div>
+                                <span className="font-semibold text-slate-700">Participación</span>
+                                {!showParticipation && (
+                                    <span className="text-[10px] font-normal text-slate-400">
+                                        (oculta)
+                                    </span>
+                                )}
+                            </button>
                         </div>
                     </article>
                 </div>

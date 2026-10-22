@@ -7,14 +7,14 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
 - **Ingesta de Mensajes Homologada (Spec 020):** 4 tarjetas KPI (`Analizados`, `Positivos`, `Preguntas`, `Destacados`), cabecera compacta con telemetría de bots/reales, panel de evaluación IA en una sola fila con `.c-meter`, contenedor unificado `.c-card--flush` de filtro y mensajes con scroll interno, pod derecho compacto de relevancia y botones de ancho natural.
 - **Pestaña de Análisis Homologada 1:1 con Cristian (Spec 020):**
   - **Cabecera (`.l-page-head`):** Título `Análisis` en negrita, subtítulo y selector segmentado de período (`7d`, `30d`, `90d`) conectado al filtrado.
-  - **Métricas Globales de Curaduría (`.c-card.c-card--lg`):** Grid de 4 columnas con `.c-meter`, `.t-kpi` tabular y barras `.c-progress` (`Tasa de sentimiento positivo`, `Índice de interacción`, `Relevancia promedio`, `Alertas activas`), con datos reales.
+  - **Métricas Globales de Curaduría (`.c-card.c-card--lg`):** Grid de 4 columnas con contenedor vertical inmune a colapsos, `.t-kpi` tabular y barras `.c-progress` (`Tasa de sentimiento positivo`, `Índice de interacción`, `Relevancia promedio`, `Alertas activas`), con datos reales.
   - **Evolución y Señales Clave (`.l-grid.l-grid--main-side`):**
     - Izquierda: Gráfico de área `Evolución del sentimiento` con series Positivo, Neutral y Negativo, leyenda interactiva para aislar series y filtrado por días.
     - Derecha: **Tarjeta Unificada de Insights (`.c-card--brand`)** con el diseño oscuro de marca original (`Insight principal`, `Preguntas frecuentes` y `Atención requerida` agrupadas en un solo bloque con botón interactivo hacia `/content#panel-quejas`).
   - **Scorecards de Emojis Destacados (`.c-card.c-card--lg`):** Grid de 6 columnas con `.emoji-card`, emoji a 2rem, conteo `.t-kpi`, etiqueta y badge de tendencia `.c-trend`.
   - **Hashtags y Temas (`.l-grid.l-grid--halves`):**
     - Mitad 1: Gráfico de barras horizontal con selector segmentado de métrica (`Volumen` / `Crecimiento`).
-    - Mitad 2: Gráfico de radar semántico (`Relevancia` vs. `Participación`) con leyenda centralizada.
+    - Mitad 2: Gráfico de radar semántico (`Relevancia` vs. `Participación`) con botones interactivos para aislar u ocultar series en vivo.
 - **Redacción de Contenidos y Mesa de Trabajo (ContentStudio.tsx - Enoc):** Integración multicanal Mototradis (Discord, LinkedIn, X), persistencia SQLite, panel de quejas con resolución de canales, anuncios oficiales con vista previa Discord Embed y buscador dinámico de mensajes por ID.
 - **Informes y Almacenamiento OCI (OCIStorage.tsx - Tania):** Conectado con `reporte_semanal.py` y `oci_uploader.py`, panel de estado de bucket y generación de paquetes.
 - **Infraestructura y Tests:** Netlify + Render con Cloudflare Worker proxy. 100% tests pasando (100/100 en verde), build frontend exitoso con código 0 (`npm run build`). Inmutabilidad absoluta de los 17 archivos protegidos de la raíz, `backend/`, `motor-ia/` y `src/`.
