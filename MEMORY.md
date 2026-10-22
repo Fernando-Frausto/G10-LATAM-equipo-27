@@ -21,7 +21,7 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
 
 ## Decisiones (y por qué)
 - **Restauración desde Descartados a Bandeja:** Al pulsar 'Restaurar a pendientes' en un mensaje analizado desde 'Descartados', se guarda `estado_curaduria = 'curated'`, permitiendo que mensajes rescatados por el operador salgan de descartados, pasen a 'Pendientes de publicar' y se listen en la Bandeja de Redacción independientemente de su score de IA.
-- **Layout 2 Columnas en Redacción:** Se mantiene la disposición de Cristian (Bandeja a la izquierda y Mesa de Trabajo a la derecha) preservando la limpieza visual de la cabecera (sin icono naranja decorativo y sin chip redundante de estado).
+- **Layout 2 Columnas Equilibrado en Redacción:** Se mantiene la disposición de Cristian (Bandeja a la izquierda y Mesa de Trabajo a la derecha) acotando la bandeja a `max-h-[460px]` con scroll interno a la altura de LinkedIn, incorporando una tarjeta complementaria fija de 'Estado de la cola' para eliminar el vacío blanco sin provocar saltos bruscos de UI, preservando HITL y Procesamiento Masivo a ancho completo inferior.
 - **Criterio Estricto de 'Proceso Completo':** Un mensaje solo se clasifica y contabiliza como 'Proceso completo' cuando ha sido efectivamente publicado en al menos 1 de las 3 redes sociales (Discord, LinkedIn, X) o en las 3 (`isMsgPublished`).
 - **Aislamiento Total de Pruebas de Discord:** Mocks rigurosos para evitar llamadas reales a la API de Discord o interacción del CommunityLab Bot durante tests.
 - **Design System con Datos Reales:** Se adoptan 1:1 los componentes y layouts de Cristian (`cloudedtech-design-system`), alimentados exclusivamente por los datos reales de la comunidad y del backend (0 mocks).
