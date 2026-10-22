@@ -2149,175 +2149,180 @@ function ContentStudio() {
         id="panel-inbox"
         role="tabpanel"
         aria-labelledby="tab-btn-inbox"
-        className={activeContentTab === 'inbox' ? 'space-y-6' : 'hidden'}
+        className={activeContentTab === 'inbox' ? 'space-y-5' : 'hidden'}
       >
-        {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="c-panel-head mb-3">
-            <div className="c-panel-head__main">
-              <div className="c-panel-head__body">
-                <div className="c-panel-head__row">
-                  <h3 className="c-panel-head__title">
-                    Bandeja de mensajes en Redacción
-                  </h3>
-                </div>
-                <p className="c-panel-head__desc">
-                  Selecciona un mensaje para revisarlo
-                </p>
+        {/* Layout 2 Columnas estilo Cristian (l-grid--side-main): Bandeja a la izquierda, Mesa de trabajo a la derecha */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-12 items-start">
+          {/* Columna Izquierda: Bandeja de mensajes */}
+          {/* Bandeja de mensajes listos para redacción (Selector de cola) */}
+      <section className="lg:col-span-4 xl:col-span-4 flex flex-col rounded-2xl border border-slate-200 bg-white p-4 sm:p-4.5 shadow-sm">
+        <div className="c-panel-head mb-3">
+          <div className="c-panel-head__main">
+            <div className="c-panel-head__body">
+              <div className="c-panel-head__row">
+                <h3 className="c-panel-head__title">
+                  Bandeja de mensajes en Redacción
+                </h3>
               </div>
-            </div>
-
-            {/* Buscador y Carga directa por ID específico (Estilo Enoc / HITL) */}
-            <div className="c-panel-head__actions">
-              <form
-                onSubmit={handleSearchById}
-                className="flex flex-col sm:items-end gap-0.5"
-              >
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="1"
-                    placeholder="ID ej: 42"
-                    value={manualIdInput}
-                    onChange={(e) => {
-                      const nextVal = e.target.value
-                      setManualIdInput(nextVal)
-                      setManualIdError(null)
-                      if (pinnedSearchMessage !== null) {
-                        const pinnedId = pinnedSearchMessage.interactionId
-                        setPinnedSearchMessage(null)
-                        if (
-                          selectedMessageId === pinnedId ||
-                          activeWorkbenchMessage?.interactionId === pinnedId
-                        ) {
-                          const firstNatural = workflowMessages[0] ?? null
-                          setSelectedMessageId(firstNatural?.interactionId ?? null)
-                          setActiveWorkbenchMessage(firstNatural)
-                          setDrafts(buildDefaultDrafts(firstNatural))
-                        }
-                      }
-                    }}
-                    className="w-24 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!manualIdInput.trim() || workflowLoading}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1 text-xs font-semibold text-white shadow-xs transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Search size={12} />
-                    <span>Cargar ID</span>
-                  </button>
-                </div>
-                {manualIdError && (
-                  <span className="text-[10px] font-medium text-rose-600">
-                    {manualIdError}
-                  </span>
-                )}
-              </form>
+              <p className="c-panel-head__desc">
+                Selecciona un mensaje para revisarlo
+              </p>
             </div>
           </div>
 
-          {workflowLoading && (
-            <p className="py-4 text-xs text-slate-500">Cargando mensajes disponibles...</p>
-          )}
+          {/* Buscador y Carga directa por ID específico (Estilo Enoc / HITL) */}
+          <div className="c-panel-head__actions">
+            <form
+              onSubmit={handleSearchById}
+              className="mt-2.5 flex flex-col gap-1 border-b border-slate-100 pb-2.5"
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="ID ej: 42"
+                  value={manualIdInput}
+                  onChange={(e) => {
+                    const nextVal = e.target.value
+                    setManualIdInput(nextVal)
+                    setManualIdError(null)
+                    if (pinnedSearchMessage !== null) {
+                      const pinnedId = pinnedSearchMessage.interactionId
+                      setPinnedSearchMessage(null)
+                      if (
+                        selectedMessageId === pinnedId ||
+                        activeWorkbenchMessage?.interactionId === pinnedId
+                      ) {
+                        const firstNatural = workflowMessages[0] ?? null
+                        setSelectedMessageId(firstNatural?.interactionId ?? null)
+                        setActiveWorkbenchMessage(firstNatural)
+                        setDrafts(buildDefaultDrafts(firstNatural))
+                      }
+                    }
+                  }}
+                  className="w-full flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-slate-800 placeholder-slate-400 transition focus:border-orange-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+                />
+                <button
+                  type="submit"
+                  disabled={!manualIdInput.trim() || workflowLoading}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1 text-xs font-semibold text-white shadow-xs transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Search size={12} />
+                  <span>Cargar ID</span>
+                </button>
+              </div>
+              {manualIdError && (
+                <span className="text-[10px] font-medium text-rose-600">
+                  {manualIdError}
+                </span>
+              )}
+            </form>
+          </div>
+        </div>
 
-          {workflowError && (
-            <p role="alert" className="py-4 text-xs text-rose-600">
-              {workflowError}
+        {workflowLoading && (
+          <p className="py-4 text-xs text-slate-500">Cargando mensajes disponibles...</p>
+        )}
+
+        {workflowError && (
+          <p role="alert" className="py-4 text-xs text-rose-600">
+            {workflowError}
+          </p>
+        )}
+
+        {!workflowLoading && !workflowError && displayedTrayMessages.length === 0 && (
+          <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center">
+            <p className="text-xs text-slate-500">
+              No hay mensajes pendientes de redacción en este momento.
             </p>
-          )}
+          </div>
+        )}
 
-          {!workflowLoading && !workflowError && displayedTrayMessages.length === 0 && (
-            <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center">
-              <p className="text-xs text-slate-500">
-                No hay mensajes pendientes de redacción en este momento.
-              </p>
-            </div>
-          )}
-
-          {!workflowLoading && !workflowError && displayedTrayMessages.length > 0 && (
-            <div className="flex gap-3 overflow-x-auto pb-3 pt-1 scrollbar-thin">
-              {displayedTrayMessages.map((item) => {
-                const isActive = selectedWorkflowId === item.interactionId
-                const isPinnedById =
-                  pinnedSearchMessage !== null &&
-                  pinnedSearchMessage.interactionId === item.interactionId &&
-                  !workflowMessages.some(
-                    (m) => m.interactionId === item.interactionId,
-                  )
-
-                return (
-                  <button
-                    key={item.interactionId}
-                    id={`tray-card-${item.interactionId}`}
-                    ref={(el) => {
-                      trayCardRefs.current[item.interactionId] = el
-                    }}
-                    type="button"
-                    onClick={() => {
-                      setSelectedWorkflowId(item.interactionId)
-                      prepareWorkflowContent(item)
-                    }}
-                    className={`min-w-[260px] max-w-[290px] shrink-0 rounded-xl border p-3 text-left transition ${
-                      isActive
-                        ? 'c-tray-card--active border-orange-500 bg-orange-50/70 shadow-xs ring-1 ring-orange-400'
-                        : 'border-slate-200 bg-white hover:border-orange-300 hover:bg-slate-50/60'
-                    }`}
-                  >
-                    {isPinnedById && (
-                      <div className="mb-2 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-100/80 px-2.5 py-1 text-[10px] font-bold text-orange-800">
-                        <span className="tabular-nums">
-                          📌 Cargado por ID #{item.interactionId}
-                        </span>
-                        <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-600">
-                          Temporal
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs font-bold text-slate-900">
-                        @{item.author}
-                      </span>
-                      <span className="tabular-nums shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">
-                        {item.relevance}% rel.
-                      </span>
-                    </div>
-
-                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <span className="font-medium text-indigo-600">#{item.channel}</span>
-                      <span>•</span>
-                      <span className="truncate text-slate-600">{item.topic}</span>
-                    </div>
-
-                    <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-slate-600">
-                      "{item.content}"
-                    </p>
-
-                    <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[11px]">
-                      <span
-                        className={`font-semibold ${
-                          isActive ? 'text-orange-600' : 'text-slate-400'
-                        }`}
-                      >
-                        {isActive ? '● En mesa de trabajo' : 'Click para cargar'}
-                      </span>
-                      <span className="tabular-nums text-[10px] text-slate-400">
-                        ID #{item.interactionId}
-                      </span>
-                    </div>
-                  </button>
+        {!workflowLoading && !workflowError && displayedTrayMessages.length > 0 && (
+          <div className="mt-3 space-y-2.5 max-h-[750px] overflow-y-auto pr-1 scrollbar-thin">
+            {displayedTrayMessages.map((item) => {
+              const isActive = selectedWorkflowId === item.interactionId
+              const isPinnedById =
+                pinnedSearchMessage !== null &&
+                pinnedSearchMessage.interactionId === item.interactionId &&
+                !workflowMessages.some(
+                  (m) => m.interactionId === item.interactionId,
                 )
-              })}
-            </div>
-          )}
-        </section>
 
-        {/* Mensaje original de Discord */}
-        <section
-          ref={originalMessageRef}
-          className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-        >
+              return (
+                <button
+                  key={item.interactionId}
+                  id={`tray-card-${item.interactionId}`}
+                  ref={(el) => {
+                    trayCardRefs.current[item.interactionId] = el
+                  }}
+                  type="button"
+                  onClick={() => {
+                    setSelectedWorkflowId(item.interactionId)
+                    prepareWorkflowContent(item)
+                  }}
+                  className={`w-full rounded-xl border p-3 text-left transition ${
+                    isActive
+                      ? 'c-tray-card--active border-orange-500 bg-orange-50/70 shadow-xs ring-1 ring-orange-400'
+                      : 'border-slate-200 bg-white hover:border-orange-300 hover:bg-slate-50/60'
+                  }`}
+                >
+                  {isPinnedById && (
+                    <div className="mb-2 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-100/80 px-2.5 py-1 text-[10px] font-bold text-orange-800">
+                      <span className="tabular-nums">
+                        📌 Cargado por ID #{item.interactionId}
+                      </span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-600">
+                        Temporal
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-bold text-slate-900">
+                      @{item.author}
+                    </span>
+                    <span className="tabular-nums shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">
+                      {item.relevance}% rel.
+                    </span>
+                  </div>
+
+                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
+                    <span className="font-medium text-indigo-600">#{item.channel}</span>
+                    <span>•</span>
+                    <span className="truncate text-slate-600">{item.topic}</span>
+                  </div>
+
+                  <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-slate-600">
+                    "{item.content}"
+                  </p>
+
+                  <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[11px]">
+                    <span
+                      className={`font-semibold ${
+                        isActive ? 'text-orange-600' : 'text-slate-400'
+                      }`}
+                    >
+                      {isActive ? '● En mesa de trabajo' : 'Click para cargar'}
+                    </span>
+                    <span className="tabular-nums text-[10px] text-slate-400">
+                      ID #{item.interactionId}
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+          {/* Columna Derecha: Mensaje original de Discord y Mesa de Trabajo Multicanal (Orquestador LangGraph) */}
+          <div className="lg:col-span-8 xl:col-span-8 space-y-4">
+            {/* Mensaje original */}
+      <section
+        ref={originalMessageRef}
+        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
         <div className="c-panel-head">
           <div className="c-panel-head__main">
             <div className="c-panel-head__body">
@@ -3287,8 +3292,10 @@ function ContentStudio() {
           </div>
         </section>
       </div>
+          </div>
+        </div>
 
-      {/* Barra de Decisión Global HITL (Human-in-the-Loop) */}
+        {/* Barra de Decisión Global HITL (Human-in-the-Loop) */}
       <section className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-white to-purple-50/60 p-4 shadow-sm">
         <div className="c-panel-head c-panel-head--flat">
           <div className="c-panel-head__main">
