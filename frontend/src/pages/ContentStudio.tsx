@@ -2699,24 +2699,26 @@ function ContentStudio() {
           </div>
         )}
 
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {/* Descripción del anuncio para generar con IA */}
-          <div className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 sm:p-4">
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Layout Compacto 2 Columnas (CommunityLab Design System): Editores a la izquierda, Vista Previa Discord Embed en vivo a la derecha */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12 items-start">
+          {/* Columna Izquierda (lg:col-span-7): Generación con IA y Editor Final */}
+          <div className="lg:col-span-7 space-y-3.5">
+            {/* Tarjeta 1: Descripción del anuncio para generar con IA */}
+            <div className="rounded-xl border border-slate-200/90 bg-slate-50/50 p-3 sm:p-3.5 shadow-2xs">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <label
                   htmlFor="announcement-draft"
                   className="text-[11px] font-bold uppercase tracking-wider text-slate-700"
                 >
-                  Descripción del anuncio para generar con IA
+                  Descripción para generar con IA
                 </label>
 
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-semibold text-slate-500">IA:</span>
+                  <span className="text-[10px] font-semibold text-slate-500">IA:</span>
                   <select
                     value={selectedAnnouncementModel}
                     onChange={(e) => setSelectedAnnouncementModel(e.target.value)}
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+                    className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-500"
                   >
                     <option value="gemini">Google Gemini Flash Lite</option>
                     <option value="groq">Groq (Cerebro IA)</option>
@@ -2724,7 +2726,7 @@ function ContentStudio() {
                   </select>
 
                   <span
-                    className={`text-[11px] font-semibold tabular-nums ${
+                    className={`text-[10px] font-semibold tabular-nums ${
                       draftText.length > 10000 ? 'font-bold text-rose-600' : 'text-slate-500'
                     }`}
                   >
@@ -2733,103 +2735,94 @@ function ContentStudio() {
                 </div>
               </div>
 
-            {selectedAnnouncementModel === 'gemma' && (
-              <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-[11px] text-amber-800">
-                <span className="text-base shrink-0">⏳</span>
-                <span>
-                  <strong>Google Gemma 4 (31B)</strong> es un modelo denso de alta precisión; puede tardar entre <strong>30 y 60 segundos</strong>. Si deseas respuesta inmediata en 1-2 segundos, selecciona <strong>Google Gemini Flash Lite</strong> o <strong>Groq</strong>.
-                </span>
-              </div>
-            )}
+              {selectedAnnouncementModel === 'gemma' && (
+                <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/90 px-2.5 py-1.5 text-[11px] text-amber-800">
+                  <span className="text-sm shrink-0">⏳</span>
+                  <span>
+                    <strong>Google Gemma 4 (31B)</strong> tarda entre <strong>30 y 60s</strong>. Para respuesta en 1-2s, elige <strong>Gemini Flash Lite</strong> o <strong>Groq</strong>.
+                  </span>
+                </div>
+              )}
 
-            <textarea
-              id="announcement-draft"
-              value={draftText}
-              onChange={(e) => {
-                setDraftText(e.target.value)
-                setAnnouncementGenerateError('')
-              }}
-              placeholder="Escribe aquí los puntos clave, fecha, temática o instrucciones para el anuncio. La IA generará automáticamente el texto del anuncio en el editor final siguiendo el manual de marca CloudEdTech..."
-              rows={6}
-              className="mt-2.5 w-full min-h-[140px] flex-1 resize-y rounded-lg border border-slate-200 bg-white p-2.5 text-xs leading-relaxed text-slate-700 outline-none transition focus:border-orange-500 focus:ring-1 focus:ring-orange-200"
-            />
-            </div>
+              <textarea
+                id="announcement-draft"
+                value={draftText}
+                onChange={(e) => {
+                  setDraftText(e.target.value)
+                  setAnnouncementGenerateError('')
+                }}
+                placeholder="Escribe aquí los puntos clave, fecha, temática o instrucciones para el anuncio..."
+                rows={3}
+                className="mt-2 w-full min-h-[72px] resize-y rounded-lg border border-slate-200 bg-white p-2 text-xs leading-relaxed text-slate-700 outline-none transition focus:border-orange-500 focus:ring-1 focus:ring-orange-200"
+              />
 
-            {draftText.length > 10000 && (
-              <p className="mt-1.5 text-xs font-medium text-rose-600">
-                La descripción excede el límite máximo de 10,000 caracteres permitidos.
-              </p>
-            )}
+              {draftText.length > 10000 && (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">
+                  La descripción excede el límite máximo de 10,000 caracteres permitidos.
+                </p>
+              )}
 
-            {announcementGenerateError && (
-              <div
-                role="alert"
-                className="mt-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"
-              >
-                {announcementGenerateError}
-              </div>
-            )}
+              {announcementGenerateError && (
+                <div
+                  role="alert"
+                  className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700"
+                >
+                  {announcementGenerateError}
+                </div>
+              )}
 
-            {isGeneratingAnnouncement && (
-              <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-indigo-200 bg-indigo-50/90 p-3 text-xs text-indigo-950 shadow-xs">
-                <RotateCcw size={15} className="mt-0.5 shrink-0 animate-spin text-indigo-600" />
-                <div>
-                  <p className="font-bold text-indigo-900">
+              {isGeneratingAnnouncement && (
+                <div className="mt-2 flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50/90 p-2.5 text-xs text-indigo-950 shadow-xs">
+                  <RotateCcw size={14} className="shrink-0 animate-spin text-indigo-600" />
+                  <p className="font-semibold text-indigo-900">
                     {selectedAnnouncementModel === 'gemma'
-                      ? 'Generando anuncio con Google Gemma 4...'
+                      ? 'Generando anuncio con Google Gemma 4 (puede tomar 30-60s)...'
                       : selectedAnnouncementModel === 'groq'
                       ? 'Generando anuncio con Groq...'
                       : 'Generando anuncio con Google Gemini...'}
                   </p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-indigo-700">
-                    {selectedAnnouncementModel === 'gemma'
-                      ? 'Gemma 4 puede demorar entre 30 y 60 segundos por su arquitectura de 31B parámetros. Para redacción instantánea en 1-2s, puedes elegir Gemini Flash o Groq.'
-                      : 'Redactando el anuncio con las directivas del manual de marca CloudEdTech y formato optimizado para Discord.'}
-                  </p>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5">
-              <div>
-                {draftText && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDraftText('')
-                      setAnnouncementGenerateError('')
-                    }}
-                    className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
-                  >
-                    Limpiar
-                  </button>
-                )}
-              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2">
+                <div>
+                  {draftText && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftText('')
+                        setAnnouncementGenerateError('')
+                      }}
+                      className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                </div>
 
-              <button
-                type="button"
-                disabled={
-                  isGeneratingAnnouncement ||
-                  !draftText.trim() ||
-                  draftText.length > 10000
-                }
-                onClick={handleGenerateAnnouncement}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand,#ff7400)] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
-              >
-                {isGeneratingAnnouncement ? (
-                  <RotateCcw size={13} className="animate-spin" />
-                ) : (
-                  <Sparkles size={13} />
-                )}
-                <span>{isGeneratingAnnouncement ? 'Generando...' : 'Generar anuncio con IA'}</span>
-              </button>
+                <button
+                  type="button"
+                  disabled={
+                    isGeneratingAnnouncement ||
+                    !draftText.trim() ||
+                    draftText.length > 10000
+                  }
+                  onClick={handleGenerateAnnouncement}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand,#ff7400)] px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+                >
+                  {isGeneratingAnnouncement ? (
+                    <RotateCcw size={12} className="animate-spin" />
+                  ) : (
+                    <Sparkles size={12} />
+                  )}
+                  <span>{isGeneratingAnnouncement ? 'Generando...' : 'Generar anuncio con IA'}</span>
+                </button>
+              </div>
             </div>
-          </div>
 
-          {/* Editor de Anuncio Final y Semáforo de Caracteres */}
-          <div className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 sm:p-4">
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Tarjeta 2: Editor de Anuncio Final y Semáforo */}
+            <div className="rounded-xl border border-slate-200/90 bg-slate-50/50 p-3 sm:p-3.5 shadow-2xs">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <label
                   htmlFor="announcement-final"
                   className="text-[11px] font-bold uppercase tracking-wider text-slate-700"
@@ -2837,7 +2830,7 @@ function ContentStudio() {
                   Editor de Anuncio Final
                 </label>
 
-                {/* Contador de caracteres */}
+                {/* Contador de caracteres sin cápsula 'Manual de marca' */}
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] font-bold tabular-nums text-slate-700">
                     {finalAnnouncement.length} / 2000
@@ -2845,142 +2838,151 @@ function ContentStudio() {
                 </div>
               </div>
 
-            <textarea
-              id="announcement-final"
-              value={finalAnnouncement}
-              onChange={(e) => {
-                setFinalAnnouncement(e.target.value)
-                setAnnouncementPublishError('')
-                setAnnouncementPublishSuccess('')
-              }}
-              placeholder="El anuncio generado aparecerá aquí para revisión final, o puedes redactarlo / cargar un archivo .txt/.md directamente..."
-              rows={6}
-              className="mt-2.5 w-full min-h-[140px] flex-1 resize-y rounded-lg border border-slate-200 bg-white p-2.5 text-xs leading-relaxed text-slate-700 outline-none transition focus:border-orange-500 focus:ring-1 focus:ring-orange-200"
-            />
-
-            {/* Barra de progreso cromática */}
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-              <div
-                className={`h-full transition-all duration-300 ${
-                  finalAnnouncement.length <= 1500
-                    ? 'bg-emerald-500'
-                    : finalAnnouncement.length <= 2000
-                    ? 'bg-amber-500'
-                    : 'bg-rose-500'
-                }`}
-                style={{
-                  width: `${Math.min(100, (finalAnnouncement.length / 2000) * 100)}%`,
+              <textarea
+                id="announcement-final"
+                value={finalAnnouncement}
+                onChange={(e) => {
+                  setFinalAnnouncement(e.target.value)
+                  setAnnouncementPublishError('')
+                  setAnnouncementPublishSuccess('')
                 }}
+                placeholder="El anuncio aparecerá aquí para revisión final, o redáctalo / carga un archivo .txt/.md..."
+                rows={4}
+                className="mt-2 w-full min-h-[96px] resize-y rounded-lg border border-slate-200 bg-white p-2 text-xs leading-relaxed text-slate-700 outline-none transition focus:border-orange-500 focus:ring-1 focus:ring-orange-200"
               />
-            </div>
 
-            </div>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5">
-              {/* Botón de carga de archivo */}
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept=".txt,.md"
-                  className="hidden"
-                  onChange={handleFileUpload}
+              {/* Barra de progreso cromática */}
+              <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    finalAnnouncement.length <= 1500
+                      ? 'bg-emerald-500'
+                      : finalAnnouncement.length <= 2000
+                      ? 'bg-amber-500'
+                      : 'bg-rose-500'
+                  }`}
+                  style={{
+                    width: `${Math.min(100, (finalAnnouncement.length / 2000) * 100)}%`,
+                  }}
                 />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  <Upload size={13} />
-                  <span>.txt / .md</span>
-                </button>
+              </div>
 
-                {finalAnnouncement && (
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2">
+                {/* Botón de carga de archivo */}
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".txt,.md"
+                    className="hidden"
+                    onChange={handleFileUpload}
+                  />
                   <button
                     type="button"
-                    onClick={() => {
-                      setFinalAnnouncement('')
-                      setAnnouncementPublishError('')
-                      setAnnouncementPublishSuccess('')
-                    }}
-                    className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50"
                   >
-                    Limpiar
+                    <Upload size={12} />
+                    <span>.txt / .md</span>
                   </button>
-                )}
-              </div>
 
-              {/* Selector de Canal y Botón Publicar */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                <div className="flex items-center gap-1">
-                  <label htmlFor="announcement-channel" className="text-[11px] font-semibold text-slate-500">
-                    Canal:
-                  </label>
-                  <select
-                    id="announcement-channel"
-                    value={selectedDiscordChannel}
-                    onChange={(e) => setSelectedDiscordChannel(e.target.value)}
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-500"
-                  >
-                    {availableDiscordChannels.map((ch) => (
-                      <option key={ch.id} value={ch.id}>
-                        {ch.name}
-                      </option>
-                    ))}
-                  </select>
+                  {finalAnnouncement && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFinalAnnouncement('')
+                        setAnnouncementPublishError('')
+                        setAnnouncementPublishSuccess('')
+                      }}
+                      className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
+                    >
+                      Limpiar
+                    </button>
+                  )}
                 </div>
 
-                <button
-                  type="button"
-                  disabled={
-                    !finalAnnouncement.trim() ||
-                    finalAnnouncement.length > 2000 ||
-                    !announcementStatus?.configured ||
-                    isPublishingAnnouncement
-                  }
-                  onClick={() => setShowConfirmModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand,#ff7400)] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
-                >
-                  <Send size={13} />
-                  <span>Publicar en Discord</span>
-                </button>
+                {/* Selector de Canal y Botón Publicar */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1">
+                    <label htmlFor="announcement-channel" className="text-[11px] font-semibold text-slate-500">
+                      Canal:
+                    </label>
+                    <select
+                      id="announcement-channel"
+                      value={selectedDiscordChannel}
+                      onChange={(e) => setSelectedDiscordChannel(e.target.value)}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+                    >
+                      {availableDiscordChannels.map((ch) => (
+                        <option key={ch.id} value={ch.id}>
+                          {ch.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={
+                      !finalAnnouncement.trim() ||
+                      finalAnnouncement.length > 2000 ||
+                      !announcementStatus?.configured ||
+                      isPublishingAnnouncement
+                    }
+                    onClick={() => setShowConfirmModal(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand,#ff7400)] px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+                  >
+                    <Send size={12} />
+                    <span>Publicar en Discord</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Vista Previa en vivo estilo Discord Embed (Spec 019 RF-09) */}
-        <div className="mt-3.5 rounded-xl border border-slate-200/90 bg-slate-50/40 p-3 sm:p-3.5">
-          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-bold uppercase tracking-wide text-slate-700">
-              Vista previa en vivo · Discord Embed
-            </span>
-            <span className="rounded-md bg-indigo-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-indigo-700">
-              Canal destino: {selectedTargetChannelName}
-            </span>
-          </div>
-
-          <div className="discord-embed">
-            <div className="discord-embed__header discord-embed__bot">
-              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#080a27] text-[10px] font-black text-white">
-                CE
-              </span>
-              <span className="text-xs font-bold text-slate-900">
-                CloudEdTech_Oficial
-              </span>
-              <span className="discord-embed__pill">BOT</span>
-              <span className="text-[11px] font-normal tabular-nums text-slate-400">
-                Hoy · {selectedTargetChannelName}
-              </span>
-            </div>
-
-            <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-              {announcementDraft ? (
-                announcementDraft
-              ) : (
-                <span className="italic text-slate-400">
-                  Escribe o genera con IA el anuncio oficial para visualizar cómo se verá en el canal #anuncios de Discord...
+          {/* Columna Derecha (lg:col-span-5): Vista Previa en vivo estilo Discord Embed Sticky */}
+          <div className="lg:col-span-5 lg:sticky lg:top-4">
+            <div className="rounded-xl border border-slate-200/90 bg-slate-50/50 p-3 sm:p-3.5 shadow-2xs">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                  Vista previa en vivo · Discord
                 </span>
-              )}
+                <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-mono text-[10px] font-semibold tabular-nums text-indigo-700">
+                  {selectedTargetChannelName}
+                </span>
+              </div>
+
+              <div className="discord-embed max-h-[460px] overflow-y-auto">
+                <div className="discord-embed__header discord-embed__bot">
+                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#080a27] text-[10px] font-black text-white">
+                    CE
+                  </span>
+                  <span className="text-xs font-bold text-slate-900">
+                    CloudEdTech_Oficial
+                  </span>
+                  <span className="discord-embed__pill">BOT</span>
+                  <span className="text-[11px] font-normal tabular-nums text-slate-400">
+                    Hoy · {selectedTargetChannelName}
+                  </span>
+                </div>
+
+                <div className="mt-1 whitespace-pre-wrap text-xs sm:text-sm leading-relaxed text-slate-700">
+                  {announcementDraft ? (
+                    announcementDraft
+                  ) : (
+                    <span className="italic text-slate-400">
+                      Escribe o genera con IA el anuncio oficial para previsualizar en tiempo real cómo se verá en el canal {selectedTargetChannelName} de Discord...
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-2.5 flex items-center justify-between border-t border-slate-200/70 pt-2 text-[10px] text-slate-400">
+                <span>Webhook Discord</span>
+                <span className="font-semibold text-slate-500 tabular-nums">
+                  {announcementDraft.length} caracteres
+                </span>
+              </div>
             </div>
           </div>
         </div>
