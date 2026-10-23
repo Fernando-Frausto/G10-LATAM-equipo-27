@@ -4269,3 +4269,122 @@ def test_spec021_discord_sync_sesion_http_keep_alive_configurada():
         f"pool_maxsize para http:// debe ser 10, obtenido: {adapter_http._pool_maxsize}"
     )
 
+
+# ==============================================================================
+# Spec 022: Migración de Interacciones a Supabase Enoc y Unificación de Conexiones
+# ==============================================================================
+
+def test_spec022_estructura_ddl_interacciones_enoc():
+    """
+    Spec 022 - RF-01:
+    Valida que la estructura canónica del DDL para interacciones en Enoc contenga
+    las 11 columnas especificadas (id, hash, origen_comunidad, periodo_referencia,
+    autor, canal, tipo, texto, enviado_en, estado, creado_en) y la restricción o índice UNIQUE sobre hash.
+    """
+    import importlib
+    try:
+        migrador = importlib.import_module("scripts.migrar_interacciones_enoc")
+    except ModuleNotFoundError:
+        pytest.fail("scripts/migrar_interacciones_enoc.py no existe aún (Fase Red TDD)")
+
+    assert hasattr(migrador, "DDL_INTERACCIONES"), (
+        "El módulo scripts.migrar_interacciones_enoc debe definir la constante DDL_INTERACCIONES"
+    )
+    ddl = getattr(migrador, "DDL_INTERACCIONES", "").lower()
+
+    columnas_esperadas = [
+        "id", "hash", "origen_comunidad", "periodo_referencia",
+        "autor", "canal", "tipo", "texto", "enviado_en", "estado", "creado_en"
+    ]
+    for col in columnas_esperadas:
+        assert col in ddl, f"La columna '{col}' no se encuentra en el DDL canónico de interacciones"
+
+    assert "unique" in ddl and "hash" in ddl, (
+        "El DDL debe definir una restricción o índice UNIQUE sobre la columna 'hash'"
+    )
+
+
+def test_spec022_salvaguarda_conexion_puente_conmuta_tania_a_enoc(monkeypatch, caplog):
+    """
+    Spec 022 - RF-04:
+    Valida que puente_motor_ia detecte si DATABASE_URL apunta al proyecto obsoleto de Tania
+    ('ietgilhtccvqlqglqazf') y conmute de forma transparente hacia SUPABASE_DB_URL (Enoc)
+    emitiendo una advertencia clara en log (logger.warning).
+    """
+    import logging
+
+    url_tania = "postgresql://postgres.ietgilhtccvqlqglqazf:pwd123@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+    url_enoc = "postgresql://postgres.swdoucawdasxmnomlcfu:pwd456@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+
+    monkeypatch.setenv("DATABASE_URL", url_tania)
+    monkeypatch.setenv("SUPABASE_DB_URL", url_enoc)
+
+    assert hasattr(puente_motor_ia, "resolver_url_base_datos"), (
+        "puente_motor_ia debe implementar la función 'resolver_url_base_datos' para la salvaguarda de conexión"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        url_activa = puente_motor_ia.resolver_url_base_datos(url_tania, url_enoc)
+
+    assert url_activa == url_enoc, (
+        f"Se esperaba conmutación a la URL de Enoc ({url_enoc}), pero se obtuvo: {url_activa}"
+    )
+    assert any("ietgilhtccvqlqglqazf" in r.message or "Tania" in r.message or "conmut" in r.message.lower() for r in caplog.records), (
+        "Debe registrarse una advertencia en log (logger.warning) informando la conmutación automática"
+    )
+
+
+def test_spec022_migracion_idempotencia_y_hashes_coincidentes():
+    """
+    Spec 022 - RF-02 y RF-03:
+    Valida el comportamiento de transferencia idempotente (ON CONFLICT (hash) DO NOTHING),
+    la verificación de integridad de los 204 hashes coincidentes (pre-flight y post-flight)
+    y la sincronización de la secuencia interacciones_id_seq con COALESCE((SELECT MAX(id) FROM interacciones), 1).
+    """
+    import importlib
+    try:
+        migrador = importlib.import_module("scripts.migrar_interacciones_enoc")
+    except ModuleNotFoundError:
+        pytest.fail("scripts/migrar_interacciones_enoc.py no existe aún (Fase Red TDD)")
+
+    # 1. Validar SQL de inserción con cláusula ON CONFLICT (hash) DO NOTHING
+    assert hasattr(migrador, "SQL_INSERT_INTERACCIONES"), (
+        "El módulo migrador debe definir la constante SQL_INSERT_INTERACCIONES"
+    )
+    sql_insert = getattr(migrador, "SQL_INSERT_INTERACCIONES", "").upper()
+    assert "ON CONFLICT (HASH) DO NOTHING" in sql_insert or "ON CONFLICT (hash) DO NOTHING".upper() in sql_insert, (
+        "La inserción debe incluir la cláusula idempotente 'ON CONFLICT (hash) DO NOTHING'"
+    )
+
+    # 2. Validar función de validación de paridad de 204 hashes
+    assert hasattr(migrador, "validar_paridad_hashes"), (
+        "El módulo migrador debe implementar la función 'validar_paridad_hashes'"
+    )
+    hashes_origen = [f"hash_discord_{i:03d}" for i in range(204)]
+    hashes_destino_exactos = list(hashes_origen)
+    assert migrador.validar_paridad_hashes(hashes_origen, hashes_destino_exactos) is True, (
+        "Debe retornar True cuando los 204 hashes coinciden exactamente"
+    )
+
+    # Casos de discrepancia
+    hashes_destino_menos = hashes_origen[:-1]
+    assert migrador.validar_paridad_hashes(hashes_origen, hashes_destino_menos) is False, (
+        "Debe retornar False si la cantidad no coincide con 204"
+    )
+    hashes_destino_discrepante = list(hashes_origen)
+    hashes_destino_discrepante[0] = "hash_alterado"
+    assert migrador.validar_paridad_hashes(hashes_origen, hashes_destino_discrepante) is False, (
+        "Debe retornar False si algún hash discrepa"
+    )
+
+    # 3. Validar SQL de sincronización de secuencia autoincremental
+    assert hasattr(migrador, "SQL_SYNC_SECUENCIA"), (
+        "El módulo migrador debe definir la constante SQL_SYNC_SECUENCIA"
+    )
+    sql_seq = getattr(migrador, "SQL_SYNC_SECUENCIA", "")
+    assert "interacciones_id_seq" in sql_seq, "Debe sincronizar la secuencia 'interacciones_id_seq'"
+    assert "COALESCE" in sql_seq.upper() and "MAX(ID)" in sql_seq.upper(), (
+        "La secuencia debe usar COALESCE((SELECT MAX(id) FROM interacciones), 1)"
+    )
+
+

@@ -27,11 +27,43 @@ for _stream in (sys.stdout, sys.stderr):
         except Exception:
             pass
 
-# Homologación preventiva de variables de entorno para motor Mototradis (Spec 015 - RF-02)
+# ==============================================================================
+# Salvaguarda de Conexión y Detección de Proyectos Obsoletos (Spec 022 - RF-04)
+# ==============================================================================
+ID_PROYECTO_TANIA_OBSOLETO = "ietgilhtccvqlqglqazf"
+
+
+def resolver_url_base_datos(url_db: str | None = None, url_enoc: str | None = None) -> str | None:
+    """
+    Spec 022 - RF-04:
+    Resuelve la URL canónica de PostgreSQL para Supabase.
+    Si DATABASE_URL contiene el identificador obsoleto de Tania ('ietgilhtccvqlqglqazf'),
+    registra una advertencia en log (logger.warning) y conmuta transparentemente hacia SUPABASE_DB_URL (Enoc).
+    Si url_db no apunta a Tania o es válida, la retorna. Si ambas están ausentes, retorna None.
+    """
+    if url_db is None:
+        url_db = os.getenv("DATABASE_URL")
+    if url_enoc is None:
+        url_enoc = os.getenv("SUPABASE_DB_URL")
+
+    if url_db and ID_PROYECTO_TANIA_OBSOLETO in url_db:
+        logger.warning(
+            f"DATABASE_URL apunta al proyecto obsoleto de Tania ({ID_PROYECTO_TANIA_OBSOLETO}). "
+            "Conmutando transparentemente hacia la base de datos de Supabase Enoc."
+        )
+        if url_enoc and os.getenv("DATABASE_URL") == url_db:
+            os.environ["DATABASE_URL"] = url_enoc
+        return url_enoc or None
+
+    return url_db or url_enoc or None
+
+
+# Homologación preventiva de variables de entorno para motor Mototradis (Spec 015 - RF-02) y Spec 022 (RF-04)
 if not os.environ.get("GEMINI_API_KEY") and os.environ.get("GOOGLE_API_KEY"):
     os.environ["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
 if not os.environ.get("SUPABASE_DB_URL") and os.environ.get("DATABASE_URL"):
     os.environ["SUPABASE_DB_URL"] = os.environ["DATABASE_URL"]
+resolver_url_base_datos()
 
 import discord
 from pydantic import BaseModel, Field
@@ -197,7 +229,7 @@ def obtener_datos_supabase(forzar: bool = False) -> dict | None:
     if not forzar and _cache_datos_supabase is not None and (ahora - _timestamp_cache_supabase) < TTL_CACHE_SUPABASE:
         return _cache_datos_supabase
 
-    db_url = os.getenv("DATABASE_URL")
+    db_url = resolver_url_base_datos()
     sb_url = os.getenv("SUPABASE_DB_URL") or db_url
     if not db_url and not sb_url:
         return None
@@ -614,7 +646,7 @@ def _obtener_ids_evaluados_supabase() -> set[int]:
                     pass
     if ids:
         return ids
-    url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+    url = os.getenv("SUPABASE_DB_URL") or resolver_url_base_datos()
     if url:
         try:
             import psycopg2
@@ -868,7 +900,7 @@ def actualizar_etapa_flujo_puente(interaccion_id: int, etapa_destino: str) -> bo
             res = True
 
     if res:
-        sb_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        sb_url = os.getenv("SUPABASE_DB_URL") or resolver_url_base_datos()
         if sb_url:
             mapa_sb = {
                 "en_analisis": "pendiente",
@@ -919,7 +951,7 @@ def actualizar_curaduria_puente(interaccion_id: int, estado_curaduria: str) -> b
     invalidar_cache_supabase()
     res = _orig_actualizar_curaduria(interaccion_id, estado_curaduria)
     if res:
-        sb_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        sb_url = os.getenv("SUPABASE_DB_URL") or resolver_url_base_datos()
         if sb_url:
             mapa_sb = {
                 "curated": "aprobado",
@@ -959,7 +991,7 @@ def actualizar_estado_contenido_puente(
         observaciones_revision=observaciones_revision,
     )
     if res:
-        sb_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+        sb_url = os.getenv("SUPABASE_DB_URL") or resolver_url_base_datos()
         if sb_url:
             mapa_sb = {
                 "aprobado": "aprobado",
@@ -4758,6 +4790,7 @@ def homologar_entorno_mototradis():
         os.environ["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
     if not os.environ.get("SUPABASE_DB_URL") and os.environ.get("DATABASE_URL"):
         os.environ["SUPABASE_DB_URL"] = os.environ["DATABASE_URL"]
+    resolver_url_base_datos()
 
     try:
         from src.config import config
@@ -4791,7 +4824,7 @@ def obtener_checkpointer_resiliente():
         return _checkpointer_activo
 
     homologar_entorno_mototradis()
-    db_url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
+    db_url = os.environ.get("SUPABASE_DB_URL") or resolver_url_base_datos()
     if db_url and "postgres" in db_url:
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
