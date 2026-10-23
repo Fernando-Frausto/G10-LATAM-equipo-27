@@ -34,3 +34,4 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
 - Nunca saltarse el flujo ni asumir que un cambio es "demasiado pequeño".
 - Nunca hacer push directo a `main` (Regla 1). Todo el trabajo se mantiene en ramas `feature/` o `beta-pruebas`.
 - Nunca escribir credenciales en código duro (Regla 4).
+- Nunca introducir llamadas de red bloqueantes en endpoints GET ni polling agresivo (<30s) en frontend (Regla de Oro de Alta Velocidad).

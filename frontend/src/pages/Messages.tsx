@@ -144,7 +144,7 @@ function Messages() {
     const loadMessages = async () => {
         try {
             const response = await fetch(
-                `${API_BASE_URL}/api/community/messages`
+                `${API_BASE_URL}/api/community/messages?limite=500`
             )
 
             if (!response.ok) {

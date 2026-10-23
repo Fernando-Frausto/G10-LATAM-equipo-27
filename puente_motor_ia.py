@@ -4032,15 +4032,16 @@ def _obtener_telemetria_bots_omitidos_discord() -> int:
 
 @app.get("/api/community/messages")
 @app.get("/api/community/messages/")
-def consultar_mensajes_comunidad_enriquecido(limite: int = 100):
+def consultar_mensajes_comunidad_enriquecido(limite: int = 500, limit: int | None = None):
     """
     Spec 016 - RF-003, RF-007:
     Consulta mensajes de la comunidad enriquecidos con trazabilidad multicanal (is_published, published_platforms)
     y sincronización de etapa_flujo / estado_curaduria para mensajes con copys publicados.
     """
     import json
-    limite = max(1, min(limite, 500))
-    registros = motor_bd.listar_interacciones(limite=limite)
+    max_limite = limit if limit is not None else limite
+    max_limite = max(1, min(max_limite, 1000))
+    registros = motor_bd.listar_interacciones(limite=max_limite)
 
     def palabras_clave(valor):
         if not valor:
@@ -4201,7 +4202,7 @@ def consultar_mensajes_comunidad_enriquecido(limite: int = 100):
         total_bots_omitidos = _obtener_telemetria_bots_omitidos_discord()
 
     return {
-        "total": len(mensajes),
+        "total": total_mensajes_reales if total_mensajes_reales > 0 else len(mensajes),
         "omitted_bots_count": int(total_bots_omitidos),
         "real_messages_count": int(total_mensajes_reales),
         "messages": mensajes,
