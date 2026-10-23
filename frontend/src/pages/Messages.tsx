@@ -272,9 +272,13 @@ function Messages() {
             'general',
             'faq',
             'pqrs',
-            'chat-egresados',
-            'oportunidades-laborales',
+            'notificaciones',
         ],
+        []
+    )
+
+    const EXCLUDED_CHANNELS = useMemo(
+        () => ['preguntas', 'dudas', 'anuncios', 'chat-egresados', 'oportunidades-laborales'],
         []
     )
 
@@ -287,12 +291,12 @@ function Messages() {
                         (ch) =>
                             ch &&
                             !/^\d+$/.test(ch) &&
-                            !['preguntas', 'dudas', 'anuncios'].includes(ch.toLowerCase())
+                            !EXCLUDED_CHANNELS.includes(ch.toLowerCase())
                     )
             )
         )
         const allChannels = Array.from(new Set([...PREFERRED_CHANNELS_ORDER, ...detected]))
-            .filter((ch) => !['preguntas', 'dudas', 'anuncios'].includes(ch.toLowerCase()))
+            .filter((ch) => !EXCLUDED_CHANNELS.includes(ch.toLowerCase()))
 
         return allChannels.sort((a, b) => {
             const cleanA = a.toLowerCase()
@@ -304,7 +308,7 @@ function Messages() {
             if (indexB !== -1) return 1
             return cleanA.localeCompare(cleanB)
         })
-    }, [messageItems, PREFERRED_CHANNELS_ORDER])
+    }, [messageItems, PREFERRED_CHANNELS_ORDER, EXCLUDED_CHANNELS])
 
     const topics = useMemo(() => {
         const set = new Set<string>()
@@ -637,8 +641,14 @@ function Messages() {
         setIsSyncingDiscord(true)
         setSyncFeedbackMessage(null)
 
+        const abortController = new AbortController()
+        const timeoutId = setTimeout(() => {
+            abortController.abort()
+        }, 12000)
+
         try {
-            const resp = await syncDiscord()
+            const resp = await syncDiscord(undefined, { signal: abortController.signal })
+            clearTimeout(timeoutId)
             if (resp.exito) {
                 const metricas = `Nuevas: ${resp.guardadas_nuevas} | Omitidas: ${resp.repetidas_omitidas} | Total: ${resp.total_recibidas}`
                 setSyncFeedbackMessage({
@@ -653,8 +663,10 @@ function Messages() {
                 })
             }
         } catch (error) {
-            const err = error as Error & { status?: number; codigoError?: string }
+            clearTimeout(timeoutId)
+            const err = error as Error & { status?: number; codigoError?: string; name?: string }
             const errMsg = err.message || 'Error desconocido al sincronizar Discord'
+            const isAborted = err.name === 'AbortError' || abortController.signal.aborted
             const isConflict = err.status === 409 || errMsg.includes('409') || errMsg.includes('Sincronizaci')
             const isRateLimit =
                 err.status === 429 ||
@@ -664,7 +676,12 @@ function Messages() {
                 errMsg.toLowerCase().includes('rate limit') ||
                 errMsg.toLowerCase().includes('too many requests')
 
-            if (isConflict) {
+            if (isAborted) {
+                setSyncFeedbackMessage({
+                    type: 'warning',
+                    text: '⏱️ La sincronización tardó en responder del servidor. Si el backend en Render estaba suspendido, por favor reintenta en unos instantes.',
+                })
+            } else if (isConflict) {
                 setSyncFeedbackMessage({
                     type: 'warning',
                     text: '⏳ Sincronización en curso. Por favor espera a que finalice el proceso anterior.',

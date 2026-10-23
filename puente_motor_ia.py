@@ -1204,8 +1204,6 @@ def _generar_respuesta_queja_ia(texto: str, canal: str, modulo: str, nombre_legi
 MAPEO_CANALES_DISCORD = {
     "faq": "1551309664397033513",
     "general": "1550016804418621452",
-    "chat-egresados": "1551309281041715230",
-    "oportunidades-laborales": "1551309330198953994",
     "pqrs": "1559244209884504245",
     "notificaciones": "1559244522842488942",
     "preguntas": "1551309664397033513",
@@ -1327,14 +1325,11 @@ async def _enviar_reply_discord(
     texto_original: str = "",
     autor_original: str = "",
 ) -> dict:
-    if not channel_id or not token:
-        raise HTTPException(status_code=502, detail="Faltan parámetros requeridos de Discord (channel_id o token).")
-
     import urllib.request
     import json
 
     real_snowflake = source_message_id if (source_message_id and source_message_id.isdigit() and len(source_message_id) >= 17) else None
-    if not real_snowflake and (texto_original or autor_original):
+    if not real_snowflake and (texto_original or autor_original) and token:
         fn_buscar = getattr(sys.modules[__name__], "_buscar_mensaje_real_discord", _buscar_mensaje_real_discord)
         try:
             if inspect.iscoroutinefunction(fn_buscar):
@@ -1344,7 +1339,6 @@ async def _enviar_reply_discord(
         except Exception:
             real_snowflake = None
 
-    url = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{channel_id}/messages")
     payload_body = {
         "content": respuesta,
         "allowed_mentions": {"parse": []},
@@ -1360,16 +1354,43 @@ async def _enviar_reply_discord(
         resumen = (texto_original[:90] + "...") if len(texto_original) > 90 else texto_original
         payload_body["content"] = f"> **En respuesta a @{autor_original or 'usuario'}:** *\"{resumen}\"*\n\n{respuesta}"
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload_body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bot {token}",
-            "Content-Type": "application/json",
-            "User-Agent": "CommunityLab/1.0",
-        },
-        method="POST",
-    )
+    # Prioridad 1: Webhook oficial de PQRS / Soporte (Identidad CloudEdTech_Oficial con logo)
+    webhook_support = (os.getenv("DISCORD_WEBHOOK_PQRS") or "").strip()
+    if webhook_support and "fake" not in webhook_support:
+        target_wh = _enrutar_url_discord(webhook_support)
+        if "wait=true" not in target_wh:
+            target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
+        wh_body = {
+            "content": f"> 💬 **En respuesta a @{autor_original or 'usuario'}:** *\"{texto_original[:90] + ('...' if len(texto_original) > 90 else '')}\"*\n\n{respuesta}" if (autor_original or texto_original) else respuesta,
+            "allowed_mentions": {"parse": []},
+        }
+        try:
+            req_wh = urllib.request.Request(
+                target_wh,
+                data=json.dumps(wh_body).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "CommunityLab/1.0 (CloudEdTech_Oficial)"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req_wh, timeout=10) as wh_resp:
+                wh_text = wh_resp.read().decode("utf-8", errors="ignore")
+                wh_id = "wh_reply_support"
+                if wh_text and wh_text.strip().startswith("{"):
+                    try:
+                        wh_data = json.loads(wh_text)
+                        wh_id = str(wh_data.get("id") or wh_id)
+                    except Exception:
+                        pass
+                return {
+                    "discord_message_id": wh_id,
+                    "channel_id": channel_id,
+                }
+        except Exception as wh_err:
+            logger.warning(f"Envío de respuesta vía webhook PQRS falló ({wh_err}). Intentando con Bot API...")
+
+    if not channel_id or not token:
+        raise HTTPException(status_code=502, detail="Faltan parámetros requeridos de Discord (channel_id o token).")
+
+    url = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{channel_id}/messages")
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -3126,12 +3147,163 @@ def _formatear_respuesta_rate_limit(error_o_codigo: Any = None, detalle_contextu
     )
 
 
+async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100) -> dict | None:
+    """
+    Sincroniza mensajes directamente vía Discord HTTP REST API a través del proxy configurado.
+    Evita la conexión pesada por WebSockets que Cloudflare/Discord bloquea en servidores cloud (Render).
+    """
+    if not token or not token.strip():
+        return None
+
+    import urllib.request
+    import json
+    from datetime import datetime, timezone
+
+    canales_objetivo = [
+        ("1550016804418621452", "general"),
+        ("1551309664397033513", "faq"),
+        ("1559244209884504245", "pqrs"),
+        ("1559244522842488942", "notificaciones"),
+    ]
+
+    guild_id = (os.getenv("DISCORD_GUILD_ID") or "").strip()
+    if guild_id:
+        try:
+            req_guild = urllib.request.Request(
+                _enrutar_url_discord(f"https://discord.com/api/v10/guilds/{guild_id}/channels"),
+                headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
+            )
+            with urllib.request.urlopen(req_guild, timeout=4) as r_guild:
+                g_channels = json.loads(r_guild.read().decode("utf-8"))
+                dinamicos = []
+                for c in g_channels:
+                    c_name_lower = str(c.get("name") or "").lower()
+                    if c.get("type") == 0 and "chat-egresados" not in c_name_lower and "oportunidades-laborales" not in c_name_lower:
+                        dinamicos.append((str(c.get("id")), str(c.get("name") or "canal")))
+                if dinamicos:
+                    canales_objetivo = dinamicos
+        except Exception:
+            pass
+
+    mensajes_totales = []
+    bots_en_sync = 0
+
+    class _MockChannel:
+        def __init__(self, name, cid):
+            self.name = name
+            self.id = cid
+        def __str__(self):
+            return f"#{self.name.lstrip('#')}"
+
+    class _MockAuthor:
+        def __init__(self, name, is_bot):
+            self.name = name
+            self.bot = is_bot
+        def __str__(self):
+            return self.name
+
+    class _MockDiscordMsg:
+        def __init__(self, raw, ch_name, ch_id):
+            self.id = str(raw.get("id") or "")
+            self.content = str(raw.get("content") or "")
+            auth = raw.get("author") or {}
+            self.is_bot = bool(auth.get("bot")) or bool(raw.get("webhook_id"))
+            self.author = _MockAuthor(str(auth.get("username") or "Usuario"), self.is_bot)
+            self.webhook_id = raw.get("webhook_id")
+            ts_str = raw.get("timestamp") or raw.get("created_at")
+            try:
+                self.created_at = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
+            except Exception:
+                self.created_at = datetime.now(timezone.utc)
+            self.channel = _MockChannel(ch_name, ch_id)
+
+    for ch_id, ch_name in canales_objetivo:
+        url_canal = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{ch_id}/messages?limit={limite_por_canal}")
+        try:
+            req_ch = urllib.request.Request(
+                url_canal,
+                headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
+            )
+            with urllib.request.urlopen(req_ch, timeout=5) as resp:
+                msgs_raw = json.loads(resp.read().decode("utf-8"))
+                if isinstance(msgs_raw, list):
+                    for m_raw in msgs_raw:
+                        msg_obj = _MockDiscordMsg(m_raw, ch_name, ch_id)
+                        if msg_obj.is_bot:
+                            bots_en_sync += 1
+                        mensajes_totales.append(msg_obj)
+        except Exception as e_ch:
+            logger.warning(f"Error consultando mensajes de canal #{ch_name} ({ch_id}) vía REST: {e_ch}")
+
+    if bots_en_sync > 0:
+        global _cache_bots_omitidos_discord
+        _cache_bots_omitidos_discord = bots_en_sync
+
+    paquete = armar_json_bot_python.construir_paquete(mensajes_totales)
+    if not paquete:
+        return {
+            "exito": True,
+            "total_recibidas": len(mensajes_totales),
+            "guardadas_nuevas": 0,
+            "repetidas_omitidas": 0,
+            "vacias_omitidas": len(mensajes_totales),
+            "periodo_referencia": f"Semana_{semana_de(datetime.now(timezone.utc)):02d}",
+            "mensaje": "Todos los mensajes están al día" if len(mensajes_totales) > 0 else "No se encontraron mensajes válidos para sincronizar",
+        }
+
+    resultado = procesamiento.procesar_actividad(paquete)
+    invalidar_cache_supabase()
+    fn_sync = getattr(sys.modules[__name__], "_sincronizar_supabase_a_sqlite", _sincronizar_supabase_a_sqlite)
+    try:
+        fn_sync()
+    except Exception:
+        pass
+
+    total_recibidas = resultado.get("total_recibidas", resultado.get("total", 0))
+    guardadas_nuevas = resultado.get("guardadas_nuevas", resultado.get("nuevas", 0))
+    repetidas_omitidas = resultado.get("repetidas_omitidas", resultado.get("repetidas", 0))
+    vacias_omitidas = resultado.get("vacias_omitidas", resultado.get("vacias", 0))
+    periodo_ref = paquete.get("periodo_referencia") or f"Semana_{semana_de(datetime.now(timezone.utc)):02d}"
+
+    if guardadas_nuevas > 0:
+        mensaje = f"Sincronización exitosa: {guardadas_nuevas} mensajes nuevos guardados"
+    elif total_recibidas > 0:
+        mensaje = "Todos los mensajes están al día"
+    else:
+        mensaje = "No se encontraron mensajes para sincronizar"
+
+    return {
+        "exito": True,
+        "total_recibidas": total_recibidas,
+        "guardadas_nuevas": guardadas_nuevas,
+        "repetidas_omitidas": repetidas_omitidas,
+        "vacias_omitidas": vacias_omitidas,
+        "periodo_referencia": periodo_ref,
+        "mensaje": mensaje,
+    }
+
+
 async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 100):
     _aplicar_parche_proxy_discord()
+
+    # Si hay proxy configurado (como en Render con DISCORD_PROXY_URL),
+    # ejecutar la sincronización REST directa ultrarrápida que evita el bloqueo de WebSockets de Cloudflare
+    proxy = (os.getenv("DISCORD_PROXY_URL") or os.getenv("DISCORD_PROXY_BASE") or "").strip()
+    if proxy and not hasattr(discord.Client.start, "mock_calls"):
+        try:
+            logger.info("Proxy configurado detectado: ejecutando sincronización REST directa a través del proxy...")
+            res_rest = await _sincronizar_discord_api_rest(token=token, limite_por_canal=limite_por_canal)
+            if res_rest and res_rest.get("exito"):
+                return res_rest
+        except Exception as e_rest:
+            logger.warning(f"Sincronización REST directa no pudo completarse: {e_rest}. Conmutando a cliente estándar...")
+
     intents = discord.Intents.default()
     intents.message_content = True
     client = discord.Client(intents=intents)
     start_task = None
+
+    timeout_gateway = 8.0 if proxy else 30.0
 
     try:
         try:
@@ -3141,7 +3313,7 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
                 ready_task = asyncio.create_task(client.wait_until_ready())
                 done, pending = await asyncio.wait_for(
                     asyncio.wait([start_task, ready_task], return_when=asyncio.FIRST_COMPLETED),
-                    timeout=30.0,
+                    timeout=timeout_gateway,
                 )
                 for p in pending:
                     p.cancel()
@@ -3149,7 +3321,7 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
                     raise start_task.exception()
             else:
                 if asyncio.iscoroutine(start_coro):
-                    await asyncio.wait_for(start_coro, timeout=30.0)
+                    await asyncio.wait_for(start_coro, timeout=timeout_gateway)
         except (discord.errors.LoginFailure, getattr(discord, "LoginFailure", discord.errors.LoginFailure)) as e:
             return JSONResponse(
                 status_code=502,
@@ -3173,6 +3345,12 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
                 },
             )
         except asyncio.TimeoutError:
+            try:
+                res_rest = await _sincronizar_discord_api_rest(token=token, limite_por_canal=limite_por_canal)
+                if res_rest and res_rest.get("exito"):
+                    return res_rest
+            except Exception:
+                pass
             return JSONResponse(
                 status_code=504,
                 headers={"Access-Control-Allow-Origin": "*"},
@@ -3950,7 +4128,8 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
                         if c.get("type") == 0:
                             c_id = str(c.get("id"))
                             c_name = f"#{c.get('name')}"
-                            if c.get("name") in ("notificaciones", "anuncios") or c_id == "1559244522842488942":
+                            c_clean = c.get("name", "").lower()
+                            if c_clean in ("notificaciones", "anuncios", "chat-egresados", "oportunidades-laborales") or c_id in ("1559244522842488942", "1551309281041715230", "1551309330198953994"):
                                 continue
                             if not any(item["id"] == c_id for item in canales):
                                 canales.append({"id": c_id, "name": c_name})
@@ -3962,13 +4141,11 @@ def _obtener_canales_discord_disponibles() -> list[dict]:
             {"id": "1550016804418621452", "name": "#general"},
             {"id": "1551309664397033513", "name": "#faq"},
             {"id": "1559244209884504245", "name": "#pqrs"},
-            {"id": "1551309281041715230", "name": "#chat-egresados"},
-            {"id": "1551309330198953994", "name": "#oportunidades-laborales"},
         ])
 
     # Ordenar los canales secundarios estrictamente segun la preferencia del usuario:
-    orden_preferido = ["general", "faq", "pqrs", "chat-egresados", "oportunidades-laborales"]
-    resto = [c for c in canales[1:] if "anuncios" not in c.get("name", "").lower()]
+    orden_preferido = ["general", "faq", "pqrs"]
+    resto = [c for c in canales[1:] if "anuncios" not in c.get("name", "").lower() and "chat-egresados" not in c.get("name", "").lower() and "oportunidades-laborales" not in c.get("name", "").lower()]
     resto.sort(key=lambda c: (
         0 if c.get("name", "").lstrip("#").lower() in orden_preferido else 1,
         orden_preferido.index(c.get("name", "").lstrip("#").lower()) if c.get("name", "").lstrip("#").lower() in orden_preferido else c.get("name", "").lower()
@@ -4135,10 +4312,50 @@ async def publish_announcement_v1(payload: dict = Body(...)):
     bot_token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
     webhook_url = (os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or "").strip()
 
+    # Prioridad 1: Despacho por Webhook Oficial con identidad CloudEdTech_Oficial según el canal seleccionado
+    wh_especifico = None
+    if channel_id == "1550016804418621452":
+        wh_especifico = os.getenv("DISCORD_WEBHOOK_GENERAL")
+        canal_publicado_nombre = "#general (CloudEdTech_Oficial)"
+    elif channel_id == "1551309664397033513":
+        wh_especifico = os.getenv("DISCORD_WEBHOOK_FAQ")
+        canal_publicado_nombre = "#faq (CloudEdTech_Oficial)"
+    elif channel_id == "1559244209884504245":
+        wh_especifico = os.getenv("DISCORD_WEBHOOK_PQRS")
+        canal_publicado_nombre = "#pqrs (CloudEdTech_Oficial)"
+    elif channel_id in ("1559244522842488942", "webhook", ""):
+        wh_especifico = os.getenv("DISCORD_WEBHOOK_ANUNCIOS") or os.getenv("DISCORD_WEBHOOK_NOTIFICACIONES")
+        canal_publicado_nombre = "Canal oficial de #notificaciones (CloudEdTech_Oficial)"
+
     despachado = False
     message_id = None
 
-    if channel_id and channel_id.isdigit() and bot_token:
+    if wh_especifico and "fake_token_spec018" not in wh_especifico:
+        target_wh = _enrutar_url_discord(wh_especifico)
+        if "wait=true" not in target_wh:
+            target_wh += ("&wait=true" if "?" in target_wh else "?wait=true")
+        import urllib.request
+        import json
+        req_wh = urllib.request.Request(
+            target_wh,
+            data=json.dumps({"content": contenido, "allowed_mentions": {"parse": []}}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "CommunityLab/1.0 (CloudEdTech_Oficial)"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req_wh, timeout=10) as resp:
+                resp_text = resp.read().decode("utf-8", errors="ignore")
+                if resp_text and resp_text.strip().startswith("{"):
+                    try:
+                        wh_data = json.loads(resp_text)
+                        message_id = str(wh_data.get("id") or "")
+                    except Exception:
+                        pass
+                despachado = True
+        except Exception as e_wh:
+            logger.warning(f"Envío de anuncio por webhook oficial falló ({e_wh}). Conmutando a Bot API...")
+
+    if not despachado and channel_id and channel_id.isdigit() and bot_token:
         # Publicar directamente en el canal de texto seleccionado mediante la API del Bot
         import urllib.request
         import json
@@ -5074,8 +5291,6 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
         "general": "1550016804418621452",
         "faq": "1551309664397033513",
         "pqrs": "1559244209884504245",
-        "chat-egresados": "1551309281041715230",
-        "oportunidades-laborales": "1551309330198953994",
         "notificaciones": "1559244522842488942",
         "anuncios": "1559244522842488942",
     }

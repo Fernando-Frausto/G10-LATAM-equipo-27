@@ -477,8 +477,6 @@ function ContentStudio() {
       'general',
       'faq',
       'pqrs',
-      'chat-egresados',
-      'oportunidades-laborales',
     ],
     [],
   )
@@ -492,10 +490,11 @@ function ContentStudio() {
             { id: '1550016804418621452', name: '#general' },
             { id: '1551309664397033513', name: '#faq' },
             { id: '1559244209884504245', name: '#pqrs' },
-            { id: '1551309281041715230', name: '#chat-egresados' },
-            { id: '1551309330198953994', name: '#oportunidades-laborales' },
           ]
-    ).filter((ch) => !ch.name.toLowerCase().includes('anuncios'))
+    ).filter((ch) => {
+      const clean = ch.name.toLowerCase()
+      return !clean.includes('anuncios') && !clean.includes('chat-egresados') && !clean.includes('oportunidades-laborales')
+    })
 
     const rawNotif =
       rawList.find(
@@ -2250,8 +2249,6 @@ function ContentStudio() {
             <option value="faq">#faq</option>
             <option value="notificaciones">#notificaciones</option>
             <option value="pqrs">#pqrs</option>
-            <option value="chat-egresados">#chat-egresados</option>
-            <option value="oportunidades-laborales">#oportunidades-laborales</option>
           </select>
         </div>
 

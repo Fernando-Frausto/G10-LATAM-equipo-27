@@ -8,8 +8,6 @@ const CANONICAL_CHANNELS = [
   '#general',
   '#faq',
   '#pqrs',
-  '#chat-egresados',
-  '#oportunidades-laborales',
 ]
 
 function ChannelParticipation() {
@@ -17,8 +15,6 @@ function ChannelParticipation() {
     { channel: '#general', name: 'general', count: 0, percentage: 0.0 },
     { channel: '#faq', name: 'faq', count: 0, percentage: 0.0 },
     { channel: '#pqrs', name: 'pqrs', count: 0, percentage: 0.0 },
-    { channel: '#chat-egresados', name: 'chat-egresados', count: 0, percentage: 0.0 },
-    { channel: '#oportunidades-laborales', name: 'oportunidades-laborales', count: 0, percentage: 0.0 },
   ])
 
   useEffect(() => {

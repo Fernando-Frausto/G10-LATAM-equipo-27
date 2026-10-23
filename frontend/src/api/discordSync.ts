@@ -42,6 +42,7 @@ export interface DiscordRecoverResponse {
  */
 export async function syncDiscord(
   paramsOrLimit?: number | DiscordSyncParams,
+  options?: { signal?: AbortSignal },
 ): Promise<DiscordSyncResponse> {
   const limite =
     typeof paramsOrLimit === 'number'
@@ -56,6 +57,7 @@ export async function syncDiscord(
   return (await apiRequest('/api/v1/discord/sync', {
     method: 'POST',
     body,
+    signal: options?.signal,
   })) as DiscordSyncResponse
 }
 
