@@ -7,8 +7,8 @@ import {
     WandSparkles,
     X,
 } from 'lucide-react'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect, useState, type ReactNode } from 'react'
+import { NavLink, useNavigate } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { clearSession, getUser } from '../api/session'
 
 interface SidebarItemProps {
@@ -22,22 +22,6 @@ interface SidebarItemProps {
 interface SidebarProps {
     isOpen?: boolean
     onClose?: () => void
-}
-
-interface SidebarMessagesApiResponse {
-    total?: number
-    messages?: Array<{
-        message?: {
-            interaction_id?: number
-        }
-        analysis?: {
-            workflow_stage?: string
-            relevance?: number
-            curation_status?: string
-            is_published?: boolean
-            published_platforms?: string[]
-        }
-    }>
 }
 
 /**
@@ -169,70 +153,7 @@ function Sidebar({
     onClose,
 }: SidebarProps) {
     const navigate = useNavigate()
-    const location = useLocation()
     const user = getUser()
-
-    const [ingestionCount, setIngestionCount] = useState<number | null>(null)
-    const [readyForCopyCount, setReadyForCopyCount] = useState<number | null>(null)
-
-    useEffect(() => {
-        const controller = new AbortController()
-
-        const loadSidebarCounts = async () => {
-            try {
-                const motorApiUrl = (
-                    import.meta.env.VITE_API_URL ||
-                    import.meta.env.VITE_MOTOR_API_URL ||
-                    'http://127.0.0.1:8002'
-                ).replace(/\/$/, '')
-
-                const response = await fetch(
-                    `${motorApiUrl}/api/community/messages?limit=500`,
-                    { signal: controller.signal },
-                )
-
-                if (!response.ok) return
-
-                const data: SidebarMessagesApiResponse = await response.json()
-                if (controller.signal.aborted) return
-
-                const totalMessages =
-                    typeof data.total === 'number' && Number.isFinite(data.total)
-                        ? data.total
-                        : Array.isArray(data.messages)
-                        ? data.messages.length
-                        : null
-
-                const readyCount = Array.isArray(data.messages)
-                    ? data.messages.filter((item) => {
-                          const analysis = item?.analysis
-                          if (!analysis) return false
-                          const relevance = Number(analysis.relevance ?? 0)
-                          const curation_status = analysis.curation_status
-                          const is_published = Boolean(analysis.is_published)
-                          const has_published_platforms =
-                              Array.isArray(analysis.published_platforms) &&
-                              analysis.published_platforms.length > 0
-                          return (
-                              relevance >= 70 &&
-                              curation_status !== 'discarded' &&
-                              !is_published &&
-                              !has_published_platforms
-                          )
-                      }).length
-                    : null
-
-                setIngestionCount(totalMessages)
-                setReadyForCopyCount(readyCount)
-            } catch {
-                /* Degradación limpia y silenciosa sin romper la navegación */
-            }
-        }
-
-        void loadSidebarCounts()
-
-        return () => controller.abort()
-    }, [location.pathname])
 
     const roleLabels: Record<string, string> = {
         admin: 'Administrador',
@@ -334,7 +255,6 @@ function Sidebar({
                             to="/messages"
                             icon={<MessageSquare size={18} />}
                             label="Ingesta de mensajes"
-                            badge={ingestionCount}
                             onNavigate={handleNavigate}
                         />
 
@@ -349,7 +269,6 @@ function Sidebar({
                             to="/content"
                             icon={<WandSparkles size={18} />}
                             label="Redacción de contenidos"
-                            badge={readyForCopyCount}
                             onNavigate={handleNavigate}
                         />
 
