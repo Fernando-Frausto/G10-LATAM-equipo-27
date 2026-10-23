@@ -3908,3 +3908,364 @@ def test_discord_sync_asincrono_responde_inmediatamente_sin_bloqueo(monkeypatch)
     assert data.get("exito") is True
     assert data.get("asincrono") is True
     assert "segundo plano" in data.get("mensaje", "").lower()
+
+
+# ==============================================================================
+# Spec 021: Optimización de Sincronización Discord de Alta Velocidad (Fase Red TDD)
+# ==============================================================================
+
+def test_spec021_discord_sync_omite_consulta_guild_y_usa_canales_canonicos(monkeypatch):
+    """
+    Spec 021 - RF-01, RF-02:
+    Valida que _sincronizar_discord_api_rest NO invoque la ruta /guilds/{id}/channels
+    y consulte directamente los 4 canales canónicos autorizados, incluso cuando
+    DISCORD_GUILD_ID está configurado.
+    """
+    import asyncio
+    import json
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "123456789012345678")
+    monkeypatch.setenv("DISCORD_CHANNEL_GENERAL", "1550016804418621452")
+    monkeypatch.setenv("DISCORD_CHANNEL_FAQ", "1551309664397033513")
+    monkeypatch.setenv("DISCORD_CHANNEL_PQRS", "1559244209884504245")
+    monkeypatch.setenv("DISCORD_CHANNEL_NOTIFICACIONES", "1559244522842488942")
+
+    urls_solicitadas = []
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        urls_solicitadas.append(url)
+        resp = MagicMock()
+        resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data=None):
+            self._data = data if data is not None else []
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        urls_solicitadas.append(str(url))
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    # Aserción 1: NUNCA debe consultar /guilds/{id}/channels
+    assert not any("/guilds/" in u for u in urls_solicitadas), (
+        f"Se detectó consulta indebida a la ruta de guild: {urls_solicitadas}"
+    )
+
+    # Aserción 2: Debe consultar directamente los 4 canales canónicos
+    canales_esperados = {"1550016804418621452", "1551309664397033513", "1559244209884504245", "1559244522842488942"}
+    canales_consultados = {
+        cid for cid in canales_esperados
+        if any(f"/channels/{cid}/messages" in u for u in urls_solicitadas)
+    }
+    assert canales_consultados == canales_esperados, (
+        f"No se consultaron todos los canales canónicos. Esperados: {canales_esperados}, Encontrados: {canales_consultados}"
+    )
+
+
+def test_spec021_discord_sync_persiste_directo_en_sqlite_sin_bloqueo_supabase(monkeypatch):
+    """
+    Spec 021 - RF-01, RF-03:
+    Valida que al sincronizar mensajes nuevos, estos se escriban directamente en la tabla
+    interacciones de SQLite local y que _sincronizar_supabase_a_sqlite NO sea ejecutado
+    en la ruta crítica síncrona.
+    """
+    import asyncio
+    import json
+    import sqlite3
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+    mock_sync_supabase = MagicMock()
+    monkeypatch.setattr(puente_motor_ia, "_sincronizar_supabase_a_sqlite", mock_sync_supabase)
+
+    msg_id = "msg_spec021_directo_001"
+    msg_raw = {
+        "id": msg_id,
+        "content": "Consulta técnica sobre despliegue en Render y FastAPI",
+        "author": {"id": "usr_99", "username": "estudiante_render", "bot": False},
+        "timestamp": "2026-10-23T11:00:00+00:00",
+        "channel_id": "1550016804418621452",
+    }
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        resp = MagicMock()
+        if "1550016804418621452" in url:
+            resp.read.return_value = json.dumps([msg_raw]).encode("utf-8")
+        else:
+            resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        if "1550016804418621452" in str(url):
+            return MockResp([msg_raw])
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    # Aserción 1: Supabase sync no debe llamarse en la ruta crítica
+    assert not mock_sync_supabase.called, (
+        "_sincronizar_supabase_a_sqlite no debe ser ejecutado en la ruta crítica síncrona"
+    )
+
+    # Aserción 2: El mensaje debe estar guardado directamente en la base de datos SQLite local
+    conn = sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD)
+    cursor = conn.cursor()
+    cursor.execute("SELECT texto, autor, message_id FROM interacciones WHERE message_id = ?", (msg_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    assert row is not None, f"El mensaje con message_id={msg_id} no fue insertado directamente en SQLite"
+    assert row[1] == "estudiante_render"
+    assert "Consulta técnica sobre despliegue" in row[0]
+    assert resultado.get("guardadas_nuevas") == 1
+
+
+def test_spec021_discord_sync_tolerancia_fallo_parcial_canal(monkeypatch):
+    """
+    Spec 021 - RF-05:
+    Valida que si 1 de los 4 canales genera un fallo de red o timeout,
+    los 3 canales restantes se procesen exitosamente y la respuesta reporte
+    canales_consultados=4, canales_exitosos=3 y '(3 de 4 canales exitosos)'.
+    """
+    import asyncio
+    import json
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "1550016804418621452" in url:
+            raise urllib.error.URLError("Timeout simulado en canal general")
+        resp = MagicMock()
+        resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        if "1550016804418621452" in str(url):
+            raise requests.exceptions.Timeout("Timeout simulado en canal general")
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    assert resultado is not None, "La sincronización debe retornar resultado aun con fallo parcial"
+    assert resultado.get("exito") is True
+    assert resultado.get("canales_consultados") == 4, (
+        f"Se esperaba canales_consultados=4, se obtuvo: {resultado.get('canales_consultados')}"
+    )
+    assert resultado.get("canales_exitosos") == 3, (
+        f"Se esperaba canales_exitosos=3, se obtuvo: {resultado.get('canales_exitosos')}"
+    )
+    assert "(3 de 4 canales exitosos)" in resultado.get("mensaje", ""), (
+        f"El mensaje debe contener '(3 de 4 canales exitosos)'. Mensaje obtenido: {resultado.get('mensaje')}"
+    )
+
+
+def test_spec021_discord_sync_coherencia_contable_y_bots(monkeypatch):
+    """
+    Spec 021 - RF-01, RF-06:
+    Valida que los mensajes de bots o webhooks sean omitidos de la tabla interacciones,
+    sumados a _cache_bots_omitidos_discord y que se cumpla rigurosamente la ecuación:
+    total_recibidas == guardadas_nuevas + repetidas_omitidas + vacias_omitidas.
+    """
+    import asyncio
+    import json
+    import sqlite3
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+
+    # 1. Pre-insertar mensaje en SQLite para simular uno repetido
+    conn = sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO interacciones
+           (hash, canal, autor, texto, message_id, creado_en, enviado_en, estado, estado_curaduria, etapa_flujo, etapa, tipo, origen_comunidad, periodo_referencia)
+           VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'), 'pendiente', 'pending', 'ingesta', 'ingesta', 'mensaje', 'Discord', 'Semana_43')""",
+        ("hash_repetido_spec021_001", "#general", "usuario_antiguo", "Mensaje ya existente", "msg_repetido_spec021",)
+    )
+    conn.commit()
+    conn.close()
+
+    # 2. Definir 5 mensajes de prueba:
+    mensajes_prueba = [
+        {"id": "bot_msg_1", "content": "Anuncio de bot", "author": {"id": "b1", "username": "BotHelper", "bot": True}, "timestamp": "2026-10-23T10:00:00Z"},
+        {"id": "wh_msg_2", "content": "Noticia webhook", "author": {"id": "w1", "username": "GithubHook"}, "webhook_id": "wh_12345", "timestamp": "2026-10-23T10:01:00Z"},
+        {"id": "nuevo_msg_3", "content": "Pregunta de un estudiante nuevo sobre Python", "author": {"id": "u1", "username": "estudiante_nuevo", "bot": False}, "timestamp": "2026-10-23T10:02:00Z"},
+        {"id": "msg_repetido_spec021", "content": "Mensaje ya existente", "author": {"id": "u2", "username": "usuario_antiguo", "bot": False}, "timestamp": "2026-10-23T10:03:00Z"},
+        {"id": "vacio_msg_5", "content": "   ", "author": {"id": "u3", "username": "usuario_espacios", "bot": False}, "timestamp": "2026-10-23T10:04:00Z"},
+    ]
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        resp = MagicMock()
+        if "1550016804418621452" in url:
+            resp.read.return_value = json.dumps(mensajes_prueba).encode("utf-8")
+        else:
+            resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        if "1550016804418621452" in str(url):
+            return MockResp(mensajes_prueba)
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    puente_motor_ia._cache_bots_omitidos_discord = 0
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    assert resultado is not None
+    assert resultado.get("exito") is True
+
+    # 3. Validar contabilidad rigurosa
+    total_recibidas = resultado.get("total_recibidas", 0)
+    guardadas_nuevas = resultado.get("guardadas_nuevas", 0)
+    repetidas_omitidas = resultado.get("repetidas_omitidas", 0)
+    vacias_omitidas = resultado.get("vacias_omitidas", 0)
+
+    assert total_recibidas == guardadas_nuevas + repetidas_omitidas + vacias_omitidas, (
+        f"Incoherencia contable: total_recibidas ({total_recibidas}) != "
+        f"guardadas_nuevas ({guardadas_nuevas}) + repetidas_omitidas ({repetidas_omitidas}) + vacias_omitidas ({vacias_omitidas})"
+    )
+    assert guardadas_nuevas == 1, f"Se esperaba 1 guardada nueva, se obtuvo {guardadas_nuevas}"
+    assert repetidas_omitidas == 1, f"Se esperaba 1 repetida omitida, se obtuvo {repetidas_omitidas}"
+    assert vacias_omitidas == 1, f"Se esperaba 1 vacía omitida, se obtuvo {vacias_omitidas}"
+    assert total_recibidas == 3, f"Se esperaba 3 mensajes recibidos a nivel humano, se obtuvo {total_recibidas}"
+
+    # 4. Validar telemetría de bots (al menos 2 omitidos: bot y webhook)
+    assert puente_motor_ia._cache_bots_omitidos_discord >= 2, (
+        f"Se esperaba _cache_bots_omitidos_discord >= 2, se obtuvo {puente_motor_ia._cache_bots_omitidos_discord}"
+    )
+
+    # 5. Validar que bots, webhooks y vacíos NO estén en la tabla interacciones de SQLite
+    conn = sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD)
+    cursor = conn.cursor()
+    cursor.execute("SELECT message_id FROM interacciones WHERE message_id IN ('bot_msg_1', 'wh_msg_2', 'vacio_msg_5')")
+    filas_no_deseadas = cursor.fetchall()
+    assert len(filas_no_deseadas) == 0, (
+        f"Se encontraron mensajes de bots/webhooks/vacíos indebidamente insertados en interacciones: {filas_no_deseadas}"
+    )
+
+    cursor.execute("SELECT message_id, texto FROM interacciones WHERE message_id = 'nuevo_msg_3'")
+    fila_nueva = cursor.fetchone()
+    conn.close()
+    assert fila_nueva is not None, "El mensaje humano nuevo 'nuevo_msg_3' debe estar persistido en SQLite"
+
+
+def test_spec021_discord_sync_sesion_http_keep_alive_configurada():
+    """
+    Spec 021 - RF-02:
+    Valida que _obtener_discord_http_session() retorne una sesión de requests.Session
+    configurada con HTTPAdapter de pool_connections=10 y pool_maxsize=10 para Keep-Alive persistente.
+    """
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    assert hasattr(puente_motor_ia, "_obtener_discord_http_session"), (
+        "puente_motor_ia debe implementar la función _obtener_discord_http_session"
+    )
+
+    sesion = puente_motor_ia._obtener_discord_http_session()
+    assert isinstance(sesion, requests.Session), "Debe retornar una instancia de requests.Session"
+
+    adapter_https = sesion.adapters.get("https://")
+    adapter_http = sesion.adapters.get("http://")
+
+    assert isinstance(adapter_https, HTTPAdapter), "Debe tener HTTPAdapter configurado para https://"
+    assert isinstance(adapter_http, HTTPAdapter), "Debe tener HTTPAdapter configurado para http://"
+
+    assert adapter_https._pool_connections == 10, (
+        f"pool_connections para https:// debe ser 10, obtenido: {adapter_https._pool_connections}"
+    )
+    assert adapter_https._pool_maxsize == 10, (
+        f"pool_maxsize para https:// debe ser 10, obtenido: {adapter_https._pool_maxsize}"
+    )
+    assert adapter_http._pool_connections == 10, (
+        f"pool_connections para http:// debe ser 10, obtenido: {adapter_http._pool_connections}"
+    )
+    assert adapter_http._pool_maxsize == 10, (
+        f"pool_maxsize para http:// debe ser 10, obtenido: {adapter_http._pool_maxsize}"
+    )
+

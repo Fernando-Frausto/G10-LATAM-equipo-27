@@ -11,6 +11,8 @@ export interface DiscordSyncResponse {
   guardadas_nuevas: number
   repetidas_omitidas: number
   vacias_omitidas: number
+  canales_consultados?: number
+  canales_exitosos?: number
   periodo_referencia: string
   mensaje: string
   detail?: string
@@ -55,7 +57,7 @@ export async function syncDiscord(
   const asincrono =
     typeof paramsOrLimit === 'object' && paramsOrLimit?.asincrono !== undefined
       ? paramsOrLimit.asincrono
-      : true
+      : false
 
   const body = JSON.stringify({
     ...(limite !== undefined ? { limite_por_canal: limite } : {}),

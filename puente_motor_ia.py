@@ -278,6 +278,9 @@ def _asegurar_esquema_sqlite():
             conn.execute("ALTER TABLE interacciones ADD COLUMN etapa_flujo TEXT DEFAULT 'ingesta'")
         if "etapa" not in cols_int:
             conn.execute("ALTER TABLE interacciones ADD COLUMN etapa TEXT DEFAULT 'ingesta'")
+        for col_name in ("channel_id", "message_id", "author_id"):
+            if col_name not in cols_int:
+                conn.execute(f"ALTER TABLE interacciones ADD COLUMN {col_name} TEXT DEFAULT ''")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS respuestas_quejas_discord (
@@ -3147,145 +3150,221 @@ def _formatear_respuesta_rate_limit(error_o_codigo: Any = None, detalle_contextu
     )
 
 
+_discord_http_session: Any = None
+
+
+def _obtener_discord_http_session():
+    """
+    Singleton persistente que retorna una sesión de requests.Session con adaptador HTTP
+    configurado para Keep-Alive y pool de 10 conexiones (Spec 021 - RF-02).
+    """
+    global _discord_http_session
+    if _discord_http_session is None:
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util import Retry
+
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=10,
+            max_retries=Retry(total=1, backoff_factor=0.2, status_forcelist=[502, 503, 504]),
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        _discord_http_session = session
+    return _discord_http_session
+
+
 async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100) -> dict | None:
     """
-    Sincroniza mensajes directamente vía Discord HTTP REST API a través del proxy configurado.
-    Evita la conexión pesada por WebSockets que Cloudflare/Discord bloquea en servidores cloud (Render).
+    Sincroniza mensajes directamente vía Discord HTTP REST API a través del proxy configurado
+    con Keep-Alive persistente y persistencia atómica directa en SQLite local (Spec 021).
     """
     if not token or not token.strip():
         return None
 
-    import urllib.request
     import json
     from datetime import datetime, timezone
+    import sqlite3
+    import limpieza
 
     proxy_fallback = "https://discord-proxy-edtech.fraustojeovany.workers.dev"
     proxy_activo = (os.getenv("DISCORD_PROXY_URL") or os.getenv("DISCORD_PROXY_BASE") or proxy_fallback).strip().rstrip("/")
 
+    # Canales canónicos autorizados leídos de entorno con fallbacks oficiales (sin consultar guild)
     canales_objetivo = [
-        ("1550016804418621452", "general"),
-        ("1551309664397033513", "faq"),
-        ("1559244209884504245", "pqrs"),
-        ("1559244522842488942", "notificaciones"),
+        (os.getenv("DISCORD_CHANNEL_GENERAL") or "1550016804418621452", "general"),
+        (os.getenv("DISCORD_CHANNEL_FAQ") or "1551309664397033513", "faq"),
+        (os.getenv("DISCORD_CHANNEL_PQRS") or "1559244209884504245", "pqrs"),
+        (os.getenv("DISCORD_CHANNEL_NOTIFICACIONES") or "1559244522842488942", "notificaciones"),
     ]
-
-    guild_id = (os.getenv("DISCORD_GUILD_ID") or "").strip()
-    if guild_id:
-        try:
-            url_guild = f"https://discord.com/api/v10/guilds/{guild_id}/channels"
-            if proxy_activo:
-                url_guild = url_guild.replace("https://discord.com", proxy_activo, 1)
-            req_guild = urllib.request.Request(
-                url_guild,
-                headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
-            )
-            with urllib.request.urlopen(req_guild, timeout=4) as r_guild:
-                g_channels = json.loads(r_guild.read().decode("utf-8"))
-                dinamicos = []
-                canales_permitidos = {"general", "faq", "pqrs", "notificaciones"}
-                for c in g_channels:
-                    c_name_lower = str(c.get("name") or "").lower().strip().lstrip("#")
-                    if c.get("type") == 0 and any(p in c_name_lower for p in canales_permitidos):
-                        dinamicos.append((str(c.get("id")), str(c.get("name") or "canal")))
-                if dinamicos:
-                    canales_objetivo = dinamicos
-        except Exception:
-            pass
-
-    mensajes_totales = []
-    bots_en_sync = 0
-
-    class _MockChannel:
-        def __init__(self, name, cid):
-            self.name = name
-            self.id = cid
-        def __str__(self):
-            return f"#{self.name.lstrip('#')}"
-
-    class _MockAuthor:
-        def __init__(self, name, is_bot):
-            self.name = name
-            self.bot = is_bot
-        def __str__(self):
-            return self.name
-
-    class _MockDiscordMsg:
-        def __init__(self, raw, ch_name, ch_id):
-            self.id = str(raw.get("id") or "")
-            self.content = str(raw.get("content") or "")
-            auth = raw.get("author") or {}
-            self.is_bot = bool(auth.get("bot")) or bool(raw.get("webhook_id"))
-            self.author = _MockAuthor(str(auth.get("username") or "Usuario"), self.is_bot)
-            self.webhook_id = raw.get("webhook_id")
-            ts_str = raw.get("timestamp") or raw.get("created_at")
-            try:
-                self.created_at = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
-            except Exception:
-                self.created_at = datetime.now(timezone.utc)
-            self.channel = _MockChannel(ch_name, ch_id)
 
     def _descargar_canal(ch_id: str, ch_name: str):
         url_base = f"https://discord.com/api/v10/channels/{ch_id}/messages?limit={limite_por_canal}"
         url_canal = url_base.replace("https://discord.com", proxy_activo, 1) if proxy_activo else _enrutar_url_discord(url_base)
+        session = _obtener_discord_http_session()
+        headers = {
+            "Authorization": f"Bot {token}",
+            "User-Agent": "CommunityLab/1.0",
+            "Accept": "application/json",
+        }
         try:
-            req_ch = urllib.request.Request(
-                url_canal,
-                headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
-            )
-            with urllib.request.urlopen(req_ch, timeout=5) as resp:
-                msgs_raw = json.loads(resp.read().decode("utf-8"))
-                if isinstance(msgs_raw, list):
-                    return (ch_id, ch_name, msgs_raw)
+            resp = session.get(url_canal, headers=headers, timeout=3.5)
+            if hasattr(resp, "raise_for_status"):
+                resp.raise_for_status()
+            msgs_raw = resp.json() if callable(getattr(resp, "json", None)) else []
+            if isinstance(msgs_raw, list):
+                return (ch_id, ch_name, msgs_raw, True)
+            return (ch_id, ch_name, [], True)
         except Exception as e_ch:
             logger.warning(f"Error consultando mensajes de canal #{ch_name} ({ch_id}) vía REST: {e_ch}")
-        return (ch_id, ch_name, [])
+            return (ch_id, ch_name, [], False)
 
+    canales_consultados = len(canales_objetivo)
     resultados_canales = await asyncio.gather(
         *[asyncio.to_thread(_descargar_canal, cid, cname) for cid, cname in canales_objetivo],
-        return_exceptions=True
+        return_exceptions=True,
     )
 
+    canales_exitosos = 0
+    mensajes_raw_por_canal = []
     for item in resultados_canales:
-        if isinstance(item, tuple) and len(item) == 3:
-            ch_id, ch_name, msgs_raw = item
-            for m_raw in msgs_raw:
-                msg_obj = _MockDiscordMsg(m_raw, ch_name, ch_id)
-                if msg_obj.is_bot:
-                    bots_en_sync += 1
-                mensajes_totales.append(msg_obj)
+        if isinstance(item, tuple):
+            if len(item) == 4:
+                ch_id, ch_name, msgs_raw, exito_canal = item
+                if exito_canal:
+                    canales_exitosos += 1
+                mensajes_raw_por_canal.append((ch_id, ch_name, msgs_raw))
+            elif len(item) == 3:
+                ch_id, ch_name, msgs_raw = item
+                canales_exitosos += 1
+                mensajes_raw_por_canal.append((ch_id, ch_name, msgs_raw))
+        else:
+            logger.warning(f"Excepción en descarga concurrente de canal: {item}")
 
-    if bots_en_sync > 0:
+    bots_detectados = 0
+    mensajes_humanos = []
+
+    for ch_id, ch_name, msgs_raw in mensajes_raw_por_canal:
+        for m_raw in msgs_raw:
+            auth = m_raw.get("author") or {}
+            is_bot = bool(auth.get("bot")) or bool(m_raw.get("webhook_id"))
+            if is_bot:
+                bots_detectados += 1
+            else:
+                mensajes_humanos.append((ch_id, ch_name, m_raw))
+
+    if bots_detectados > 0:
         global _cache_bots_omitidos_discord
-        _cache_bots_omitidos_discord = bots_en_sync
+        _cache_bots_omitidos_discord += bots_detectados
 
-    paquete = armar_json_bot_python.construir_paquete(mensajes_totales)
-    if not paquete:
-        return {
-            "exito": True,
-            "total_recibidas": len(mensajes_totales),
-            "guardadas_nuevas": 0,
-            "repetidas_omitidas": 0,
-            "vacias_omitidas": len(mensajes_totales),
-            "periodo_referencia": f"Semana_{semana_de(datetime.now(timezone.utc)):02d}",
-            "mensaje": "Todos los mensajes están al día" if len(mensajes_totales) > 0 else "No se encontraron mensajes válidos para sincronizar",
-        }
+    _asegurar_esquema_sqlite()
+    ahora_iso = a_utc_iso(datetime.now(timezone.utc))
+    periodo_por_defecto = f"Semana_{semana_de(datetime.now(timezone.utc)):02d}"
 
-    resultado = procesamiento.procesar_actividad(paquete)
-    invalidar_cache_supabase()
-    fn_sync = getattr(sys.modules[__name__], "_sincronizar_supabase_a_sqlite", _sincronizar_supabase_a_sqlite)
-    try:
-        fn_sync()
-    except Exception:
-        pass
+    guardadas_nuevas = 0
+    repetidas_omitidas = 0
+    vacias_omitidas = 0
+    total_recibidas = len(mensajes_humanos)
 
-    total_recibidas = resultado.get("total_recibidas", resultado.get("total", 0))
-    guardadas_nuevas = resultado.get("guardadas_nuevas", resultado.get("nuevas", 0))
-    repetidas_omitidas = resultado.get("repetidas_omitidas", resultado.get("repetidas", 0))
-    vacias_omitidas = resultado.get("vacias_omitidas", resultado.get("vacias", 0))
-    periodo_ref = paquete.get("periodo_referencia") or f"Semana_{semana_de(datetime.now(timezone.utc)):02d}"
+    paquete_nuevos_para_supabase = []
 
-    if guardadas_nuevas > 0:
-        mensaje = f"Sincronización exitosa: {guardadas_nuevas} mensajes nuevos guardados"
+    with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+        cursor = conn.cursor()
+        for ch_id, ch_name, m_raw in mensajes_humanos:
+            msg_id = str(m_raw.get("id") or "")
+            content_raw = str(m_raw.get("content") or "")
+            auth = m_raw.get("author") or {}
+            autor_nombre = str(auth.get("username") or "Usuario")
+            autor_id = str(auth.get("id") or "")
+
+            texto_limpio = limpieza.limpiar_texto(content_raw)
+            if not texto_limpio:
+                vacias_omitidas += 1
+                continue
+
+            canal_nombre = f"#{ch_name.lstrip('#')}"
+            origen = "Discord_Grupo_ONE_G10"
+            hash_msg = limpieza.calcular_hash(origen, canal_nombre, autor_nombre, texto_limpio)
+
+            ts_str = m_raw.get("timestamp") or m_raw.get("created_at")
+            if ts_str:
+                try:
+                    fecha_msg = a_utc_iso(datetime.fromisoformat(str(ts_str).replace("Z", "+00:00")))
+                except Exception:
+                    fecha_msg = ahora_iso
+            else:
+                fecha_msg = ahora_iso
+
+            periodo = periodo_de(fecha_msg, periodo_por_defecto)
+
+            # Idempotencia: Verificar existencia previa por hash o message_id
+            cursor.execute(
+                "SELECT id FROM interacciones WHERE hash = ? OR (message_id = ? AND message_id != '')",
+                (hash_msg, msg_id),
+            )
+            if cursor.fetchone():
+                repetidas_omitidas += 1
+                continue
+
+            # Inserción atómica directa en SQLite communitylab.db
+            cursor.execute(
+                """
+                INSERT INTO interacciones (
+                    hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                    texto, enviado_en, creado_en, channel_id, message_id, author_id,
+                    estado, estado_curaduria, etapa_flujo, etapa
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    hash_msg, origen, periodo, autor_nombre, canal_nombre, "mensaje",
+                    texto_limpio, fecha_msg, ahora_iso, str(ch_id), msg_id, autor_id,
+                    "pendiente", "pending", "ingesta", "ingesta",
+                ),
+            )
+            guardadas_nuevas += 1
+            paquete_nuevos_para_supabase.append({
+                "origen": origen,
+                "periodo": periodo,
+                "autor": autor_nombre,
+                "canal": canal_nombre,
+                "tipo": "mensaje",
+                "texto": texto_limpio,
+                "hash": hash_msg,
+                "fecha": fecha_msg,
+            })
+        conn.commit()
+
+    # Replicación remota a Supabase desacoplada en segundo plano
+    if paquete_nuevos_para_supabase:
+        def _replicar_a_supabase(items):
+            try:
+                for it in items:
+                    _base_datos_raiz.guardar_interaccion(
+                        origen=it["origen"],
+                        periodo=it["periodo"],
+                        autor=it["autor"],
+                        canal=it["canal"],
+                        tipo=it["tipo"],
+                        texto=it["texto"],
+                        hash_mensaje=it["hash"],
+                        enviado_en=it["fecha"],
+                    )
+                invalidar_cache_supabase()
+            except Exception as e_sup:
+                logger.warning(f"Replicación remota a Supabase en segundo plano completada con advertencia: {e_sup}")
+
+        try:
+            asyncio.create_task(asyncio.to_thread(_replicar_a_supabase, paquete_nuevos_para_supabase))
+        except Exception as e_task:
+            logger.warning(f"No se pudo crear tarea en segundo plano para replicar a Supabase: {e_task}")
+
+    # Formulación estructurada de telemetría y mensajes
+    if canales_exitosos < canales_consultados:
+        mensaje = f"Sincronización parcial: {guardadas_nuevas} mensajes nuevos guardados ({canales_exitosos} de {canales_consultados} canales exitosos)"
+    elif guardadas_nuevas > 0:
+        mensaje = f"Sincronización exitosa: {guardadas_nuevas} mensajes nuevos guardados (Nuevas: {guardadas_nuevas} | Omitidas: {repetidas_omitidas} | Total: {total_recibidas})"
     elif total_recibidas > 0:
         mensaje = "Todos los mensajes están al día"
     else:
@@ -3297,8 +3376,11 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
         "guardadas_nuevas": guardadas_nuevas,
         "repetidas_omitidas": repetidas_omitidas,
         "vacias_omitidas": vacias_omitidas,
-        "periodo_referencia": periodo_ref,
+        "canales_consultados": canales_consultados,
+        "canales_exitosos": canales_exitosos,
+        "periodo_referencia": periodo_por_defecto,
         "mensaje": mensaje,
+        "asincrono": False,
     }
 
 

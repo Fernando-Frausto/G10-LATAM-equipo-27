@@ -643,23 +643,17 @@ function Messages() {
         setIsSyncingDiscord(true)
         setSyncFeedbackMessage({
             type: 'warning',
-            text: '⚡ Comprobando mensajes de Discord en segundo plano...',
+            text: '⚡ Sincronizando mensajes con Discord...',
         })
 
         try {
-            const resp = await syncDiscord({ asincrono: true })
+            const resp = await syncDiscord({ asincrono: false })
             if (resp.exito) {
+                await loadMessages()
                 setSyncFeedbackMessage({
                     type: 'success',
-                    text: '✅ Comprobación iniciada en segundo plano. La bandeja se actualizará automáticamente.',
+                    text: `✅ ${resp.mensaje || `Sincronización exitosa: ${resp.guardadas_nuevas} mensajes nuevos guardados.`}`,
                 })
-                setTimeout(async () => {
-                    await loadMessages()
-                    setSyncFeedbackMessage({
-                        type: 'success',
-                        text: '✅ Bandeja al día con Discord.',
-                    })
-                }, 2000)
             } else {
                 setSyncFeedbackMessage({
                     type: 'warning',
@@ -668,11 +662,19 @@ function Messages() {
             }
         } catch (error) {
             const err = error as Error & { status?: number; codigoError?: string; name?: string }
-            const errMsg = err.message || 'Error al conectar con el servidor'
-            setSyncFeedbackMessage({
-                type: 'warning',
-                text: `Comprobación: ${errMsg}`,
-            })
+            const is409 = err.status === 409 || (err.message && err.message.toLowerCase().includes('en curso'))
+            if (is409) {
+                setSyncFeedbackMessage({
+                    type: 'warning',
+                    text: '⚡ Hay una sincronización en curso. Por favor espera unos instantes.',
+                })
+            } else {
+                const errMsg = err.message || 'Error al conectar con el servidor'
+                setSyncFeedbackMessage({
+                    type: 'warning',
+                    text: `Sincronización: ${errMsg}`,
+                })
+            }
         } finally {
             setIsSyncingDiscord(false)
         }
