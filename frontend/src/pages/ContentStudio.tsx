@@ -3537,106 +3537,122 @@ function ContentStudio() {
                 </button>
               </div>
             </div>
+
+            {/* Procesamiento Masivo con Gemma 4 para Baja Relevancia (< 35) (CommunityLab DS) */}
+            <section className="rounded-2xl border border-purple-200/90 bg-gradient-to-b from-white to-purple-50/20 p-4 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 border-b border-purple-100/80 pb-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-purple-100 text-purple-700">
+                    <Layers size={16} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-xs font-bold text-slate-900">
+                        Procesamiento Masivo de Baja Relevancia (&lt; 35)
+                      </h4>
+                      <span className="c-chip c-chip--purple text-[10px]">
+                        <Cpu size={10} className="shrink-0" />
+                        <span className="truncate">🤖 Modelo IA: {modelosUtilizados.masivo}</span>
+                      </span>
+                      <span
+                        className={`c-chip text-[10px] ${
+                          massQueueCount > 0 ? 'c-chip--purple font-bold' : ''
+                        }`}
+                        title="Cantidad de mensajes en cola pendientes con relevancia menor a 35"
+                      >
+                        <span>📥 {massQueueLoading ? 'Consultando...' : `Cola: ${massQueueCount} ${massQueueCount === 1 ? 'mensaje' : 'mensajes'}`}</span>
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-1">
+                      Filtra y despacha en bloque interacciones con relevancia menor a 35 mediante Google Gemma 4 con directivas concisas, liberando la mesa de trabajo principal.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                  <div className="flex items-center gap-1.5">
+                    <label htmlFor="mass-limit-input" className="text-[11px] font-semibold text-slate-600">
+                      Límite:
+                    </label>
+                    <input
+                      id="mass-limit-input"
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={massLimit}
+                      disabled={massProcessing || massQueueCount === 0}
+                      onChange={(e) => setMassLimit(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      className="w-12 rounded-lg border border-slate-200 bg-white px-1.5 py-1 text-center text-xs font-bold text-slate-700 outline-none focus:border-purple-400 disabled:bg-slate-50 disabled:text-slate-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={massProcessing || massQueueLoading || massQueueCount === 0}
+                    onClick={handleRunMassGemma}
+                    className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
+                    title={massQueueCount === 0 ? 'Sin mensajes en cola con relevancia menor a 35' : undefined}
+                  >
+                    <RotateCcw size={12} className={massProcessing ? 'animate-spin' : ''} />
+                    <span>
+                      {massProcessing
+                        ? 'Procesando...'
+                        : massQueueCount === 0
+                        ? 'Sin pendientes (< 35)'
+                        : '⚡ Procesar (< 35)'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {massError && (
+                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-medium text-rose-700">
+                  {massError}
+                </div>
+              )}
+
+              {massResult && (
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-2 text-center">
+                    <span className="text-[9px] font-bold uppercase text-purple-600">Estado</span>
+                    <p className="mt-0.5 text-xs font-bold text-slate-800">{massResult.status}</p>
+                  </div>
+                  <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-2 text-center">
+                    <span className="text-[9px] font-bold uppercase text-purple-600">Procesados</span>
+                    <p className="mt-0.5 text-xs font-bold text-purple-900">{massResult.procesados}</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-2 text-center">
+                    <span className="text-[9px] font-bold uppercase text-emerald-600">Publicados Directo</span>
+                    <p className="mt-0.5 text-xs font-bold text-emerald-700">{massResult.publicados_directo}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-center">
+                    <span className="text-[9px] font-bold uppercase text-slate-500">Descartados</span>
+                    <p className="mt-0.5 text-xs font-bold text-slate-700">{massResult.descartados}</p>
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
         </div>
 
-      {/* Procesamiento Masivo con Gemma 4 para Baja Relevancia (< 35) */}
-      <section className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
-        <div className="c-panel-head">
-          <div className="c-panel-head__main">
-            <div className="c-panel-head__icon bg-purple-100 text-purple-600">
-              <Layers size={16} />
-            </div>
+        {/* Flujo editorial directo (al pie de ambas columnas) */}
+        <section className="mt-4 rounded-xl border border-orange-100 bg-orange-50/40 p-3 sm:p-3.5 shadow-2xs">
+          <div className="flex items-start gap-2.5">
+            <Sparkles
+              size={16}
+              className="mt-0.5 shrink-0 text-orange-500"
+            />
 
-            <div className="c-panel-head__body">
-              <div className="c-panel-head__row">
-                <h3 className="c-panel-head__title">
-                  Procesamiento Masivo de Baja Relevancia (&lt; 35)
-                </h3>
+            <div>
+              <p className="text-xs font-bold text-slate-800">
+                Flujo editorial directo
+              </p>
 
-                <span className="c-chip c-chip--purple">
-                  <Cpu size={11} />
-                  <span>🤖 Modelo IA: {modelosUtilizados.masivo}</span>
-                </span>
-
-                <span
-                  className={`c-chip ${
-                    massQueueCount > 0 ? 'c-chip--purple font-bold' : ''
-                  }`}
-                  title="Cantidad de mensajes en cola pendientes con relevancia menor a 35"
-                >
-                  <span>📥 {massQueueLoading ? 'Consultando cola...' : `Cola: ${massQueueCount} ${massQueueCount === 1 ? 'mensaje' : 'mensajes'}`}</span>
-                </span>
-              </div>
-
-              <p className="c-panel-head__desc">
-                Filtra y despacha en bloque interacciones con relevancia menor a 35 mediante Google Gemma 4 con directivas concisas, liberando la mesa de trabajo principal.
+              <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
+                El contenido generado y personalizado aquí se guarda directamente en la base de datos de la plataforma. Puedes copiar los textos optimizados para LinkedIn y X para publicarlos en tus redes, mientras que las respuestas a quejas y soporte de Discord se envían en tiempo real con el bot oficial.
               </p>
             </div>
           </div>
-
-          <div className="c-panel-head__actions">
-            <div className="flex items-center gap-1.5">
-              <label htmlFor="mass-limit-input" className="text-xs font-semibold text-slate-600">
-                Límite:
-              </label>
-              <input
-                id="mass-limit-input"
-                type="number"
-                min={1}
-                max={50}
-                value={massLimit}
-                disabled={massProcessing || massQueueCount === 0}
-                onChange={(e) => setMassLimit(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                className="w-14 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs font-bold text-slate-700 outline-none focus:border-purple-400 disabled:bg-slate-50 disabled:text-slate-400"
-              />
-            </div>
-            <button
-              type="button"
-              disabled={massProcessing || massQueueLoading || massQueueCount === 0}
-              onClick={handleRunMassGemma}
-              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
-              title={massQueueCount === 0 ? 'Sin mensajes en cola con relevancia menor a 35' : undefined}
-            >
-              <RotateCcw size={13} className={massProcessing ? 'animate-spin' : ''} />
-              <span>
-                {massProcessing
-                  ? 'Procesando...'
-                  : massQueueCount === 0
-                  ? 'Sin pendientes (< 35)'
-                  : '⚡ Procesar (< 35)'}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {massError && (
-          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">
-            {massError}
-          </div>
-        )}
-
-        {massResult && (
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3 text-center">
-              <span className="text-[10px] font-bold uppercase text-purple-600">Estado</span>
-              <p className="mt-1 text-sm font-bold text-slate-800">{massResult.status}</p>
-            </div>
-            <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3 text-center">
-              <span className="text-[10px] font-bold uppercase text-purple-600">Procesados</span>
-              <p className="mt-1 text-sm font-bold text-purple-900">{massResult.procesados}</p>
-            </div>
-            <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 text-center">
-              <span className="text-[10px] font-bold uppercase text-emerald-600">Publicados Directo</span>
-              <p className="mt-1 text-sm font-bold text-emerald-700">{massResult.publicados_directo}</p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
-              <span className="text-[10px] font-bold uppercase text-slate-500">Descartados</span>
-              <p className="mt-1 text-sm font-bold text-slate-700">{massResult.descartados}</p>
-            </div>
-          </div>
-        )}
-      </section>
+        </section>
 
       {/* Modal de Mesa de Trabajo Multicanal (Redacción Individual o Paralela) */}
       <div
@@ -4317,26 +4333,6 @@ function ContentStudio() {
           </div>
         </div>
       )}
-
-      {/* Flujo editorial directo */}
-      <section className="mt-4 rounded-xl border border-orange-100 bg-orange-50/40 p-3 sm:p-3.5 shadow-2xs">
-        <div className="flex items-start gap-2.5">
-          <Sparkles
-            size={16}
-            className="mt-0.5 shrink-0 text-orange-500"
-          />
-
-          <div>
-            <p className="text-xs font-bold text-slate-800">
-              Flujo editorial directo
-            </p>
-
-            <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
-              El contenido generado y personalizado aquí se guarda directamente en la base de datos de la plataforma. Puedes copiar los textos optimizados para LinkedIn y X para publicarlos en tus redes, mientras que las respuestas a quejas y soporte de Discord se envían en tiempo real con el bot oficial.
-            </p>
-          </div>
-        </div>
-      </section>
     </div>
   )
 }
