@@ -301,7 +301,7 @@ function OCIStorage() {
                                 <span className="c-iconbox bg-orange-500/15 text-orange-400">
                                     <Cloud size={20} />
                                 </span>
-                                <h2 className="t-section font-bold text-white">
+                                <h2 className="t-section font-bold !text-white" style={{ color: "#ffffff" }}>
                                     OCI Object Storage
                                 </h2>
                             </div>
@@ -326,18 +326,18 @@ function OCIStorage() {
                             </span>
                         </div>
 
-                        <dl className="c-dl text-slate-300">
-                            <dt className="text-slate-400">Bucket</dt>
-                            <dd className="font-mono text-white">{bucketName}</dd>
+                        <dl className="c-dl" style={{ color: "var(--slate-300, #cbd5e1)" }}>
+                            <dt className="!text-slate-400" style={{ color: "#94a3b8" }}>Bucket</dt>
+                            <dd className="font-mono !text-white" style={{ color: "#ffffff" }}>{bucketName}</dd>
 
-                            <dt className="text-slate-400">Región</dt>
-                            <dd className="font-mono text-white">{regionName}</dd>
+                            <dt className="!text-slate-400" style={{ color: "#94a3b8" }}>Región</dt>
+                            <dd className="font-mono !text-white" style={{ color: "#ffffff" }}>{regionName}</dd>
 
-                            <dt className="text-slate-400">Namespace</dt>
-                            <dd className="t-mono font-mono text-white">{namespace}</dd>
+                            <dt className="!text-slate-400" style={{ color: "#94a3b8" }}>Namespace</dt>
+                            <dd className="t-mono font-mono !text-white" style={{ color: "#ffffff" }}>{namespace}</dd>
 
-                            <dt className="text-slate-400">Último sync</dt>
-                            <dd className="text-white">
+                            <dt className="!text-slate-400" style={{ color: "#94a3b8" }}>Último sync</dt>
+                            <dd className="!text-white" style={{ color: "#ffffff" }}>
                                 {reports.length > 0
                                     ? formatDateTime(reports[0]?.generado_en)
                                     : "Hoy, 08:00"}
@@ -346,8 +346,8 @@ function OCIStorage() {
 
                         <div className="c-meter mt-5">
                             <div className="c-meter__row">
-                                <span className="text-slate-400">Uso del bucket</span>
-                                <b className="tabular-nums text-white">
+                                <span className="!text-slate-400" style={{ color: "#94a3b8" }}>Uso del bucket</span>
+                                <b className="tabular-nums !text-white" style={{ color: "#ffffff" }}>
                                     {formatBytes(totalReportsBytes)} / 10 GB
                                 </b>
                             </div>

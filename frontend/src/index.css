@@ -718,3 +718,19 @@ body {
   padding-top: var(--space-1);
   scrollbar-width: thin;
 }
+
+
+/* Alto contraste de texto en tarjetas oscuras de marca (.c-card--brand) */
+.c-card--brand .t-section,
+.c-card--brand .t-card,
+.c-card--brand h2,
+.c-card--brand h3,
+.c-card--brand .c-dl dd,
+.c-card--brand .c-meter__row b {
+  color: #ffffff !important;
+}
+
+.c-card--brand .c-dl dt,
+.c-card--brand .c-meter__row span {
+  color: #94a3b8 !important;
+}
