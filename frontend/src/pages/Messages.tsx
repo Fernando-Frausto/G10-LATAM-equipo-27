@@ -171,6 +171,8 @@ function Messages() {
 
     useEffect(() => {
         loadMessages()
+        // Auto-sincronización silenciosa en segundo plano al ingresar a la bandeja
+        syncDiscord({ asincrono: true }).catch(() => {})
 
         const interval = window.setInterval(loadMessages, 5000)
 
@@ -639,23 +641,25 @@ function Messages() {
         if (isSyncingDiscord) return
 
         setIsSyncingDiscord(true)
-        setSyncFeedbackMessage(null)
-
-        const abortController = new AbortController()
-        const timeoutId = setTimeout(() => {
-            abortController.abort()
-        }, 35000)
+        setSyncFeedbackMessage({
+            type: 'warning',
+            text: '⚡ Comprobando mensajes de Discord en segundo plano...',
+        })
 
         try {
-            const resp = await syncDiscord(undefined, { signal: abortController.signal })
-            clearTimeout(timeoutId)
+            const resp = await syncDiscord({ asincrono: true })
             if (resp.exito) {
-                const metricas = `Nuevas: ${resp.guardadas_nuevas} | Omitidas: ${resp.repetidas_omitidas} | Total: ${resp.total_recibidas}`
                 setSyncFeedbackMessage({
                     type: 'success',
-                    text: `✅ ${resp.mensaje || 'Sincronización exitosa'} (${metricas})`,
+                    text: '✅ Comprobación iniciada en segundo plano. La bandeja se actualizará automáticamente.',
                 })
-                await loadMessages()
+                setTimeout(async () => {
+                    await loadMessages()
+                    setSyncFeedbackMessage({
+                        type: 'success',
+                        text: '✅ Bandeja al día con Discord.',
+                    })
+                }, 2000)
             } else {
                 setSyncFeedbackMessage({
                     type: 'warning',
@@ -663,40 +667,12 @@ function Messages() {
                 })
             }
         } catch (error) {
-            clearTimeout(timeoutId)
             const err = error as Error & { status?: number; codigoError?: string; name?: string }
-            const errMsg = err.message || 'Error desconocido al sincronizar Discord'
-            const isAborted = err.name === 'AbortError' || abortController.signal.aborted
-            const isConflict = err.status === 409 || errMsg.includes('409') || errMsg.includes('Sincronizaci')
-            const isRateLimit =
-                err.status === 429 ||
-                err.codigoError === 'RATE_LIMIT_CLOUDFLARE_1015' ||
-                errMsg.includes('429') ||
-                errMsg.includes('1015') ||
-                errMsg.toLowerCase().includes('rate limit') ||
-                errMsg.toLowerCase().includes('too many requests')
-
-            if (isAborted) {
-                setSyncFeedbackMessage({
-                    type: 'warning',
-                    text: '⏱️ La sincronización tardó en responder del servidor. Si el backend en Render estaba suspendido, por favor reintenta en unos instantes.',
-                })
-            } else if (isConflict) {
-                setSyncFeedbackMessage({
-                    type: 'warning',
-                    text: '⏳ Sincronización en curso. Por favor espera a que finalice el proceso anterior.',
-                })
-            } else if (isRateLimit) {
-                setSyncFeedbackMessage({
-                    type: 'warning',
-                    text: '⚠️ Discord o Cloudflare ha limitado temporalmente la IP del servidor en la nube (Error 1015 / Rate Limit). Sincroniza desde tu entorno local o intenta en unos minutos.',
-                })
-            } else {
-                setSyncFeedbackMessage({
-                    type: 'error',
-                    text: `Error al sincronizar Discord: ${errMsg}`,
-                })
-            }
+            const errMsg = err.message || 'Error al conectar con el servidor'
+            setSyncFeedbackMessage({
+                type: 'warning',
+                text: `Comprobación: ${errMsg}`,
+            })
         } finally {
             setIsSyncingDiscord(false)
         }

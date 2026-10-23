@@ -2,6 +2,7 @@ import { apiRequest } from './client'
 
 export interface DiscordSyncParams {
   limite_por_canal?: number
+  asincrono?: boolean
 }
 
 export interface DiscordSyncResponse {
@@ -13,6 +14,8 @@ export interface DiscordSyncResponse {
   periodo_referencia: string
   mensaje: string
   detail?: string
+  asincrono?: boolean
+  en_segundo_plano?: boolean
 }
 
 export interface DiscordRecoverMessagePayload {
@@ -49,10 +52,15 @@ export async function syncDiscord(
       ? paramsOrLimit
       : paramsOrLimit?.limite_por_canal
 
-  const body =
-    limite !== undefined
-      ? JSON.stringify({ limite_por_canal: limite })
-      : JSON.stringify({})
+  const asincrono =
+    typeof paramsOrLimit === 'object' && paramsOrLimit?.asincrono !== undefined
+      ? paramsOrLimit.asincrono
+      : true
+
+  const body = JSON.stringify({
+    ...(limite !== undefined ? { limite_por_canal: limite } : {}),
+    asincrono,
+  })
 
   return (await apiRequest('/api/v1/discord/sync', {
     method: 'POST',

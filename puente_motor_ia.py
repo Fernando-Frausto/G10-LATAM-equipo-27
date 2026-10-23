@@ -3523,6 +3523,31 @@ async def sync_discord_v1(payload: dict = Body(default={})):
         )
 
     limite_por_canal = (payload or {}).get("limite_por_canal", 100)
+    asincrono = bool((payload or {}).get("asincrono") or (payload or {}).get("background"))
+
+    if asincrono:
+        async def _tarea_fondo():
+            if not lock_obj.locked():
+                try:
+                    if hasattr(lock_obj, "__aenter__"):
+                        async with lock_obj:
+                            await _ejecutar_sincronizacion_discord(token=token, limite_por_canal=limite_por_canal)
+                    else:
+                        await _ejecutar_sincronizacion_discord(token=token, limite_por_canal=limite_por_canal)
+                except Exception as err:
+                    logger.warning(f"Sincronización en segundo plano completada con advertencia: {err}")
+
+        asyncio.create_task(_tarea_fondo())
+        return {
+            "exito": True,
+            "total_recibidas": 0,
+            "guardadas_nuevas": 0,
+            "repetidas_omitidas": 0,
+            "vacias_omitidas": 0,
+            "periodo_referencia": f"Semana_{semana_de(datetime.now(timezone.utc)):02d}",
+            "mensaje": "Comprobando mensajes en segundo plano. Tu bandeja se actualizará automáticamente.",
+            "asincrono": True,
+        }
 
     try:
         if hasattr(lock_obj, "__aenter__"):

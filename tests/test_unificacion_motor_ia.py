@@ -3895,3 +3895,16 @@ def test_spec020_dashboard_homologado_cristian_datos_reales():
     assert "#ff7400" in topics_chart.lower(), "Falta el color máximo '#ff7400' en TopicsChart.tsx"
     assert "#fdba74" in topics_chart.lower(), "Falta el color secundario '#fdba74' en TopicsChart.tsx"
 
+
+
+def test_discord_sync_asincrono_responde_inmediatamente_sin_bloqueo(monkeypatch):
+    """Verifica que POST /api/v1/discord/sync con asincrono=True responda de inmediato sin bloquear."""
+    cliente = TestClient(puente_motor_ia.app)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_discord_token_asincrono")
+
+    resp = cliente.post("/api/v1/discord/sync", json={"limite_por_canal": 10, "asincrono": True})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("exito") is True
+    assert data.get("asincrono") is True
+    assert "segundo plano" in data.get("mensaje", "").lower()

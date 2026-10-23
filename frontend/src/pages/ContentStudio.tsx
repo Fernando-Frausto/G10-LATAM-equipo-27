@@ -51,6 +51,7 @@ import type {
 } from '../api/contentWorkflow'
 import { getCommunityLiveSummary } from '../api/communityLive'
 import { updateMessageWorkflow } from '../api/messageWorkflow'
+import { syncDiscord } from '../api/discordSync'
 
 const AI_PROVIDERS = [
   'Groq (Llama 3.3)',
@@ -590,6 +591,8 @@ function ContentStudio() {
         `✓ Anuncio publicado exitosamente en ${targetLabel}. (ID #${res.id_contenido ?? 'auditado'}, ${res.caracteres} caracteres).`,
       )
       setFinalAnnouncement('')
+      // Auto-sincronización en segundo plano al despachar anuncio
+      syncDiscord({ asincrono: true }).catch(() => {})
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Error al publicar anuncio en Discord.'
       const isRateLimit =
@@ -1485,6 +1488,9 @@ function ContentStudio() {
         }))
         const urlSuffix = res.url ? ` (${res.url})` : ''
         setPipelineActionMessage(`✓ Publicación en ${canal.toUpperCase()} exitosa: ${res.detalle}${urlSuffix}`)
+        if (canal === 'discord') {
+          syncDiscord({ asincrono: true }).catch(() => {})
+        }
 
         // Excluir de la bandeja de mensajes pero conservar en la mesa de trabajo
         setWorkflowMessages((prev) => prev.filter((m) => m.interactionId !== selectedMessageId))
@@ -4195,6 +4201,8 @@ function ContentStudio() {
                       `Publicado en Discord. Canal: #${destination.channel_name}. ` +
                       `ID del mensaje: ${resultado.discord_message_id}`
                     )
+                    // Auto-sincronización en segundo plano al despachar respuesta a queja
+                    syncDiscord({ asincrono: true }).catch(() => {})
 
                     setComplaints((current) =>
                       current.filter((item) => item.id !== interactionId)
