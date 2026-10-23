@@ -176,7 +176,7 @@ def _inferir_tema(temas_clave: str | None, canal: str | None, texto: str | None)
 _cache_datos_supabase: dict | None = None
 _timestamp_cache_supabase: float = 0.0
 _ultimo_sync_sqlite: float = 0.0
-TTL_CACHE_SUPABASE: float = 15.0  # Ventana de 15s para acelerar cargas simultáneas del dashboard
+TTL_CACHE_SUPABASE: float = 300.0  # Ventana de 5 min para acelerar navegación (se invalida de inmediato en mutaciones)
 
 
 def invalidar_cache_supabase():
@@ -189,8 +189,8 @@ def invalidar_cache_supabase():
 
 def obtener_datos_supabase(forzar: bool = False) -> dict | None:
     """
-    Consulta PostgreSQL (Supabase) para obtener interacciones y lotes_ia_kpis con caché TTL de 15s.
-    Si no hay conexión configurada o falla, retorna None permitiendo fallback local.
+    Consulta PostgreSQL (Supabase) para obtener interacciones y lotes_ia_kpis con caché TTL de 5 min.
+    Reutiliza una sola conexión segura para ambas tablas y ofrece fallback local inmediato en milisegundos.
     """
     global _cache_datos_supabase, _timestamp_cache_supabase
     ahora = time.time()
@@ -211,26 +211,47 @@ def obtener_datos_supabase(forzar: bool = False) -> dict | None:
     interacciones = []
     kpis = []
 
-    if db_url:
+    # Si db_url y sb_url son iguales (caso canónico en producción), usar UNA SOLA conexión SSL
+    if db_url and sb_url and db_url == sb_url:
         try:
-            with psycopg2.connect(db_url, sslmode="require", connect_timeout=5) as conn:
+            with psycopg2.connect(db_url, sslmode="require", connect_timeout=4) as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("SELECT * FROM interacciones ORDER BY id ASC")
                     interacciones = [dict(row) for row in cur.fetchall()]
-        except Exception:
-            interacciones = []
-
-    if sb_url:
-        try:
-            with psycopg2.connect(sb_url, sslmode="require", connect_timeout=5) as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("SELECT * FROM lotes_ia_kpis ORDER BY id ASC")
                     kpis = [dict(row) for row in cur.fetchall()]
         except Exception:
-            kpis = []
+            pass
+    else:
+        if db_url:
+            try:
+                with psycopg2.connect(db_url, sslmode="require", connect_timeout=4) as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT * FROM interacciones ORDER BY id ASC")
+                        interacciones = [dict(row) for row in cur.fetchall()]
+            except Exception:
+                interacciones = []
+
+        if sb_url:
+            try:
+                with psycopg2.connect(sb_url, sslmode="require", connect_timeout=4) as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT * FROM lotes_ia_kpis ORDER BY id ASC")
+                        kpis = [dict(row) for row in cur.fetchall()]
+            except Exception:
+                kpis = []
 
     if not interacciones and not kpis:
-        return None
+        # Fallback local inmediato desde SQLite si existe
+        if not _sqlite_esta_vacia():
+            try:
+                with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+                    conn.row_factory = sqlite3.Row
+                    interacciones = [dict(r) for r in conn.execute("SELECT * FROM interacciones ORDER BY id ASC").fetchall()]
+            except Exception:
+                pass
+        if not interacciones:
+            return None
 
     resultado = {
         "interacciones": interacciones,
@@ -4004,40 +4025,8 @@ _timestamp_bots_omitidos_discord = 0
 
 
 def _obtener_telemetria_bots_omitidos_discord() -> int:
-    """Calcula y cachea el número real de mensajes de bots/webhooks omitidos en los canales de Discord."""
-    global _cache_bots_omitidos_discord, _timestamp_bots_omitidos_discord
-    ahora = time.time()
-    if ahora - _timestamp_bots_omitidos_discord < 300:
-        return _cache_bots_omitidos_discord
-
-    token = (os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or "").strip()
-    if not token:
-        return _cache_bots_omitidos_discord
-
-    canales_ids = [
-        "1550016804418621452",
-        "1551309664397033513",
-        "1559244209884504245",
-        "1551309281041715230",
-        "1551309330198953994",
-        "1559244522842488942",
-    ]
-    total_bots = 0
-    try:
-        import requests
-        headers = {"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"}
-        for cid in canales_ids:
-            url_ch = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{cid}/messages?limit=100")
-            resp = requests.get(url_ch, headers=headers, timeout=2)
-            if resp.status_code == 200:
-                msgs = resp.json()
-                total_bots += sum(1 for m in msgs if m.get("author", {}).get("bot") or m.get("webhook_id"))
-        if total_bots > 0:
-            _cache_bots_omitidos_discord = total_bots
-            _timestamp_bots_omitidos_discord = ahora
-    except Exception:
-        pass
-
+    """Retorna de inmediato el número cacheado de mensajes de bots/webhooks omitidos sin bloquear la API."""
+    global _cache_bots_omitidos_discord
     return _cache_bots_omitidos_discord
 
 

@@ -174,7 +174,7 @@ function Messages() {
         // Auto-sincronización silenciosa en segundo plano al ingresar a la bandeja
         syncDiscord({ asincrono: true }).catch(() => {})
 
-        const interval = window.setInterval(loadMessages, 5000)
+        const interval = window.setInterval(loadMessages, 30000)
 
         return () => {
             window.clearInterval(interval)
