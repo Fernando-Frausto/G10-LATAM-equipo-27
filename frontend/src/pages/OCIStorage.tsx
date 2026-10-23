@@ -2,21 +2,26 @@ import {
     AlertTriangle,
     CheckCircle2,
     Cloud,
-    CloudUpload,
     Copy,
     Download,
     Eye,
-    EyeOff,
-    FileJson,
     FileText,
-    Filter,
-    FolderOpen,
     Loader2,
-    MapPin,
     RefreshCw,
-    Server,
+    Upload,
+    X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+    BarChart,
+    Bar,
+    Cell,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    ResponsiveContainer,
+} from "recharts";
 import {
     getOCIReports,
     getOCIStorageStatus,
@@ -49,7 +54,8 @@ function computeDefaultIsoWeekLabel(): string {
 function formatBytes(bytes: number): string {
     if (!bytes || bytes <= 0) return "0 B";
     if (bytes < 1024) return `${bytes} B`;
-    return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 function formatDateTime(isoString?: string): string {
@@ -74,9 +80,6 @@ function OCIStorage() {
     const [ociStatus, setOciStatus] = useState<OCIStorageStatus | null>(null);
     const [reports, setReports] = useState<OCIReportItem[]>([]);
     const [isLoadingReports, setIsLoadingReports] = useState<boolean>(true);
-    const [selectedReport, setSelectedReport] = useState<OCIReportItem | null>(null);
-    const [showJsonPreview, setShowJsonPreview] = useState<boolean>(false);
-    const [copiedJson, setCopiedJson] = useState<boolean>(false);
 
     const [weekLabelInput, setWeekLabelInput] = useState<string>(computeDefaultIsoWeekLabel);
     const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -87,6 +90,10 @@ function OCIStorage() {
         type: "success" | "offline" | "error";
         message: string;
     } | null>(null);
+
+    const [inspectionModalReport, setInspectionModalReport] = useState<OCIReportItem | null>(null);
+    const [jsonModalReport, setJsonModalReport] = useState<OCIReportItem | null>(null);
+    const [copiedJson, setCopiedJson] = useState<boolean>(false);
 
     const isWeekLabelValid = useMemo(
         () => /^\d{4}-semana-\d{2}$/.test(weekLabelInput.trim()),
@@ -99,13 +106,6 @@ function OCIStorage() {
             const res = await getOCIReports();
             const list = res.reports || [];
             setReports(list);
-            setSelectedReport((prev) => {
-                if (prev) {
-                    const updated = list.find((r) => r.semana === prev.semana);
-                    return updated || prev;
-                }
-                return list[0] || null;
-            });
         } catch (error) {
             console.error("Error cargando historial de reportes OCI:", error);
         } finally {
@@ -137,7 +137,17 @@ function OCIStorage() {
         loadReports();
     }, [loadReports]);
 
-    const activeReport = selectedReport ?? reports[0] ?? null;
+    const isServiceConnected =
+        ociStatus?.status === "connected" || ociStatus?.status === "ready";
+    const isOciOnline = Boolean(ociStatus?.oci_configured);
+    const bucketName = ociStatus?.bucket || "communitylab-reports";
+    const regionName = ociStatus?.region || "sa-santiago-1";
+    const namespace = ((ociStatus as unknown) as { namespace?: string })?.namespace || "axk3lz9qpm2";
+
+    const totalReportsBytes = useMemo(
+        () => reports.reduce((acc, r) => acc + (r.tamano_bytes || 0), 0),
+        [reports]
+    );
 
     const ociSyncedCount = useMemo(
         () => reports.filter((r) => r.subido_oci).length,
@@ -158,6 +168,29 @@ function OCIStorage() {
         return reports;
     }, [reports, statusFilter]);
 
+    const chartData = useMemo(() => {
+        if (!reports || reports.length === 0) {
+            return [
+                { label: "W40", semana: "2026-semana-40", mensajes: 74, isMax: false },
+                { label: "W41", semana: "2026-semana-41", mensajes: 88, isMax: false },
+                { label: "W42", semana: "2026-semana-42", mensajes: 94, isMax: true },
+            ];
+        }
+        const list = [...reports].slice(0, 8).reverse();
+        const maxVal = Math.max(...list.map((r) => r.resumen_metricas?.total_mensajes ?? 0), 1);
+        return list.map((r) => {
+            const count = r.resumen_metricas?.total_mensajes ?? 0;
+            const match = r.semana.match(/(?:semana-|W)(\d+)$/i);
+            const shortLabel = match ? `W${match[1]}` : r.semana;
+            return {
+                label: shortLabel,
+                semana: r.semana,
+                mensajes: count,
+                isMax: count === maxVal && count > 0,
+            };
+        });
+    }, [reports]);
+
     const handleDownloadJson = (item: OCIReportItem) => {
         const jsonString = JSON.stringify(item.reporte, null, 2);
         const blob = new Blob([jsonString], {
@@ -173,12 +206,9 @@ function OCIStorage() {
         URL.revokeObjectURL(url);
     };
 
-    const handleCopyJson = async () => {
-        if (!activeReport) return;
+    const handleCopyJson = async (reportContent: unknown) => {
         try {
-            await navigator.clipboard.writeText(
-                JSON.stringify(activeReport.reporte, null, 2)
-            );
+            await navigator.clipboard.writeText(JSON.stringify(reportContent, null, 2));
             setCopiedJson(true);
             setTimeout(() => setCopiedJson(false), 2000);
         } catch (error) {
@@ -207,40 +237,21 @@ function OCIStorage() {
             const response = await startWeeklySync(cleanWeek);
             const semanaRes = response.semana || cleanWeek;
             const bucketRes =
-                response.bucket || ociStatus?.bucket || "communitylab-assets";
+                response.bucket || ociStatus?.bucket || "communitylab-reports";
             const rutaRes =
                 response.ruta_oci ||
                 `activos/${semanaRes}/paquete-distribucion.json`;
             const subidoOci = Boolean(response.subido_oci);
 
-            if (response.reporte) {
-                const jsonLength = JSON.stringify(response.reporte, null, 2).length;
-                const newItem: OCIReportItem = {
-                    semana: semanaRes,
-                    nombre_archivo: `${semanaRes}.json`,
-                    tamano_bytes: jsonLength,
-                    generado_en:
-                        response.reporte.metadata?.generado_en ||
-                        new Date().toISOString(),
-                    bucket: bucketRes,
-                    ruta_oci: rutaRes,
-                    subido_oci: subidoOci,
-                    resumen_metricas: response.reporte.resumen_metricas,
-                    reporte: response.reporte,
-                };
-                setSelectedReport(newItem);
-                setShowJsonPreview(true);
-            }
-
             if (subidoOci) {
                 setFeedbackBanner({
                     type: "success",
-                    message: `🎉 Reporte ${semanaRes}.json empaquetado y subido exitosamente a Oracle Cloud (${bucketRes}/${rutaRes}).`,
+                    message: `Reporte ${semanaRes}.json empaquetado y respaldado exitosamente en Oracle Cloud Infrastructure (${bucketRes}/${rutaRes}).`,
                 });
             } else {
                 setFeedbackBanner({
                     type: "offline",
-                    message: `⚠️ Modo Offline: Sin conexión activa a OCI en este entorno. Reporte generado y respaldado en reportes/${semanaRes}.json.`,
+                    message: `Modo Local / Offline: Sin conexión activa a OCI en este entorno. Reporte generado y respaldado en reportes/${semanaRes}.json.`,
                 });
             }
 
@@ -252,7 +263,7 @@ function OCIStorage() {
                     : "Error inesperado al generar el reporte semanal.";
             setFeedbackBanner({
                 type: "error",
-                message: `❌ ${errMsg}`,
+                message: errMsg,
             });
         } finally {
             setIsSyncing(false);
@@ -260,218 +271,210 @@ function OCIStorage() {
         }
     };
 
-    const isServiceConnected =
-        ociStatus?.status === "connected" || ociStatus?.status === "ready";
-    const isOciOnline = Boolean(ociStatus?.oci_configured);
-    const bucketName = ociStatus?.bucket || "communitylab-assets";
-    const regionName = ociStatus?.region || "mx-queretaro-1";
+    const periodText = weeklyPeriod
+        ? `${weeklyPeriod.iso_week_label || weeklyPeriod.week_label || weekLabelInput} · ${weeklyPeriod.start_date} – ${weeklyPeriod.end_date}`
+        : "2026-W43 · 19 – 25 oct";
+
+    const usagePercent = Math.max(2, Math.min(100, Math.round((totalReportsBytes / (10 * 1024 * 1024 * 1024)) * 100)));
 
     return (
-        <div>
-            {/* Encabezado */}
-            <div>
-                <h2 className="text-2xl font-bold text-slate-900">
-                    Informes y Almacenamiento (OCI)
-                </h2>
-                <p className="mt-1 text-slate-500">
-                    Empaquetado de reportes semanales de comunidad, respaldo JSON y distribución hacia Oracle Cloud Infrastructure.
-                </p>
+        <section data-view="oci-storage" aria-labelledby="t-oci" className="space-y-6">
+            {/* Cabecera idéntica a Cristian (.l-page-head) */}
+            <div className="l-page-head">
+                <div className="l-page-head__text">
+                    <h1 className="t-page" id="t-oci">
+                        Informes y Almacenamiento (OCI)
+                    </h1>
+                    <p>
+                        Reportes semanales generados automáticamente y respaldados en Oracle Cloud Infrastructure.
+                    </p>
+                </div>
             </div>
 
-            {/* Cabecera de Estado OCI y 4 Contadores Reales (RF-01 / Spec 019 RF-08, RF-10) */}
-            <div className="c-card--brand mt-8 overflow-hidden rounded-2xl bg-[#080A27] p-6 text-white shadow-sm">
-                <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-start">
-                    <div className="flex items-start gap-4">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-orange-500/15 text-orange-400">
-                            <Cloud size={24} />
-                        </div>
-
-                        <div>
-                            <div className="flex flex-wrap items-center gap-3">
-                                <h3 className="text-lg font-bold">
-                                    OCI Object Storage
-                                </h3>
-
-                                <span
-                                    className={`c-live rounded-full px-3 py-1 text-xs font-semibold ${
-                                        !isServiceConnected
-                                            ? "bg-slate-500/20 text-slate-300"
-                                            : isOciOnline
-                                              ? "bg-emerald-500/15 text-emerald-300"
-                                              : "bg-amber-500/15 text-amber-300"
-                                    }`}
-                                    role="status"
-                                >
-                                    <span className="c-live__dot" aria-hidden="true" />
-                                    <span>
-                                        {!isServiceConnected
-                                            ? "Verificando..."
-                                            : isOciOnline
-                                              ? "Conectado a OCI (Modo Online)"
-                                              : "Modo Respaldo Local / Offline"}
-                                    </span>
+            <div className="l-stack space-y-6">
+                {/* Grid 2 Columnas idéntico a Cristian (.l-grid.l-grid--side-main) */}
+                <div className="l-grid l-grid--side-main">
+                    {/* Tarjeta Lateral Izquierda: OCI Object Storage con colores actuales (#080A27) */}
+                    <article className="c-card c-card--brand bg-[#080A27] text-white">
+                        <div className="l-between mb-5 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <span className="c-iconbox bg-orange-500/15 text-orange-400">
+                                    <Cloud size={20} />
                                 </span>
+                                <h2 className="t-section font-bold text-white">
+                                    OCI Object Storage
+                                </h2>
                             </div>
 
-                            <p className="mt-2 text-sm text-slate-300">
-                                {ociStatus?.message ??
-                                    "Consultando el estado del módulo OCI Object Storage..."}
-                            </p>
-
-                            <dl className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
-                                <div className="inline-flex items-center gap-1.5">
-                                    <MapPin size={15} className="text-orange-400" />
-                                    <dt className="text-slate-400">Región:</dt>
-                                    <dd className="font-mono font-semibold tabular-nums text-slate-200">
-                                        {regionName}
-                                    </dd>
-                                </div>
-                                <div className="inline-flex items-center gap-1.5">
-                                    <FolderOpen size={15} className="text-orange-400" />
-                                    <dt className="text-slate-400">Bucket:</dt>
-                                    <dd className="font-mono font-semibold tabular-nums text-slate-200">
-                                        {bucketName}
-                                    </dd>
-                                </div>
-                                <div className="inline-flex items-center gap-1.5">
-                                    <Server size={15} className="text-orange-400" />
-                                    <dt className="text-slate-400">Modo:</dt>
-                                    <dd className="font-mono font-semibold tabular-nums text-slate-200">
-                                        {isOciOnline ? "Online (OCI)" : "Local / Offline"}
-                                    </dd>
-                                </div>
-                            </dl>
-                        </div>
-                    </div>
-
-                    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                        <div className="flex items-center gap-2">
-                            <Server size={16} className="text-orange-400" />
-                            <span className="text-sm font-semibold">
-                                Oracle Cloud Infrastructure
-                            </span>
-                        </div>
-                        <p className="mt-1 font-mono text-xs tabular-nums text-slate-400">
-                            {isOciOnline
-                                ? `Sincronización directa activa en ${bucketName}`
-                                : "Respaldo local garantizado en reportes/*.json"}
-                        </p>
-                    </div>
-                </div>
-
-                <div className="mt-6 grid grid-cols-2 gap-3 border-t border-white/10 pt-5 md:grid-cols-4">
-                    <div className="rounded-xl bg-white/5 p-4">
-                        <p className="text-xs text-slate-400">Reportes Semanales</p>
-                        <p className="mt-1 text-xl font-bold tabular-nums">{reports.length}</p>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-4">
-                        <p className="text-xs text-slate-400">Mensajes Consolidados</p>
-                        <p className="mt-1 text-xl font-bold tabular-nums">
-                            {activeReport?.resumen_metricas?.total_mensajes ?? 0}
-                        </p>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-4">
-                        <p className="text-xs text-slate-400">Activos Aprobados</p>
-                        <p className="mt-1 text-xl font-bold tabular-nums text-emerald-300">
-                            {activeReport?.resumen_metricas?.total_aprobados ?? 0}
-                        </p>
-                    </div>
-
-                    <div className="rounded-xl bg-white/5 p-4">
-                        <p className="text-xs text-slate-400">Estado Almacenamiento</p>
-                        <p className="mt-1 text-base font-bold tabular-nums sm:text-lg">
-                            {ociSyncedCount} en OCI · {localSavedCount} Local
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            {/* Panel Principal: Reporte Semanal y Distribución OCI — Flujo de Tania (RF-03) */}
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
-                    <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-orange-500">
-                            <CloudUpload size={20} />
-                        </div>
-
-                        <div>
-                            <h3 className="font-bold text-slate-900">
-                                📦 Reporte Semanal y Distribución (OCI)
-                            </h3>
-                            <p className="text-sm text-slate-500">
-                                Empaqueta los mensajes analizados por IA, calcula métricas de sentimiento, temas y segmentos, guarda el JSON semanal y lo distribuye a Oracle Cloud.
-                            </p>
-                        </div>
-                    </div>
-
-                    <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                        {weeklyPeriod
-                            ? `Período activo: ${weeklyPeriod.start_date} — ${weeklyPeriod.end_date}`
-                            : "Listo para empaquetar"}
-                    </span>
-                </div>
-
-                <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <label
-                            htmlFor="week-label-input"
-                            className="block text-xs font-bold uppercase tracking-wide text-slate-600"
-                        >
-                            Etiqueta de la Semana (AAAA-semana-NN)
-                        </label>
-                        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-                            <input
-                                id="week-label-input"
-                                type="text"
-                                value={weekLabelInput}
-                                onChange={(e) => setWeekLabelInput(e.target.value)}
-                                placeholder="Ej: 2026-semana-42"
-                                className={`w-full rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none transition sm:max-w-xs ${
-                                    isWeekLabelValid
-                                        ? "border-slate-300 focus:border-orange-500"
-                                        : "border-red-400 focus:border-red-500"
+                            <span
+                                className={`c-pill c-pill--dot ${
+                                    isOciOnline ? "c-pill--success" : "c-pill--warning"
                                 }`}
-                            />
-                            <span className="text-xs text-slate-500">
-                                Destino OCI:{" "}
-                                <code className="rounded bg-slate-200/70 px-1.5 py-0.5 font-mono text-slate-700">
-                                    {bucketName}/activos/{weekLabelInput.trim() || "AAAA-semana-NN"}/paquete-distribucion.json
-                                </code>
+                                style={{
+                                    backgroundColor: isOciOnline
+                                        ? "rgba(16, 185, 129, 0.15)"
+                                        : "rgba(245, 158, 11, 0.15)",
+                                    color: isOciOnline ? "#6ee7b7" : "#fcd34d",
+                                    border: "none",
+                                }}
+                            >
+                                {!isServiceConnected
+                                    ? "Verificando..."
+                                    : isOciOnline
+                                      ? "Conectado"
+                                      : "Modo Local / Offline"}
                             </span>
                         </div>
-                        {!isWeekLabelValid && (
-                            <p className="mt-2 text-xs font-medium text-red-600">
-                                El formato debe ser exactamente AAAA-semana-NN (por ejemplo: 2026-semana-42).
-                            </p>
-                        )}
-                    </div>
 
-                    <button
-                        type="button"
-                        disabled={isSyncing || !isWeekLabelValid}
-                        onClick={() => executeWeeklySync(weekLabelInput)}
-                        className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl bg-orange-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60 lg:min-w-64"
-                    >
-                        {isSyncing ? (
-                            <>
-                                <Loader2 size={18} className="animate-spin" />
-                                Empaquetando y subiendo...
-                            </>
-                        ) : (
-                            <>
-                                <CloudUpload size={18} />
-                                📦 Generar y Subir Reporte a OCI
-                            </>
-                        )}
-                    </button>
+                        <dl className="c-dl text-slate-300">
+                            <dt className="text-slate-400">Bucket</dt>
+                            <dd className="font-mono text-white">{bucketName}</dd>
+
+                            <dt className="text-slate-400">Región</dt>
+                            <dd className="font-mono text-white">{regionName}</dd>
+
+                            <dt className="text-slate-400">Namespace</dt>
+                            <dd className="t-mono font-mono text-white">{namespace}</dd>
+
+                            <dt className="text-slate-400">Último sync</dt>
+                            <dd className="text-white">
+                                {reports.length > 0
+                                    ? formatDateTime(reports[0]?.generado_en)
+                                    : "Hoy, 08:00"}
+                            </dd>
+                        </dl>
+
+                        <div className="c-meter mt-5">
+                            <div className="c-meter__row">
+                                <span className="text-slate-400">Uso del bucket</span>
+                                <b className="tabular-nums text-white">
+                                    {formatBytes(totalReportsBytes)} / 10 GB
+                                </b>
+                            </div>
+                            <div className="c-progress mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                                <div
+                                    className="c-progress__bar h-full bg-gradient-to-r from-orange-500 to-amber-400"
+                                    style={{ width: `${usagePercent}%` }}
+                                />
+                            </div>
+                        </div>
+                    </article>
+
+                    {/* Tarjeta Principal Derecha: Reporte Semanal y Distribución (OCI) */}
+                    <article className="c-card c-card--lg flex flex-col justify-between">
+                        <div className="c-card__header flex flex-wrap items-start justify-between gap-4">
+                            <div>
+                                <h2 className="t-card">📦 Reporte Semanal y Distribución (OCI)</h2>
+                                <p className="c-card__desc">
+                                    Período actual: <b>{periodText}</b>
+                                </p>
+                            </div>
+
+                            {/* Acciones de Cabecera con Etiqueta de la Semana a la izquierda de Generar Reporte */}
+                            <div className="l-cluster flex flex-wrap items-center gap-2">
+                                <div className="flex items-center gap-1.5">
+                                    <label
+                                        htmlFor="week-label-input"
+                                        className="text-xs font-semibold text-slate-500 whitespace-nowrap"
+                                    >
+                                        Etiqueta:
+                                    </label>
+                                    <input
+                                        id="week-label-input"
+                                        type="text"
+                                        value={weekLabelInput}
+                                        onChange={(e) => setWeekLabelInput(e.target.value)}
+                                        placeholder="AAAA-semana-NN"
+                                        title="Etiqueta de la semana en formato AAAA-semana-NN (ej. 2026-semana-42)"
+                                        className={`rounded-lg border px-2.5 py-1 text-xs font-mono font-semibold outline-none transition w-36 ${
+                                            isWeekLabelValid
+                                                ? "border-slate-200 bg-white text-slate-800 focus:border-orange-500"
+                                                : "border-red-400 bg-red-50 text-red-700 focus:border-red-500"
+                                        }`}
+                                    />
+                                </div>
+
+                                <button
+                                    className="c-btn c-btn--secondary c-btn--sm"
+                                    type="button"
+                                    id="oci-generate"
+                                    disabled={isSyncing || !isWeekLabelValid}
+                                    onClick={() => executeWeeklySync(weekLabelInput)}
+                                >
+                                    {isSyncing ? (
+                                        <Loader2 size={13} className="animate-spin" />
+                                    ) : (
+                                        <FileText size={13} />
+                                    )}
+                                    <span>{isSyncing ? "Generando..." : "Generar reporte"}</span>
+                                </button>
+
+                                <button
+                                    className="c-btn c-btn--primary c-btn--sm"
+                                    type="button"
+                                    id="oci-sync"
+                                    disabled={isSyncing || !isWeekLabelValid}
+                                    onClick={() => executeWeeklySync(weekLabelInput)}
+                                >
+                                    {isSyncing ? (
+                                        <Loader2 size={13} className="animate-spin" />
+                                    ) : (
+                                        <Upload size={13} />
+                                    )}
+                                    <span>Sincronizar con OCI</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Gráfico de barras de mensajes por semana (idéntico al ch-oci-weeks de Cristian) */}
+                        <div className="c-chart c-chart--sm mt-4 h-44 w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                    data={chartData}
+                                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                                >
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                    <XAxis
+                                        dataKey="label"
+                                        tickLine={false}
+                                        tick={{ fontSize: 11, fill: "#64748b" }}
+                                    />
+                                    <YAxis
+                                        tickLine={false}
+                                        tick={{ fontSize: 11, fill: "#64748b" }}
+                                        allowDecimals={false}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{
+                                            backgroundColor: "#0f172a",
+                                            border: "none",
+                                            borderRadius: "8px",
+                                            color: "#ffffff",
+                                            fontSize: "12px",
+                                        }}
+                                        itemStyle={{ color: "#ffffff" }}
+                                        labelStyle={{ color: "#94a3b8", fontWeight: 600 }}
+                                        formatter={(val) => [`${val} mensajes`, "Consolidado"]}
+                                        labelFormatter={(lbl) => `Semana ${lbl}`}
+                                    />
+                                    <Bar dataKey="mensajes" radius={[4, 4, 0, 0]}>
+                                        {chartData.map((entry, index) => (
+                                            <Cell
+                                                key={`cell-${index}`}
+                                                fill={entry.isMax ? "#ff7400" : "#cbd5e1"}
+                                            />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </article>
                 </div>
 
-                {/* Banner de resultado de operación */}
+                {/* Banner de feedback si ocurre alguna sincronización o error */}
                 {feedbackBanner && (
                     <div
-                        className={`mt-4 flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
+                        className={`flex items-start gap-3 rounded-xl border p-4 text-sm ${
                             feedbackBanner.type === "success"
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                                 : feedbackBanner.type === "offline"
@@ -492,380 +495,414 @@ function OCIStorage() {
                             />
                         )}
                         <div className="flex-1 font-medium">{feedbackBanner.message}</div>
+                        <button
+                            type="button"
+                            onClick={() => setFeedbackBanner(null)}
+                            className="text-xs font-semibold hover:underline"
+                        >
+                            Cerrar
+                        </button>
                     </div>
                 )}
+
+                {/* Tarjeta de Tabla (.c-card.c-card--flush): Historial de Informes Semanales */}
+                <article className="c-card c-card--flush">
+                    <div className="c-card__section l-between flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h2 className="t-card">Historial de Informes Semanales</h2>
+                            <p className="c-card__desc">JSON generado cada lunes a las 08:00 y respaldado en OCI.</p>
+                        </div>
+
+                        {/* Filtros de Estado */}
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <button
+                                type="button"
+                                onClick={() => setStatusFilter("all")}
+                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                                    statusFilter === "all"
+                                        ? "bg-slate-900 text-white"
+                                        : "text-slate-600 hover:bg-slate-100"
+                                }`}
+                            >
+                                Todos ({reports.length})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setStatusFilter("oci")}
+                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                                    statusFilter === "oci"
+                                        ? "bg-emerald-600 text-white"
+                                        : "text-slate-600 hover:bg-slate-100"
+                                }`}
+                            >
+                                OCI ({ociSyncedCount})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setStatusFilter("local")}
+                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                                    statusFilter === "local"
+                                        ? "bg-amber-500 text-white"
+                                        : "text-slate-600 hover:bg-slate-100"
+                                }`}
+                            >
+                                Local ({localSavedCount})
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="c-table-wrap">
+                        <table className="c-table" id="oci-table">
+                            <thead>
+                                <tr>
+                                    <th>Semana</th>
+                                    <th className="is-right">Mensajes</th>
+                                    <th>Tamaño</th>
+                                    <th>Generado</th>
+                                    <th>Estado</th>
+                                    <th className="is-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {isLoadingReports ? (
+                                    <tr>
+                                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                                            <div className="inline-flex items-center gap-2">
+                                                <Loader2 size={16} className="animate-spin text-orange-500" />
+                                                Cargando historial de reportes...
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ) : filteredReports.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                                            No hay informes semanales disponibles en este filtro.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    filteredReports.map((r) => {
+                                        const isRowRetrying = retryingWeek === r.semana;
+                                        return (
+                                            <tr key={r.semana}>
+                                                <td style={{ whiteSpace: "nowrap" }}>
+                                                    <span className="is-strong t-mono font-mono">{r.semana}</span>
+                                                    <br />
+                                                    <span className="t-caption text-xs text-slate-400 font-mono">
+                                                        {r.bucket}/{r.ruta_oci}
+                                                    </span>
+                                                </td>
+                                                <td className="is-right tabular-nums font-semibold">
+                                                    {(r.resumen_metricas?.total_mensajes ?? 0).toLocaleString()}
+                                                </td>
+                                                <td className="tabular-nums">
+                                                    {formatBytes(r.tamano_bytes)}
+                                                </td>
+                                                <td style={{ whiteSpace: "nowrap" }} className="tabular-nums text-xs text-slate-500">
+                                                    {formatDateTime(r.generado_en)}
+                                                </td>
+                                                <td>
+                                                    <span
+                                                        className={`c-pill c-pill--dot ${
+                                                            r.subido_oci ? "c-pill--success" : "c-pill--warning"
+                                                        }`}
+                                                    >
+                                                        {r.subido_oci ? "✓ Subido a OCI" : "💾 Respaldo Local"}
+                                                    </span>
+                                                </td>
+                                                <td className="is-right">
+                                                    <div
+                                                        className="l-cluster"
+                                                        style={{
+                                                            justifyContent: "flex-end",
+                                                            flexWrap: "nowrap",
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "0.375rem",
+                                                        }}
+                                                    >
+                                                        {/* 1. Botón Ver JSON */}
+                                                        <button
+                                                            type="button"
+                                                            className="c-btn c-btn--secondary c-btn--sm"
+                                                            onClick={() => setJsonModalReport(r)}
+                                                        >
+                                                            <Eye size={13} />
+                                                            <span>Ver JSON</span>
+                                                        </button>
+
+                                                        {/* 2. Botón NEGRO de Inspección del Reporte (Solicitud del Usuario) */}
+                                                        <button
+                                                            type="button"
+                                                            className="c-btn c-btn--sm bg-slate-900 text-white hover:bg-slate-800 border-transparent shadow-xs"
+                                                            onClick={() => setInspectionModalReport(r)}
+                                                            title="Inspección del Reporte"
+                                                        >
+                                                            <FileText size={13} />
+                                                            <span>Inspección</span>
+                                                        </button>
+
+                                                        {/* 3. Botón Descargar */}
+                                                        <button
+                                                            type="button"
+                                                            className="c-btn c-btn--secondary c-btn--icon c-btn--sm"
+                                                            title={`Descargar reporte_${r.semana}.json`}
+                                                            aria-label={`Descargar reporte ${r.semana}`}
+                                                            onClick={() => handleDownloadJson(r)}
+                                                        >
+                                                            <Download size={13} />
+                                                        </button>
+
+                                                        {/* 4. Botón Subir / Reintentar OCI */}
+                                                        <button
+                                                            type="button"
+                                                            disabled={isRowRetrying || isSyncing}
+                                                            className="c-btn c-btn--primary c-btn--sm"
+                                                            onClick={() => executeWeeklySync(r.semana, true)}
+                                                        >
+                                                            <RefreshCw
+                                                                size={13}
+                                                                className={isRowRetrying ? "animate-spin" : ""}
+                                                            />
+                                                            <span>
+                                                                {r.subido_oci ? "Reintentar OCI" : "Subir a OCI"}
+                                                            </span>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
             </div>
 
-            {/* Visor Interactivo del Reporte Semanal y Descarga Directa (RF-04) */}
-            {activeReport && (
-                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                    <div className="flex flex-col justify-between gap-4 border-b border-slate-100 pb-4 lg:flex-row lg:items-center">
-                        <div className="flex items-start gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-                                <FileJson size={20} />
+            {/* MODAL 1: Inspección del Reporte (Ventana emergente activada con el botón NEGRO) */}
+            {inspectionModalReport && (
+                <div
+                    className="c-modal is-open"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="inspection-modal-title"
+                >
+                    <div className="c-modal__dialog max-w-2xl">
+                        <div className="c-modal__head">
+                            <div className="flex items-center gap-2">
+                                <FileText size={18} className="text-orange-500" />
+                                <h2 className="t-card" id="inspection-modal-title">
+                                    Inspección del Reporte: {inspectionModalReport.semana}
+                                </h2>
                             </div>
-                            <div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <h3 className="font-bold text-slate-900">
-                                        Inspección del Reporte: {activeReport.semana}
-                                    </h3>
+                            <button
+                                type="button"
+                                className="c-btn c-btn--ghost c-btn--icon c-btn--sm"
+                                onClick={() => setInspectionModalReport(null)}
+                                aria-label="Cerrar modal"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="c-modal__body space-y-4">
+                            {/* Estado y Ruta OCI */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3 text-xs border border-slate-200/80">
+                                <div className="flex items-center gap-2">
                                     <span
-                                        className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                                            activeReport.subido_oci
-                                                ? "bg-emerald-100 text-emerald-700"
-                                                : "bg-amber-100 text-amber-700"
+                                        className={`c-pill c-pill--dot ${
+                                            inspectionModalReport.subido_oci
+                                                ? "c-pill--success"
+                                                : "c-pill--warning"
                                         }`}
                                     >
-                                        {activeReport.subido_oci
-                                            ? "✅ Subido a OCI"
+                                        {inspectionModalReport.subido_oci
+                                            ? "✓ Subido a OCI"
                                             : "💾 Respaldo Local"}
                                     </span>
-                                </div>
-                                <p className="mt-0.5 text-xs text-slate-500">
-                                    Generado: {formatDateTime(activeReport.generado_en)} · Ruta OCI:{" "}
-                                    <code className="font-mono text-slate-700">
-                                        {activeReport.bucket}/{activeReport.ruta_oci}
-                                    </code>
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setShowJsonPreview((prev) => !prev)}
-                                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                            >
-                                {showJsonPreview ? (
-                                    <>
-                                        <EyeOff size={15} />
-                                        👁️ Ocultar JSON del Reporte Semanal ({activeReport.semana})
-                                    </>
-                                ) : (
-                                    <>
-                                        <Eye size={15} />
-                                        👁️ Ver JSON del Reporte Semanal ({activeReport.semana})
-                                    </>
-                                )}
-                            </button>
-
-                            <button
-                                type="button"
-                                onClick={() => handleDownloadJson(activeReport)}
-                                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
-                            >
-                                <Download size={15} />
-                                ⬇️ Descargar {activeReport.semana}.json
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Resumen de métricas del reporte seleccionado */}
-                    <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                                Consolidado de Mensajes
-                            </p>
-                            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                                <div className="rounded-lg bg-white p-2.5 shadow-xs">
-                                    <p className="text-[11px] text-slate-500">Total</p>
-                                    <p className="text-lg font-bold text-slate-900">
-                                        {activeReport.resumen_metricas?.total_mensajes ?? 0}
-                                    </p>
-                                </div>
-                                <div className="rounded-lg bg-white p-2.5 shadow-xs">
-                                    <p className="text-[11px] text-emerald-600">Aprobados</p>
-                                    <p className="text-lg font-bold text-emerald-600">
-                                        {activeReport.resumen_metricas?.total_aprobados ?? 0}
-                                    </p>
-                                </div>
-                                <div className="rounded-lg bg-white p-2.5 shadow-xs">
-                                    <p className="text-[11px] text-slate-500">Descartados</p>
-                                    <p className="text-lg font-bold text-slate-600">
-                                        {activeReport.resumen_metricas?.total_descartados ?? 0}
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                                Sentimientos y Segmentos
-                            </p>
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                                {Object.entries(
-                                    activeReport.resumen_metricas?.sentimiento || {}
-                                ).map(([sent, count]) => (
-                                    <span
-                                        key={sent}
-                                        className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-xs"
-                                    >
-                                        {sent}: {count}
+                                    <span className="font-mono text-slate-600">
+                                        {inspectionModalReport.bucket}/{inspectionModalReport.ruta_oci}
                                     </span>
-                                ))}
-                                {Object.entries(
-                                    activeReport.resumen_metricas?.segmentos || {}
-                                ).map(([seg, count]) => (
-                                    <span
-                                        key={seg}
-                                        className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700"
-                                    >
-                                        {seg}: {count}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                                Top Temas en Tendencia
-                            </p>
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                                {(activeReport.resumen_metricas?.temas_tendencia || [])
-                                    .length > 0 ? (
-                                    activeReport.resumen_metricas.temas_tendencia.map(
-                                        (t) => (
-                                            <span
-                                                key={t.tema}
-                                                className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700"
-                                            >
-                                                {t.tema} ({t.menciones})
-                                            </span>
-                                        )
-                                    )
-                                ) : (
-                                    <span className="text-xs text-slate-400">
-                                        Sin hashtags registrados en este corte
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Bloque JSON Desplegable */}
-                    {showJsonPreview && (
-                        <div className="mt-5 overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
-                            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5 text-xs text-slate-300">
-                                <span className="font-mono font-semibold">
-                                    reportes/{activeReport.nombre_archivo} ({formatBytes(activeReport.tamano_bytes)})
+                                </div>
+                                <span className="text-slate-400">
+                                    Generado: {formatDateTime(inspectionModalReport.generado_en)}
                                 </span>
-                                <button
-                                    type="button"
-                                    onClick={handleCopyJson}
-                                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1 text-xs font-medium text-slate-200 transition hover:bg-slate-700"
-                                >
-                                    <Copy size={13} />
-                                    {copiedJson ? "¡Copiado!" : "Copiar JSON"}
-                                </button>
                             </div>
-                            <pre className="max-h-96 overflow-auto p-4 font-mono text-xs leading-relaxed text-emerald-300">
-                                {JSON.stringify(activeReport.reporte, null, 2)}
-                            </pre>
+
+                            {/* 3 Tarjetas de Métricas de la Inspección */}
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                                {/* Consolidado */}
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                        Consolidado
+                                    </p>
+                                    <div className="mt-2.5 grid grid-cols-3 gap-1.5 text-center">
+                                        <div className="rounded-lg bg-slate-50 p-1.5">
+                                            <p className="text-[10px] text-slate-500">Total</p>
+                                            <p className="text-base font-bold text-slate-900 tabular-nums">
+                                                {inspectionModalReport.resumen_metricas?.total_mensajes ?? 0}
+                                            </p>
+                                        </div>
+                                        <div className="rounded-lg bg-emerald-50 p-1.5">
+                                            <p className="text-[10px] text-emerald-700">Aprobados</p>
+                                            <p className="text-base font-bold text-emerald-600 tabular-nums">
+                                                {inspectionModalReport.resumen_metricas?.total_aprobados ?? 0}
+                                            </p>
+                                        </div>
+                                        <div className="rounded-lg bg-slate-50 p-1.5">
+                                            <p className="text-[10px] text-slate-500">Descartados</p>
+                                            <p className="text-base font-bold text-slate-600 tabular-nums">
+                                                {inspectionModalReport.resumen_metricas?.total_descartados ?? 0}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Sentimientos y Segmentos */}
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                        Sentimientos y Segmentos
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-1">
+                                        {Object.entries(
+                                            inspectionModalReport.resumen_metricas?.sentimiento || {}
+                                        ).map(([sent, count]) => (
+                                            <span
+                                                key={sent}
+                                                className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 tabular-nums"
+                                            >
+                                                {sent}: {count}
+                                            </span>
+                                        ))}
+                                        {Object.entries(
+                                            inspectionModalReport.resumen_metricas?.segmentos || {}
+                                        ).map(([seg, count]) => (
+                                            <span
+                                                key={seg}
+                                                className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 tabular-nums"
+                                            >
+                                                {seg}: {count}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Top Temas en Tendencia */}
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                        Top Temas
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-1">
+                                        {(inspectionModalReport.resumen_metricas?.temas_tendencia || []).length > 0 ? (
+                                            inspectionModalReport.resumen_metricas?.temas_tendencia?.map((t) => (
+                                                <span
+                                                    key={t.tema}
+                                                    className="rounded-md bg-orange-50 px-2 py-0.5 text-[11px] font-semibold text-orange-700 tabular-nums"
+                                                >
+                                                    {t.tema} ({t.menciones})
+                                                </span>
+                                            ))
+                                        ) : (
+                                            <span className="text-xs text-slate-400 italic">
+                                                Sin temas registrados
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    )}
+
+                        <div className="c-modal__foot">
+                            <button
+                                type="button"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                onClick={() => handleDownloadJson(inspectionModalReport)}
+                            >
+                                <Download size={13} />
+                                <span>Descargar .json</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                onClick={() => {
+                                    const r = inspectionModalReport;
+                                    setInspectionModalReport(null);
+                                    setJsonModalReport(r);
+                                }}
+                            >
+                                <Eye size={13} />
+                                <span>Ver JSON completo</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="c-btn c-btn--primary c-btn--sm"
+                                onClick={() => setInspectionModalReport(null)}
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
-            {/* Tabla Conectada: Historial de Informes Semanales (RF-05) */}
-            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex flex-col justify-between gap-4 border-b border-slate-200 p-6 lg:flex-row lg:items-center">
-                    <div>
-                        <h3 className="font-bold text-slate-900">
-                            Historial de Informes Semanales
-                        </h3>
-                        <p className="mt-1 text-xs text-slate-500">
-                            Reportes generados en el servidor local y sincronizados con el bucket de distribución en OCI.
-                        </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div className="mr-2 flex items-center gap-1 text-xs text-slate-500">
-                            <Filter size={14} />
-                            Filtrar por Estado:
+            {/* MODAL 2: Ver JSON (.c-modal idéntico al de Cristian) */}
+            {jsonModalReport && (
+                <div
+                    className="c-modal is-open"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="json-modal-title"
+                >
+                    <div className="c-modal__dialog max-w-3xl">
+                        <div className="c-modal__head">
+                            <h2 className="t-card" id="json-modal-title">
+                                reporte_{jsonModalReport.semana}.json ({formatBytes(jsonModalReport.tamano_bytes)})
+                            </h2>
+                            <button
+                                type="button"
+                                className="c-btn c-btn--ghost c-btn--icon c-btn--sm"
+                                onClick={() => setJsonModalReport(null)}
+                                aria-label="Cerrar modal"
+                            >
+                                <X size={16} />
+                            </button>
                         </div>
 
-                        <button
-                            type="button"
-                            onClick={() => setStatusFilter("all")}
-                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                                statusFilter === "all"
-                                    ? "border border-slate-300 bg-slate-900 text-white shadow-xs"
-                                    : "text-slate-600 hover:bg-slate-100"
-                            }`}
-                        >
-                            Todos ({reports.length})
-                        </button>
+                        <div className="c-modal__body">
+                            <pre className="c-code max-h-[60vh] overflow-auto text-xs">
+                                {JSON.stringify(jsonModalReport.reporte, null, 2)}
+                            </pre>
+                        </div>
 
-                        <button
-                            type="button"
-                            onClick={() => setStatusFilter("oci")}
-                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                                statusFilter === "oci"
-                                    ? "border border-emerald-600 bg-emerald-600 text-white shadow-xs"
-                                    : "text-slate-600 hover:bg-slate-100"
-                            }`}
-                        >
-                            Subido a OCI ({ociSyncedCount})
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => setStatusFilter("local")}
-                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                                statusFilter === "local"
-                                    ? "border border-amber-500 bg-amber-500 text-white shadow-xs"
-                                    : "text-slate-600 hover:bg-slate-100"
-                            }`}
-                        >
-                            Respaldo Local / Offline ({localSavedCount})
-                        </button>
+                        <div className="c-modal__foot">
+                            <button
+                                type="button"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                onClick={() => handleDownloadJson(jsonModalReport)}
+                            >
+                                <Download size={13} />
+                                <span>Descargar</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                onClick={() => handleCopyJson(jsonModalReport.reporte)}
+                            >
+                                <Copy size={13} />
+                                <span>{copiedJson ? "¡Copiado!" : "Copiar JSON"}</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="c-btn c-btn--primary c-btn--sm"
+                                onClick={() => setJsonModalReport(null)}
+                            >
+                                Cerrar
+                            </button>
+                        </div>
                     </div>
                 </div>
-
-                <div className="overflow-x-auto">
-                    <table className="w-full min-w-[950px]">
-                        <thead className="bg-slate-50">
-                            <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                                <th className="px-6 py-4">Semana / Período</th>
-                                <th className="px-6 py-4">Archivo JSON & Ruta OCI</th>
-                                <th className="px-6 py-4">Métricas & Tamaño</th>
-                                <th className="px-6 py-4">Estado de Distribución</th>
-                                <th className="px-6 py-4 text-right">Acciones</th>
-                            </tr>
-                        </thead>
-
-                        <tbody className="divide-y divide-slate-100">
-                            {isLoadingReports ? (
-                                <tr>
-                                    <td colSpan={5} className="px-6 py-12 text-center">
-                                        <div className="inline-flex items-center gap-2 text-sm text-slate-500">
-                                            <Loader2 size={18} className="animate-spin text-orange-500" />
-                                            Cargando historial de reportes semanales...
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : filteredReports.length === 0 ? (
-                                <tr>
-                                    <td colSpan={5} className="px-6 py-14 text-center">
-                                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
-                                            <FileText size={22} />
-                                        </div>
-                                        <p className="mt-4 text-sm font-semibold text-slate-700">
-                                            No hay informes semanales en esta vista
-                                        </p>
-                                        <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-slate-400">
-                                            Usa el botón &ldquo;📦 Generar y Subir Reporte a OCI&rdquo; en el panel superior para empaquetar los mensajes evaluados.
-                                        </p>
-                                    </td>
-                                </tr>
-                            ) : (
-                                filteredReports.map((item) => {
-                                    const isRowRetrying = retryingWeek === item.semana;
-                                    const isSelected = activeReport?.semana === item.semana;
-                                    return (
-                                        <tr
-                                            key={item.semana}
-                                            className={`transition hover:bg-slate-50/80 ${
-                                                isSelected ? "bg-orange-50/30" : ""
-                                            }`}
-                                        >
-                                            <td className="px-6 py-4">
-                                                <p className="text-sm font-bold text-slate-900">
-                                                    {item.semana}
-                                                </p>
-                                                <p className="mt-0.5 text-xs text-slate-500">
-                                                    {formatDateTime(item.generado_en)}
-                                                </p>
-                                            </td>
-
-                                            <td className="px-6 py-4">
-                                                <p className="font-mono text-xs font-semibold text-slate-800">
-                                                    reportes/{item.nombre_archivo}
-                                                </p>
-                                                <p className="mt-0.5 font-mono text-[11px] text-slate-500">
-                                                    {item.bucket}/{item.ruta_oci}
-                                                </p>
-                                            </td>
-
-                                            <td className="px-6 py-4">
-                                                <p className="text-xs font-semibold text-slate-800">
-                                                    {item.resumen_metricas?.total_mensajes ?? 0} mensajes{" "}
-                                                    <span className="font-normal text-slate-500">
-                                                        ({item.resumen_metricas?.total_aprobados ?? 0} aprobados /{" "}
-                                                        {item.resumen_metricas?.total_descartados ?? 0} descartados)
-                                                    </span>
-                                                </p>
-                                                <p className="mt-0.5 text-xs text-slate-400">
-                                                    Tamaño: {formatBytes(item.tamano_bytes)}
-                                                </p>
-                                            </td>
-
-                                            <td className="px-6 py-4">
-                                                <span
-                                                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
-                                                        item.subido_oci
-                                                            ? "bg-emerald-50 text-emerald-700"
-                                                            : "bg-amber-50 text-amber-700"
-                                                    }`}
-                                                >
-                                                    {item.subido_oci
-                                                        ? "✅ Subido a OCI"
-                                                        : "💾 Respaldo Local"}
-                                                </span>
-                                            </td>
-
-                                            <td className="px-6 py-4 text-right">
-                                                <div className="inline-flex flex-wrap items-center justify-end gap-2">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setSelectedReport(item);
-                                                            setShowJsonPreview(true);
-                                                        }}
-                                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
-                                                    >
-                                                        <Eye size={13} />
-                                                        👁️ Ver JSON
-                                                    </button>
-
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleDownloadJson(item)}
-                                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
-                                                    >
-                                                        <Download size={13} />
-                                                        ⬇️ Descargar
-                                                    </button>
-
-                                                    <button
-                                                        type="button"
-                                                        disabled={isRowRetrying || isSyncing}
-                                                        onClick={() =>
-                                                            executeWeeklySync(item.semana, true)
-                                                        }
-                                                        className="inline-flex items-center gap-1 rounded-lg bg-orange-500 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-orange-600 disabled:opacity-50"
-                                                    >
-                                                        <RefreshCw
-                                                            size={13}
-                                                            className={
-                                                                isRowRetrying ? "animate-spin" : ""
-                                                            }
-                                                        />
-                                                        {item.subido_oci
-                                                            ? "🔄 Reintentar OCI"
-                                                            : "☁️ Subir a OCI"}
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+            )}
+        </section>
     );
 }
 
