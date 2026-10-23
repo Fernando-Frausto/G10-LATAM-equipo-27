@@ -552,7 +552,7 @@ function OCIStorage() {
                     </div>
 
                     <div className="c-table-wrap">
-                        <table className="c-table" id="oci-table">
+                        <table className="c-table c-table--compact" id="oci-table">
                             <thead>
                                 <tr>
                                     <th>Semana</th>
@@ -586,10 +586,6 @@ function OCIStorage() {
                                             <tr key={r.semana}>
                                                 <td style={{ whiteSpace: "nowrap" }}>
                                                     <span className="is-strong t-mono font-mono">{r.semana}</span>
-                                                    <br />
-                                                    <span className="t-caption text-xs text-slate-400 font-mono">
-                                                        {r.bucket}/{r.ruta_oci}
-                                                    </span>
                                                 </td>
                                                 <td className="is-right tabular-nums font-semibold">
                                                     {(r.resumen_metricas?.total_mensajes ?? 0).toLocaleString()}
