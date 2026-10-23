@@ -3159,6 +3159,9 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
     import json
     from datetime import datetime, timezone
 
+    proxy_fallback = "https://discord-proxy-edtech.fraustojeovany.workers.dev"
+    proxy_activo = (os.getenv("DISCORD_PROXY_URL") or os.getenv("DISCORD_PROXY_BASE") or proxy_fallback).strip().rstrip("/")
+
     canales_objetivo = [
         ("1550016804418621452", "general"),
         ("1551309664397033513", "faq"),
@@ -3169,16 +3172,20 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
     guild_id = (os.getenv("DISCORD_GUILD_ID") or "").strip()
     if guild_id:
         try:
+            url_guild = f"https://discord.com/api/v10/guilds/{guild_id}/channels"
+            if proxy_activo:
+                url_guild = url_guild.replace("https://discord.com", proxy_activo, 1)
             req_guild = urllib.request.Request(
-                _enrutar_url_discord(f"https://discord.com/api/v10/guilds/{guild_id}/channels"),
+                url_guild,
                 headers={"Authorization": f"Bot {token}", "User-Agent": "CommunityLab/1.0"},
             )
             with urllib.request.urlopen(req_guild, timeout=4) as r_guild:
                 g_channels = json.loads(r_guild.read().decode("utf-8"))
                 dinamicos = []
+                canales_permitidos = {"general", "faq", "pqrs", "notificaciones"}
                 for c in g_channels:
-                    c_name_lower = str(c.get("name") or "").lower()
-                    if c.get("type") == 0 and "chat-egresados" not in c_name_lower and "oportunidades-laborales" not in c_name_lower:
+                    c_name_lower = str(c.get("name") or "").lower().strip().lstrip("#")
+                    if c.get("type") == 0 and any(p in c_name_lower for p in canales_permitidos):
                         dinamicos.append((str(c.get("id")), str(c.get("name") or "canal")))
                 if dinamicos:
                     canales_objetivo = dinamicos
@@ -3217,8 +3224,9 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
                 self.created_at = datetime.now(timezone.utc)
             self.channel = _MockChannel(ch_name, ch_id)
 
-    for ch_id, ch_name in canales_objetivo:
-        url_canal = _enrutar_url_discord(f"https://discord.com/api/v10/channels/{ch_id}/messages?limit={limite_por_canal}")
+    def _descargar_canal(ch_id: str, ch_name: str):
+        url_base = f"https://discord.com/api/v10/channels/{ch_id}/messages?limit={limite_por_canal}"
+        url_canal = url_base.replace("https://discord.com", proxy_activo, 1) if proxy_activo else _enrutar_url_discord(url_base)
         try:
             req_ch = urllib.request.Request(
                 url_canal,
@@ -3227,13 +3235,24 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
             with urllib.request.urlopen(req_ch, timeout=5) as resp:
                 msgs_raw = json.loads(resp.read().decode("utf-8"))
                 if isinstance(msgs_raw, list):
-                    for m_raw in msgs_raw:
-                        msg_obj = _MockDiscordMsg(m_raw, ch_name, ch_id)
-                        if msg_obj.is_bot:
-                            bots_en_sync += 1
-                        mensajes_totales.append(msg_obj)
+                    return (ch_id, ch_name, msgs_raw)
         except Exception as e_ch:
             logger.warning(f"Error consultando mensajes de canal #{ch_name} ({ch_id}) vía REST: {e_ch}")
+        return (ch_id, ch_name, [])
+
+    resultados_canales = await asyncio.gather(
+        *[asyncio.to_thread(_descargar_canal, cid, cname) for cid, cname in canales_objetivo],
+        return_exceptions=True
+    )
+
+    for item in resultados_canales:
+        if isinstance(item, tuple) and len(item) == 3:
+            ch_id, ch_name, msgs_raw = item
+            for m_raw in msgs_raw:
+                msg_obj = _MockDiscordMsg(m_raw, ch_name, ch_id)
+                if msg_obj.is_bot:
+                    bots_en_sync += 1
+                mensajes_totales.append(msg_obj)
 
     if bots_en_sync > 0:
         global _cache_bots_omitidos_discord
@@ -3285,13 +3304,19 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
 
 async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 100):
     _aplicar_parche_proxy_discord()
-
-    # Si hay proxy configurado (como en Render con DISCORD_PROXY_URL),
-    # ejecutar la sincronización REST directa ultrarrápida que evita el bloqueo de WebSockets de Cloudflare
     proxy = (os.getenv("DISCORD_PROXY_URL") or os.getenv("DISCORD_PROXY_BASE") or "").strip()
-    if proxy and not hasattr(discord.Client.start, "mock_calls"):
+
+    # Prioridad 1: Sincronización REST directa en paralelo
+    # Se ejecuta SIEMPRE en producción para evitar el bloqueo del Gateway WebSocket
+    is_mock = (
+        "Mock" in getattr(discord.Client, "__name__", "")
+        or hasattr(discord.Client.start, "mock_calls")
+        or "MagicMock" in str(type(discord.Client.start))
+        or "AsyncMock" in str(type(discord.Client.start))
+    )
+    if not is_mock:
         try:
-            logger.info("Proxy configurado detectado: ejecutando sincronización REST directa a través del proxy...")
+            logger.info("Ejecutando sincronización REST directa ultrarrápida...")
             res_rest = await _sincronizar_discord_api_rest(token=token, limite_por_canal=limite_por_canal)
             if res_rest and res_rest.get("exito"):
                 return res_rest

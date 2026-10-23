@@ -644,7 +644,7 @@ function Messages() {
         const abortController = new AbortController()
         const timeoutId = setTimeout(() => {
             abortController.abort()
-        }, 12000)
+        }, 35000)
 
         try {
             const resp = await syncDiscord(undefined, { signal: abortController.signal })
