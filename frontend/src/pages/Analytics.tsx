@@ -270,18 +270,23 @@ function Analytics() {
         },
         {
             label: 'Alertas activas',
-            value: messageStats?.priorityAlerts ?? messageStats?.alerts ?? 0,
+            value: messageStats?.alerts ?? 0,
             suffix: '',
             kind: 'danger' as const,
             progress: Math.min(
                 100,
                 Math.round(
-                    ((messageStats?.priorityAlerts ?? messageStats?.alerts ?? 0) /
+                    ((messageStats?.alerts ?? 0) /
                         Math.max(10, (messageStats?.alerts ?? 0) + 5)) *
                         100,
                 ),
             ),
-            note: 'Requieren intervención',
+            note:
+                (messageStats?.alerts ?? 0) > 0
+                    ? (messageStats?.priorityAlerts ?? 0) > 0
+                        ? `${messageStats?.priorityAlerts} de alta prioridad`
+                        : 'Requieren intervención'
+                    : 'Sin alertas pendientes',
         },
     ]
 
@@ -305,7 +310,7 @@ function Analytics() {
             attention_required:
                 messageStats === null
                     ? 'Sin datos disponibles sobre mensajes que requieren atención.'
-                    : `${messageStats.alerts} mensajes negativos detectados; ${messageStats.priorityAlerts} con relevancia alta (70 o más).`,
+                    : `${messageStats.alerts} ${messageStats.alerts === 1 ? 'mensaje negativo detectado' : 'mensajes negativos detectados'}; ${messageStats.priorityAlerts} con relevancia alta (70 o más).`,
         },
     }
 
