@@ -164,6 +164,11 @@ for _m in app.user_middleware:
         _m.kwargs["allow_origin_regex"] = r"https://.*\.netlify\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+"
 
 
+@app.get("/", summary="Health check raíz")
+def root_health_check():
+    return {"status": "ok", "service": "communitylab-backend", "awake": True}
+
+
 # ==============================================================================
 # Inferencia Determinista de Sentimiento y Temas (7 Categorías Cerradas)
 # ==============================================================================
