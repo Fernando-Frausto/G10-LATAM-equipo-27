@@ -73,18 +73,17 @@ Se puede elegir entre tres modelos de IA: **Groq (Llama 3.3)**, **Google Gemma 4
 ### Flujo de datos
 
 ```mermaid
-flowchart LR
-    A["Comunidad en Discord"] --> B["Ingesta<br/>sincronización, limpieza y filtrado"]
-    B --> C[("Supabase<br/>PostgreSQL")]
-    C --> D["Motor de IA<br/>relevancia, sentimiento y temas<br/>(Groq / Gemini / Gemma)"]
-    D --> E{"Orquestador<br/>LangGraph"}
-    E --> F["Redacción por canal<br/>LinkedIn / X / Discord / Quejas"]
-    F --> G["Validador<br/>Manual de Marca"]
-    G --> H["Panel HITL<br/>Community Manager"]
-    H --> I["Publicación<br/>LinkedIn · X · Discord"]
-    I --> C
-    C --> J["Reporte semanal JSON"]
-    J --> K[("OCI Object Storage<br/>Always Free")]
+flowchart TD
+    A["Comunidad en Discord"] --> B["Ingesta: sincronización, limpieza y filtrado"]
+    B --> C["Supabase (PostgreSQL)"]
+    C --> D["Motor de IA: relevancia, sentimiento y temas"]
+    D --> E{"Orquestador LangGraph"}
+    E --> F["Redacción por canal: LinkedIn, X, Discord y Quejas"]
+    F --> G["Validador del Manual de Marca"]
+    G --> H["Revisión humana (HITL)"]
+    H --> I["Publicación en LinkedIn, X y Discord"]
+    I --> J["Reporte semanal JSON"]
+    J --> K["OCI Object Storage (Always Free)"]
 ```
 
 ### Grafo de orquestación (LangGraph)
