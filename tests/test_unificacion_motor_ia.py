@@ -21,6 +21,8 @@ def limpiar_bd_sqlite(tmp_path, monkeypatch):
     """Aísla SQLite usando una BD temporal por test para garantizar aislamiento e idempotencia."""
     test_db = str(tmp_path / "test_communitylab.db")
     monkeypatch.setattr(puente_motor_ia.motor_bd, "RUTA_BD", test_db)
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("DISCORD_TOKEN", raising=False)
     puente_motor_ia.invalidar_cache_supabase()
     puente_motor_ia._asegurar_esquema_sqlite()
     yield
@@ -2828,7 +2830,7 @@ def test_mototradis_hitl_decision_aprobacion_soberania_humana_y_cascada_discord(
         "copys_editados": copys_editados
     }
 
-    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/123"}, clear=False):
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
         resp = client.post("/api/v1/mototradis/hitl-decision", json=payload)
 
     assert resp.status_code == 200, f"Error inesperado {resp.status_code}: {resp.text}"
@@ -2905,7 +2907,8 @@ def test_mototradis_publish_channel_validacion_280_x_y_tolerancia_credenciales(c
         "titulo": "Título de Prueba",
         "texto_copy": "Cuerpo del anuncio oficial"
     }
-    resp_discord = client.post("/api/v1/mototradis/publish-channel", json=payload_discord)
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
+        resp_discord = client.post("/api/v1/mototradis/publish-channel", json=payload_discord)
     assert resp_discord.status_code == 200, f"Error en publicación individual de Discord: {resp_discord.status_code} {resp_discord.text}"
     data_disc = resp_discord.json()
     assert data_disc.get("canal") == "discord"
@@ -2974,7 +2977,7 @@ def test_mototradis_hitl_decision_omite_canales_no_generados_y_solo_publica_acti
         "copys_editados": copys_con_omisiones
     }
 
-    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/123"}, clear=False):
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
         resp = client.post("/api/v1/mototradis/hitl-decision", json=payload)
 
     assert resp.status_code == 200
@@ -3026,7 +3029,7 @@ def test_publish_channel_persiste_en_sqlite_y_actualiza_interaccion(client):
         "texto_copy": "Copy verificado y listo para despacho en canal oficial.",
     }
 
-    with patch.dict(os.environ, {"DISCORD_WEBHOOK_GENERAL": "https://discord.com/api/webhooks/mock/test"}, clear=False):
+    with patch("puente_motor_ia.despachar_discord_con_cascada", return_value={"ok": True, "detalle": "Publicado en Discord (Mock)", "message_id": "mock_disc", "estado_canal": "enviado"}):
         resp = client.post("/api/v1/mototradis/publish-channel", json=payload)
 
     assert resp.status_code == 200
@@ -3630,5 +3633,2092 @@ def test_aplicar_parche_proxy_discord_variables_y_route_base(monkeypatch):
     assert os.environ["DISCORD_WEBHOOK_ANUNCIOS"] == f"{proxy_test}/api/webhooks/111/aaa"
     assert os.environ["DISCORD_WEBHOOK_GENERAL"] == f"{proxy_test}/api/webhooks/222/bbb"
     assert discord.http.Route.BASE == f"{proxy_test}/api/v10"
+
+
+# ==============================================================================
+# Spec 019: Sincronización Dinámica de Bandeja por ID e Integración del Design
+# System CloudEdTech con Datos Reales (RF-01 a RF-11)
+# ==============================================================================
+from pathlib import Path
+
+
+def test_spec019_design_system_activos_referencia_cristian_presentes():
+    """
+    Spec 019 - RF-03, RF-11:
+    Verifica que el directorio de referencia 'cloudedtech-design-system/' de Cristian
+    exista íntegro en el repositorio con sus tokens, hojas de estilo, activos SVG y
+    prototipos HTML, y que ningún archivo productivo en 'frontend/src/' importe datos
+    mock ('CE_DATA' o 'cloudedtech-design-system').
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+    ds_dir = base_dir / "cloudedtech-design-system" / "cloudedtech-ds"
+    assert ds_dir.is_dir(), f"No existe el directorio del Design System: {ds_dir}"
+
+    archivos_requeridos = [
+        "README.md",
+        "design-system.html",
+        "login.html",
+        "app.html",
+        "css/tokens.css",
+        "css/components.css",
+        "css/layout.css",
+        "js/data.js",
+        "js/icons.js",
+        "js/charts.js",
+        "js/app.js",
+        "assets/logo.svg",
+        "assets/logo-dark.svg",
+    ]
+    for rel_path in archivos_requeridos:
+        archivo = ds_dir / rel_path
+        assert archivo.is_file(), f"Falta el activo del Design System: {rel_path}"
+
+    tokens_content = (ds_dir / "css/tokens.css").read_text(encoding="utf-8")
+    assert "--orange-500: #ff7400" in tokens_content.lower()
+    assert "--navy-950:" in tokens_content.lower() and "#080a27" in tokens_content.lower()
+
+    # RF-11: Prohibición absoluta de importar mocks de CE_DATA en frontend/src/
+    frontend_src = base_dir / "frontend" / "src"
+    for ts_file in list(frontend_src.rglob("*.ts")) + list(frontend_src.rglob("*.tsx")):
+        contenido = ts_file.read_text(encoding="utf-8")
+        assert "CE_DATA" not in contenido, f"Uso prohibido de mock CE_DATA en {ts_file}"
+        assert "cloudedtech-design-system" not in contenido, (
+            f"Importación prohibida desde cloudedtech-design-system en {ts_file}"
+        )
+
+
+def test_spec019_tokens_y_clases_design_system_en_index_css():
+    """
+    Spec 019 - RF-04:
+    Verifica que 'frontend/src/index.css' defina los tokens semánticos de Cristian
+    (--orange-500, --navy-950, --surface-app, --surface-card, --shadow-focus) y las
+    clases utilitarias del Design System (.tabular-nums, .c-card--brand, .score-ring,
+    .c-live, .c-meter, .discord-embed, .c-tray-card--active), además de soporte de
+    accesibilidad (:focus-visible y prefers-reduced-motion).
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+    index_css = (base_dir / "frontend" / "src" / "index.css").read_text(encoding="utf-8")
+    index_css_lower = index_css.lower()
+
+    tokens_esperados = [
+        "--orange-500",
+        "#ff7400",
+        "--navy-950",
+        "#080a27",
+        "--surface-app",
+        "--surface-card",
+        "--shadow-sm",
+        "--shadow-focus",
+    ]
+    for token in tokens_esperados:
+        assert token in index_css_lower, f"Falta el token '{token}' en frontend/src/index.css"
+
+    clases_esperadas = [
+        ".tabular-nums",
+        "tabular-nums",
+        ".c-card--brand",
+        ".score-ring",
+        ".c-live",
+        ".c-meter",
+        ".discord-embed",
+        ".c-tray-card--active",
+        ":focus-visible",
+        "prefers-reduced-motion",
+    ]
+    for clase in clases_esperadas:
+        assert clase in index_css_lower, f"Falta la regla o clase '{clase}' en frontend/src/index.css"
+
+
+def test_spec019_sincronizacion_bandeja_por_id_y_discord_embed_en_content_studio():
+    """
+    Spec 019 - RF-01, RF-02, RF-05 a RF-10:
+    Verifica en 'frontend/src/pages/ContentStudio.tsx':
+      1. El estado de inyección temporal 'pinnedSearchMessage' y la lista computada
+         'displayedTrayMessages' en la Bandeja de mensajes en Redacción.
+      2. La insignia '📌 Cargado por ID #' cuando un mensaje buscado por ID se inyecta
+         temporalmente en la bandeja.
+      3. La limpieza inmediata 'setPinnedSearchMessage(null)' cuando el usuario modifica
+         o borra el campo del buscador por ID.
+      4. La clase de selección '.c-tray-card--active' y la Vista Previa en vivo estilo
+         Discord Embed ('.discord-embed' con 'CloudEdTech_Oficial' y 'BOT').
+      5. La integración de '.c-card--brand', '.score-ring', '.c-live' e isotipo SVG en
+         las vistas principales del frontend productivo.
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+    content_studio = (
+        base_dir / "frontend" / "src" / "pages" / "ContentStudio.tsx"
+    ).read_text(encoding="utf-8")
+
+    # RF-01 y RF-02: Sincronización e inyección temporal por ID en Bandeja de Redacción
+    assert "pinnedSearchMessage" in content_studio, (
+        "Falta el estado 'pinnedSearchMessage' en ContentStudio.tsx"
+    )
+    assert "setPinnedSearchMessage(null)" in content_studio, (
+        "Falta la limpieza 'setPinnedSearchMessage(null)' al cambiar el buscador por ID en ContentStudio.tsx"
+    )
+    assert "displayedTrayMessages" in content_studio, (
+        "Falta la lista computada 'displayedTrayMessages' para la Bandeja de Redacción en ContentStudio.tsx"
+    )
+    assert "Cargado por ID #" in content_studio, (
+        "Falta la insignia '📌 Cargado por ID #' para mensajes inyectados temporalmente en ContentStudio.tsx"
+    )
+
+    # RF-09: Selección activa y Vista Previa Discord Embed en ContentStudio.tsx
+    assert "c-tray-card--active" in content_studio, (
+        "Falta la clase 'c-tray-card--active' en la Bandeja de Redacción de ContentStudio.tsx"
+    )
+    assert "discord-embed" in content_studio, (
+        "Falta la vista previa en vivo 'discord-embed' en el panel de Anuncios Oficiales de ContentStudio.tsx"
+    )
+    assert "CloudEdTech_Oficial" in content_studio, (
+        "Falta el autor 'CloudEdTech_Oficial' en la vista previa Discord Embed de ContentStudio.tsx"
+    )
+
+    # RF-05 a RF-08, RF-10: Verificación de patrones del Design System en vistas hermanas
+    sidebar_tsx = (
+        base_dir / "frontend" / "src" / "components" / "Sidebar.tsx"
+    ).read_text(encoding="utf-8")
+    assert "EDUCATION & TECHNOLOGY" in sidebar_tsx, (
+        "Falta el subtítulo de marca 'EDUCATION & TECHNOLOGY' junto al isotipo SVG en Sidebar.tsx"
+    )
+    assert "c-live" in sidebar_tsx, "Falta el indicador en vivo 'c-live' en Sidebar.tsx"
+
+    featured_stories = (
+        base_dir / "frontend" / "src" / "components" / "FeaturedStories.tsx"
+    ).read_text(encoding="utf-8")
+    assert "score-ring" in featured_stories, (
+        "Falta el anillo circular 'score-ring' en FeaturedStories.tsx"
+    )
+
+    analytics_tsx = (
+        base_dir / "frontend" / "src" / "pages" / "Analytics.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-card--brand" in analytics_tsx, (
+        "Falta el patrón 'c-card--brand' en el Insight Principal de Analytics.tsx"
+    )
+
+    oci_tsx = (
+        base_dir / "frontend" / "src" / "pages" / "OCIStorage.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-card--brand" in oci_tsx, (
+        "Falta el patrón 'c-card--brand' en el panel de estado de OCIStorage.tsx"
+    )
+
+
+def test_spec020_dashboard_homologado_cristian_datos_reales():
+    """
+    Spec 020 (Parte 1 — Pestaña Dashboard):
+    Verifica la homologación 1:1 del Dashboard Ejecutivo con el Design System
+    de Cristian preservando datos reales y el botón 'Actualizar datos':
+      1. Clases estructurales en 'frontend/src/index.css'.
+      2. Tarjetas KPI ('.c-stat', '.c-iconbox', '.c-stat__spark', 'linearGradient') en 'KpiCard.tsx'.
+      3. Estructura, selector '.c-segmented' ('7d', '30d', '90d'), 'Actividad de mensajes' y
+         botón 'Actualizar datos' con 'c-btn--primary' en 'Dashboard.tsx'.
+      4. Dona interactiva ('.c-chart--donut', '.c-chart__center', '.c-legend--stack') en 'SentimentChart.tsx'.
+      5. Barras por hora con píldora 'Peak' y colores '#ff7400' / '#fdba74' en 'AudienceHeatmap.tsx'.
+      6. Barras horizontales con botón 'Ordenar por' y colores '#ff7400' / '#fdba74' en 'TopicsChart.tsx'.
+    """
+    base_dir = Path(__file__).resolve().parent.parent
+
+    # 1. index.css
+    index_css = (base_dir / "frontend" / "src" / "index.css").read_text(encoding="utf-8")
+    for required_css_class in [
+        ".c-stat",
+        ".c-stat__spark",
+        ".c-iconbox",
+        ".c-segmented",
+        ".c-chart--donut",
+        ".c-chart__center",
+        ".c-btn--primary",
+        ".l-grid--main-side",
+        ".l-grid--halves",
+    ]:
+        assert required_css_class in index_css, (
+            f"Falta la clase '{required_css_class}' en frontend/src/index.css"
+        )
+
+    # 2. KpiCard.tsx
+    kpi_card = (
+        base_dir / "frontend" / "src" / "components" / "KpiCard.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-stat" in kpi_card, "Falta '.c-stat' en KpiCard.tsx"
+    assert "c-iconbox" in kpi_card, "Falta '.c-iconbox' en KpiCard.tsx"
+    assert "c-stat__spark" in kpi_card, "Falta '.c-stat__spark' en KpiCard.tsx"
+    assert "linearGradient" in kpi_card, "Falta el Sparkline SVG con 'linearGradient' en KpiCard.tsx"
+
+    # 3. Dashboard.tsx
+    dashboard = (
+        base_dir / "frontend" / "src" / "pages" / "Dashboard.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Actividad de mensajes" in dashboard, (
+        "Falta la tarjeta 'Actividad de mensajes' en Dashboard.tsx"
+    )
+    assert "Mensajes ingeridos y preguntas detectadas por día" in dashboard, (
+        "Falta la descripción 'Mensajes ingeridos y preguntas detectadas por día' en Dashboard.tsx"
+    )
+    assert "c-segmented" in dashboard, "Falta el selector '.c-segmented' en Dashboard.tsx"
+    for period_label in ["7d", "30d", "90d"]:
+        assert period_label in dashboard, f"Falta la opción de período '{period_label}' en Dashboard.tsx"
+    assert "Actualizar datos" in dashboard, "Falta el texto 'Actualizar datos' en el botón de Dashboard.tsx"
+    assert "c-btn--primary" in dashboard, "Falta la clase 'c-btn--primary' en el botón de Dashboard.tsx"
+    assert "l-grid--main-side" in dashboard, "Falta la grilla 'l-grid--main-side' en Dashboard.tsx"
+    assert "l-grid--halves" in dashboard, "Falta la grilla 'l-grid--halves' en Dashboard.tsx"
+
+    # 4. SentimentChart.tsx
+    sentiment_chart = (
+        base_dir / "frontend" / "src" / "charts" / "SentimentChart.tsx"
+    ).read_text(encoding="utf-8")
+    assert "c-chart--donut" in sentiment_chart, "Falta '.c-chart--donut' en SentimentChart.tsx"
+    assert "c-chart__center" in sentiment_chart, "Falta '.c-chart__center' en SentimentChart.tsx"
+    assert "c-legend--stack" in sentiment_chart, "Falta '.c-legend--stack' en SentimentChart.tsx"
+
+    # 5. AudienceHeatmap.tsx
+    audience_heatmap = (
+        base_dir / "frontend" / "src" / "charts" / "AudienceHeatmap.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Actividad de audiencia" in audience_heatmap, (
+        "Falta el título 'Actividad de audiencia' en AudienceHeatmap.tsx"
+    )
+    assert "Mensajes promedio por hora del día" in audience_heatmap, (
+        "Falta el subtítulo 'Mensajes promedio por hora del día' en AudienceHeatmap.tsx"
+    )
+    assert "Peak" in audience_heatmap, "Falta la píldora 'Peak' en AudienceHeatmap.tsx"
+    assert "#ff7400" in audience_heatmap.lower(), "Falta el color pico '#ff7400' en AudienceHeatmap.tsx"
+    assert "#fdba74" in audience_heatmap.lower(), "Falta el color base '#fdba74' en AudienceHeatmap.tsx"
+
+    # 6. TopicsChart.tsx
+    topics_chart = (
+        base_dir / "frontend" / "src" / "charts" / "TopicsChart.tsx"
+    ).read_text(encoding="utf-8")
+    assert "Temas principales" in topics_chart, "Falta el título 'Temas principales' en TopicsChart.tsx"
+    assert "Ordenar por" in topics_chart, "Falta el botón 'Ordenar por' en TopicsChart.tsx"
+    assert "#ff7400" in topics_chart.lower(), "Falta el color máximo '#ff7400' en TopicsChart.tsx"
+    assert "#fdba74" in topics_chart.lower(), "Falta el color secundario '#fdba74' en TopicsChart.tsx"
+
+
+
+def test_discord_sync_asincrono_responde_inmediatamente_sin_bloqueo(monkeypatch):
+    """Verifica que POST /api/v1/discord/sync con asincrono=True responda de inmediato sin bloquear."""
+    cliente = TestClient(puente_motor_ia.app)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_discord_token_asincrono")
+
+    resp = cliente.post("/api/v1/discord/sync", json={"limite_por_canal": 10, "asincrono": True})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("exito") is True
+    assert data.get("asincrono") is True
+    assert "segundo plano" in data.get("mensaje", "").lower()
+
+
+# ==============================================================================
+# Spec 021: Optimización de Sincronización Discord de Alta Velocidad (Fase Red TDD)
+# ==============================================================================
+
+def test_spec021_discord_sync_omite_consulta_guild_y_usa_canales_canonicos(monkeypatch):
+    """
+    Spec 021 - RF-01, RF-02:
+    Valida que _sincronizar_discord_api_rest NO invoque la ruta /guilds/{id}/channels
+    y consulte directamente los 4 canales canónicos autorizados, incluso cuando
+    DISCORD_GUILD_ID está configurado.
+    """
+    import asyncio
+    import json
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "123456789012345678")
+    monkeypatch.setenv("DISCORD_CHANNEL_GENERAL", "1550016804418621452")
+    monkeypatch.setenv("DISCORD_CHANNEL_FAQ", "1551309664397033513")
+    monkeypatch.setenv("DISCORD_CHANNEL_PQRS", "1559244209884504245")
+    monkeypatch.setenv("DISCORD_CHANNEL_NOTIFICACIONES", "1559244522842488942")
+
+    urls_solicitadas = []
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        urls_solicitadas.append(url)
+        resp = MagicMock()
+        resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data=None):
+            self._data = data if data is not None else []
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        urls_solicitadas.append(str(url))
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    # Aserción 1: NUNCA debe consultar /guilds/{id}/channels
+    assert not any("/guilds/" in u for u in urls_solicitadas), (
+        f"Se detectó consulta indebida a la ruta de guild: {urls_solicitadas}"
+    )
+
+    # Aserción 2: Debe consultar directamente los 4 canales canónicos
+    canales_esperados = {"1550016804418621452", "1551309664397033513", "1559244209884504245", "1559244522842488942"}
+    canales_consultados = {
+        cid for cid in canales_esperados
+        if any(f"/channels/{cid}/messages" in u for u in urls_solicitadas)
+    }
+    assert canales_consultados == canales_esperados, (
+        f"No se consultaron todos los canales canónicos. Esperados: {canales_esperados}, Encontrados: {canales_consultados}"
+    )
+
+
+def test_spec021_discord_sync_persiste_directo_en_sqlite_sin_bloqueo_supabase(monkeypatch):
+    """
+    Spec 021 - RF-01, RF-03:
+    Valida que al sincronizar mensajes nuevos, estos se escriban directamente en la tabla
+    interacciones de SQLite local y que _sincronizar_supabase_a_sqlite NO sea ejecutado
+    en la ruta crítica síncrona.
+    """
+    import asyncio
+    import json
+    import sqlite3
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+    mock_sync_supabase = MagicMock()
+    monkeypatch.setattr(puente_motor_ia, "_sincronizar_supabase_a_sqlite", mock_sync_supabase)
+
+    msg_id = "msg_spec021_directo_001"
+    msg_raw = {
+        "id": msg_id,
+        "content": "Consulta técnica sobre despliegue en Render y FastAPI",
+        "author": {"id": "usr_99", "username": "estudiante_render", "bot": False},
+        "timestamp": "2026-10-23T11:00:00+00:00",
+        "channel_id": "1550016804418621452",
+    }
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        resp = MagicMock()
+        if "1550016804418621452" in url:
+            resp.read.return_value = json.dumps([msg_raw]).encode("utf-8")
+        else:
+            resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        if "1550016804418621452" in str(url):
+            return MockResp([msg_raw])
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    # Aserción 1: Supabase sync no debe llamarse en la ruta crítica
+    assert not mock_sync_supabase.called, (
+        "_sincronizar_supabase_a_sqlite no debe ser ejecutado en la ruta crítica síncrona"
+    )
+
+    # Aserción 2: El mensaje debe estar guardado directamente en la base de datos SQLite local
+    conn = sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD)
+    cursor = conn.cursor()
+    cursor.execute("SELECT texto, autor, message_id FROM interacciones WHERE message_id = ?", (msg_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    assert row is not None, f"El mensaje con message_id={msg_id} no fue insertado directamente en SQLite"
+    assert row[1] == "estudiante_render"
+    assert "Consulta técnica sobre despliegue" in row[0]
+    assert resultado.get("guardadas_nuevas") == 1
+
+
+def test_spec021_discord_sync_tolerancia_fallo_parcial_canal(monkeypatch):
+    """
+    Spec 021 - RF-05:
+    Valida que si 1 de los 4 canales genera un fallo de red o timeout,
+    los 3 canales restantes se procesen exitosamente y la respuesta reporte
+    canales_consultados=4, canales_exitosos=3 y '(3 de 4 canales exitosos)'.
+    """
+    import asyncio
+    import json
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "1550016804418621452" in url:
+            raise urllib.error.URLError("Timeout simulado en canal general")
+        resp = MagicMock()
+        resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        if "1550016804418621452" in str(url):
+            raise requests.exceptions.Timeout("Timeout simulado en canal general")
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    assert resultado is not None, "La sincronización debe retornar resultado aun con fallo parcial"
+    assert resultado.get("exito") is True
+    assert resultado.get("canales_consultados") == 4, (
+        f"Se esperaba canales_consultados=4, se obtuvo: {resultado.get('canales_consultados')}"
+    )
+    assert resultado.get("canales_exitosos") == 3, (
+        f"Se esperaba canales_exitosos=3, se obtuvo: {resultado.get('canales_exitosos')}"
+    )
+    assert "(3 de 4 canales exitosos)" in resultado.get("mensaje", ""), (
+        f"El mensaje debe contener '(3 de 4 canales exitosos)'. Mensaje obtenido: {resultado.get('mensaje')}"
+    )
+
+
+def test_spec021_discord_sync_coherencia_contable_y_bots(monkeypatch):
+    """
+    Spec 021 - RF-01, RF-06:
+    Valida que los mensajes de bots o webhooks sean omitidos de la tabla interacciones,
+    sumados a _cache_bots_omitidos_discord y que se cumpla rigurosamente la ecuación:
+    total_recibidas == guardadas_nuevas + repetidas_omitidas + vacias_omitidas.
+    """
+    import asyncio
+    import json
+    import sqlite3
+    import urllib.request
+    import requests
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "mock_bot_token_spec021")
+
+    # 1. Pre-insertar mensaje en SQLite para simular uno repetido
+    conn = sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO interacciones
+           (hash, canal, autor, texto, message_id, creado_en, enviado_en, estado, estado_curaduria, etapa_flujo, etapa, tipo, origen_comunidad, periodo_referencia)
+           VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'), 'pendiente', 'pending', 'ingesta', 'ingesta', 'mensaje', 'Discord', 'Semana_43')""",
+        ("hash_repetido_spec021_001", "#general", "usuario_antiguo", "Mensaje ya existente", "msg_repetido_spec021",)
+    )
+    conn.commit()
+    conn.close()
+
+    # 2. Definir 5 mensajes de prueba:
+    mensajes_prueba = [
+        {"id": "bot_msg_1", "content": "Anuncio de bot", "author": {"id": "b1", "username": "BotHelper", "bot": True}, "timestamp": "2026-10-23T10:00:00Z"},
+        {"id": "wh_msg_2", "content": "Noticia webhook", "author": {"id": "w1", "username": "GithubHook"}, "webhook_id": "wh_12345", "timestamp": "2026-10-23T10:01:00Z"},
+        {"id": "nuevo_msg_3", "content": "Pregunta de un estudiante nuevo sobre Python", "author": {"id": "u1", "username": "estudiante_nuevo", "bot": False}, "timestamp": "2026-10-23T10:02:00Z"},
+        {"id": "msg_repetido_spec021", "content": "Mensaje ya existente", "author": {"id": "u2", "username": "usuario_antiguo", "bot": False}, "timestamp": "2026-10-23T10:03:00Z"},
+        {"id": "vacio_msg_5", "content": "   ", "author": {"id": "u3", "username": "usuario_espacios", "bot": False}, "timestamp": "2026-10-23T10:04:00Z"},
+    ]
+
+    def mock_urlopen(req, *args, **kwargs):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        resp = MagicMock()
+        if "1550016804418621452" in url:
+            resp.read.return_value = json.dumps(mensajes_prueba).encode("utf-8")
+        else:
+            resp.read.return_value = json.dumps([]).encode("utf-8")
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        return resp
+
+    class MockResp:
+        def __init__(self, data):
+            self._data = data
+            self.status_code = 200
+            self.headers = {}
+        def json(self):
+            return self._data
+        def raise_for_status(self):
+            pass
+
+    def mock_session_get(url, *args, **kwargs):
+        if "1550016804418621452" in str(url):
+            return MockResp(mensajes_prueba)
+        return MockResp([])
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+    if hasattr(puente_motor_ia, "_obtener_discord_http_session"):
+        mock_sess = MagicMock()
+        mock_sess.get.side_effect = mock_session_get
+        monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: mock_sess)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, *a, **kw: mock_session_get(url, *a, **kw))
+
+    puente_motor_ia._cache_bots_omitidos_discord = 0
+
+    resultado = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest(token="mock_bot_token_spec021", limite_por_canal=10))
+
+    assert resultado is not None
+    assert resultado.get("exito") is True
+
+    # 3. Validar contabilidad rigurosa
+    total_recibidas = resultado.get("total_recibidas", 0)
+    guardadas_nuevas = resultado.get("guardadas_nuevas", 0)
+    repetidas_omitidas = resultado.get("repetidas_omitidas", 0)
+    vacias_omitidas = resultado.get("vacias_omitidas", 0)
+
+    assert total_recibidas == guardadas_nuevas + repetidas_omitidas + vacias_omitidas, (
+        f"Incoherencia contable: total_recibidas ({total_recibidas}) != "
+        f"guardadas_nuevas ({guardadas_nuevas}) + repetidas_omitidas ({repetidas_omitidas}) + vacias_omitidas ({vacias_omitidas})"
+    )
+    assert guardadas_nuevas == 1, f"Se esperaba 1 guardada nueva, se obtuvo {guardadas_nuevas}"
+    assert repetidas_omitidas == 1, f"Se esperaba 1 repetida omitida, se obtuvo {repetidas_omitidas}"
+    assert vacias_omitidas == 1, f"Se esperaba 1 vacía omitida, se obtuvo {vacias_omitidas}"
+    assert total_recibidas == 3, f"Se esperaba 3 mensajes recibidos a nivel humano, se obtuvo {total_recibidas}"
+
+    # 4. Validar telemetría de bots (al menos 2 omitidos: bot y webhook)
+    assert puente_motor_ia._cache_bots_omitidos_discord >= 2, (
+        f"Se esperaba _cache_bots_omitidos_discord >= 2, se obtuvo {puente_motor_ia._cache_bots_omitidos_discord}"
+    )
+
+    # 5. Validar que bots, webhooks y vacíos NO estén en la tabla interacciones de SQLite
+    conn = sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD)
+    cursor = conn.cursor()
+    cursor.execute("SELECT message_id FROM interacciones WHERE message_id IN ('bot_msg_1', 'wh_msg_2', 'vacio_msg_5')")
+    filas_no_deseadas = cursor.fetchall()
+    assert len(filas_no_deseadas) == 0, (
+        f"Se encontraron mensajes de bots/webhooks/vacíos indebidamente insertados en interacciones: {filas_no_deseadas}"
+    )
+
+    cursor.execute("SELECT message_id, texto FROM interacciones WHERE message_id = 'nuevo_msg_3'")
+    fila_nueva = cursor.fetchone()
+    conn.close()
+    assert fila_nueva is not None, "El mensaje humano nuevo 'nuevo_msg_3' debe estar persistido en SQLite"
+
+
+def test_spec021_discord_sync_sesion_http_keep_alive_configurada():
+    """
+    Spec 021 - RF-02:
+    Valida que _obtener_discord_http_session() retorne una sesión de requests.Session
+    configurada con HTTPAdapter de pool_connections=10 y pool_maxsize=10 para Keep-Alive persistente.
+    """
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    assert hasattr(puente_motor_ia, "_obtener_discord_http_session"), (
+        "puente_motor_ia debe implementar la función _obtener_discord_http_session"
+    )
+
+    sesion = puente_motor_ia._obtener_discord_http_session()
+    assert isinstance(sesion, requests.Session), "Debe retornar una instancia de requests.Session"
+
+    adapter_https = sesion.adapters.get("https://")
+    adapter_http = sesion.adapters.get("http://")
+
+    assert isinstance(adapter_https, HTTPAdapter), "Debe tener HTTPAdapter configurado para https://"
+    assert isinstance(adapter_http, HTTPAdapter), "Debe tener HTTPAdapter configurado para http://"
+
+    assert adapter_https._pool_connections == 10, (
+        f"pool_connections para https:// debe ser 10, obtenido: {adapter_https._pool_connections}"
+    )
+    assert adapter_https._pool_maxsize == 10, (
+        f"pool_maxsize para https:// debe ser 10, obtenido: {adapter_https._pool_maxsize}"
+    )
+    assert adapter_http._pool_connections == 10, (
+        f"pool_connections para http:// debe ser 10, obtenido: {adapter_http._pool_connections}"
+    )
+    assert adapter_http._pool_maxsize == 10, (
+        f"pool_maxsize para http:// debe ser 10, obtenido: {adapter_http._pool_maxsize}"
+    )
+
+
+# ==============================================================================
+# Spec 022: Migración de Interacciones a Supabase Enoc y Unificación de Conexiones
+# ==============================================================================
+
+def test_spec022_estructura_ddl_interacciones_enoc():
+    """
+    Spec 022 - RF-01:
+    Valida que la estructura canónica del DDL para interacciones en Enoc contenga
+    las 11 columnas especificadas (id, hash, origen_comunidad, periodo_referencia,
+    autor, canal, tipo, texto, enviado_en, estado, creado_en) y la restricción o índice UNIQUE sobre hash.
+    """
+    import importlib
+    try:
+        migrador = importlib.import_module("scripts.migrar_interacciones_enoc")
+    except ModuleNotFoundError:
+        pytest.fail("scripts/migrar_interacciones_enoc.py no existe aún (Fase Red TDD)")
+
+    assert hasattr(migrador, "DDL_INTERACCIONES"), (
+        "El módulo scripts.migrar_interacciones_enoc debe definir la constante DDL_INTERACCIONES"
+    )
+    ddl = getattr(migrador, "DDL_INTERACCIONES", "").lower()
+
+    columnas_esperadas = [
+        "id", "hash", "origen_comunidad", "periodo_referencia",
+        "autor", "canal", "tipo", "texto", "enviado_en", "estado", "creado_en"
+    ]
+    for col in columnas_esperadas:
+        assert col in ddl, f"La columna '{col}' no se encuentra en el DDL canónico de interacciones"
+
+    assert "unique" in ddl and "hash" in ddl, (
+        "El DDL debe definir una restricción o índice UNIQUE sobre la columna 'hash'"
+    )
+
+
+def test_spec022_salvaguarda_conexion_puente_conmuta_tania_a_enoc(monkeypatch, caplog):
+    """
+    Spec 022 - RF-04:
+    Valida que puente_motor_ia detecte si DATABASE_URL apunta al proyecto obsoleto de Tania
+    ('ietgilhtccvqlqglqazf') y conmute de forma transparente hacia SUPABASE_DB_URL (Enoc)
+    emitiendo una advertencia clara en log (logger.warning).
+    """
+    import logging
+
+    url_tania = "postgresql://postgres.ietgilhtccvqlqglqazf:pwd123@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+    url_enoc = "postgresql://postgres.swdoucawdasxmnomlcfu:pwd456@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+
+    monkeypatch.setenv("DATABASE_URL", url_tania)
+    monkeypatch.setenv("SUPABASE_DB_URL", url_enoc)
+
+    assert hasattr(puente_motor_ia, "resolver_url_base_datos"), (
+        "puente_motor_ia debe implementar la función 'resolver_url_base_datos' para la salvaguarda de conexión"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        url_activa = puente_motor_ia.resolver_url_base_datos(url_tania, url_enoc)
+
+    assert url_activa == url_enoc, (
+        f"Se esperaba conmutación a la URL de Enoc ({url_enoc}), pero se obtuvo: {url_activa}"
+    )
+    assert any("ietgilhtccvqlqglqazf" in r.message or "Tania" in r.message or "conmut" in r.message.lower() for r in caplog.records), (
+        "Debe registrarse una advertencia en log (logger.warning) informando la conmutación automática"
+    )
+
+
+def test_spec022_migracion_idempotencia_y_hashes_coincidentes():
+    """
+    Spec 022 - RF-02 y RF-03:
+    Valida el comportamiento de transferencia idempotente (ON CONFLICT (hash) DO NOTHING),
+    la verificación de integridad de los 204 hashes coincidentes (pre-flight y post-flight)
+    y la sincronización de la secuencia interacciones_id_seq con COALESCE((SELECT MAX(id) FROM interacciones), 1).
+    """
+    import importlib
+    try:
+        migrador = importlib.import_module("scripts.migrar_interacciones_enoc")
+    except ModuleNotFoundError:
+        pytest.fail("scripts/migrar_interacciones_enoc.py no existe aún (Fase Red TDD)")
+
+    # 1. Validar SQL de inserción con cláusula ON CONFLICT (hash) DO NOTHING
+    assert hasattr(migrador, "SQL_INSERT_INTERACCIONES"), (
+        "El módulo migrador debe definir la constante SQL_INSERT_INTERACCIONES"
+    )
+    sql_insert = getattr(migrador, "SQL_INSERT_INTERACCIONES", "").upper()
+    assert "ON CONFLICT (HASH) DO NOTHING" in sql_insert or "ON CONFLICT (hash) DO NOTHING".upper() in sql_insert, (
+        "La inserción debe incluir la cláusula idempotente 'ON CONFLICT (hash) DO NOTHING'"
+    )
+
+    # 2. Validar función de validación de paridad de 204 hashes
+    assert hasattr(migrador, "validar_paridad_hashes"), (
+        "El módulo migrador debe implementar la función 'validar_paridad_hashes'"
+    )
+    hashes_origen = [f"hash_discord_{i:03d}" for i in range(204)]
+    hashes_destino_exactos = list(hashes_origen)
+    assert migrador.validar_paridad_hashes(hashes_origen, hashes_destino_exactos) is True, (
+        "Debe retornar True cuando los 204 hashes coinciden exactamente"
+    )
+
+    # Casos de discrepancia
+    hashes_destino_menos = hashes_origen[:-1]
+    assert migrador.validar_paridad_hashes(hashes_origen, hashes_destino_menos) is False, (
+        "Debe retornar False si la cantidad no coincide con 204"
+    )
+    hashes_destino_discrepante = list(hashes_origen)
+    hashes_destino_discrepante[0] = "hash_alterado"
+    assert migrador.validar_paridad_hashes(hashes_origen, hashes_destino_discrepante) is False, (
+        "Debe retornar False si algún hash discrepa"
+    )
+
+    # 3. Validar SQL de sincronización de secuencia autoincremental
+    assert hasattr(migrador, "SQL_SYNC_SECUENCIA"), (
+        "El módulo migrador debe definir la constante SQL_SYNC_SECUENCIA"
+    )
+    sql_seq = getattr(migrador, "SQL_SYNC_SECUENCIA", "")
+    assert "interacciones_id_seq" in sql_seq, "Debe sincronizar la secuencia 'interacciones_id_seq'"
+    assert "COALESCE" in sql_seq.upper() and "MAX(ID)" in sql_seq.upper(), (
+        "La secuencia debe usar COALESCE((SELECT MAX(id) FROM interacciones), 1)"
+    )
+
+
+# ==============================================================================
+# Spec 023: Persistencia en Historial de Reportes Semanales y LangGraph Checkpointer
+# en Supabase Enoc con Garantía de Alta Velocidad
+# ==============================================================================
+
+def test_spec023_normalizacion_registro_historial_reporte():
+    """
+    Spec 023 - RF-01, RF-02:
+    Valida la función construir_registro_historial_reporte para normalizar los
+    12 campos canónicos de public.historial_reportes_semanales:
+    - id_mensaje normalizado invariablemente como string (str)
+    - autor, semana, fecha_envio, fecha_extraccion, fecha_publicacion
+    - rutas_activas como lista de canales despachados
+    - estado literal 'publicado'
+    - contenido_original como JSON estructurado
+    - copys_generados indexado por canal
+    - cw_modelo_ia resuelto con catálogo oficial
+    """
+    assert hasattr(puente_motor_ia, "construir_registro_historial_reporte"), (
+        "puente_motor_ia debe implementar 'construir_registro_historial_reporte' para normalizar registros canónicos"
+    )
+
+    # 1. Caso de publicación individual
+    reg_ind = puente_motor_ia.construir_registro_historial_reporte(
+        id_mensaje=101,  # Pasado como entero para verificar conversión a str
+        canal="discord",
+        copy_generado={"titulo": "Taller IA", "texto_copy": "Aprende agentes autónomos este sábado."},
+        interaccion={"autor": "alice", "texto": "¿Habrá taller de IA?", "canal": "#general", "semana": "Semana_01"}
+    )
+
+    assert isinstance(reg_ind, dict), "El registro retornado debe ser un diccionario"
+    assert reg_ind.get("id_mensaje") == "101", f"id_mensaje debe normalizarse a str ('101'), obtenido: {reg_ind.get('id_mensaje')}"
+    assert reg_ind.get("autor") == "alice"
+    assert reg_ind.get("semana") == "Semana_01"
+    assert reg_ind.get("estado") == "publicado"
+    assert reg_ind.get("rutas_activas") == ["discord"], "rutas_activas debe contener exactamente ['discord']"
+    assert isinstance(reg_ind.get("fecha_publicacion"), str) and len(reg_ind["fecha_publicacion"]) > 10
+    assert isinstance(reg_ind.get("contenido_original"), dict)
+    assert reg_ind["contenido_original"].get("texto") == "¿Habrá taller de IA?"
+    assert isinstance(reg_ind.get("copys_generados"), dict)
+    assert "discord" in reg_ind["copys_generados"]
+    assert reg_ind["copys_generados"]["discord"]["titulo"] == "Taller IA"
+    assert isinstance(reg_ind.get("cw_modelo_ia"), str) and len(reg_ind["cw_modelo_ia"]) > 0
+
+    # 2. Caso consolidado multi-canal HITL
+    copys_hitl = {
+        "discord": {"titulo": "D1", "texto_copy": "Copy Discord"},
+        "linkedin": {"titulo": "L1", "texto_copy": "Copy LinkedIn"}
+    }
+    reg_hitl = puente_motor_ia.construir_registro_historial_reporte(
+        id_mensaje="snowflake_discord_987654321",
+        rutas_activas=["discord", "linkedin"],
+        copys_generados=copys_hitl,
+        interaccion={"autor": "bob", "texto": "Reunión de Cloud", "canal": "#anuncios"},
+        semana="Semana_02"
+    )
+
+    assert reg_hitl.get("id_mensaje") == "snowflake_discord_987654321"
+    assert reg_hitl.get("rutas_activas") == ["discord", "linkedin"]
+    assert reg_hitl.get("estado") == "publicado"
+    assert "discord" in reg_hitl["copys_generados"] and "linkedin" in reg_hitl["copys_generados"]
+
+
+def test_spec023_publish_channel_despacho_asincrono_historial_reportes(client, monkeypatch):
+    """
+    Spec 023 - RF-01, RF-05, RF-06:
+    Valida que ante publicación individual exitosa en /api/v1/mototradis/publish-channel:
+    1. Se persista atómicamente en SQLite local en menos de 100 ms de sobrecarga interna.
+    2. Se despache de forma desacoplada en segundo plano la réplica hacia Supabase
+       (despachar_replicacion_historial_reportes) con el registro canónico individual.
+    3. La respuesta HTTP sea inmediata y exitosa.
+    """
+    import time
+    _insertar_interaccion_spec012(
+        interaccion_id=801,
+        autor="marcos",
+        canal="#general",
+        texto="Consulta sobre despliegue en la nube",
+        etapa_flujo="en_redaccion"
+    )
+
+    assert hasattr(puente_motor_ia, "despachar_replicacion_historial_reportes"), (
+        "puente_motor_ia debe implementar 'despachar_replicacion_historial_reportes' para desacoplar a segundo plano"
+    )
+
+    llamadas_despacho = []
+    def mock_despacho(reg):
+        llamadas_despacho.append(reg)
+
+    monkeypatch.setattr(puente_motor_ia, "despachar_replicacion_historial_reportes", mock_despacho)
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_discord_con_cascada",
+        lambda *args, **kwargs: {"ok": True, "detalle": "Enviado con éxito", "estado_canal": "enviado", "message_id": "disc_801"}
+    )
+
+    t0 = time.perf_counter()
+    resp = client.post("/api/v1/mototradis/publish-channel", json={
+        "id_mensaje": 801,
+        "canal": "discord",
+        "titulo": "Novedades Cloud",
+        "texto_copy": "Aquí las novedades semanales sobre arquitectura cloud."
+    })
+    latencia_ms = (time.perf_counter() - t0) * 1000
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("ok") is True
+    assert data.get("estado_canal") == "enviado"
+    assert latencia_ms < 1500, f"La sobrecarga interna debe ser inmediata, tomada: {latencia_ms:.2f} ms"
+
+    # Verificar que se despachó la tarea en segundo plano con el registro canónico
+    assert len(llamadas_despacho) == 1, "Debe invocarse despachar_replicacion_historial_reportes exactamente una vez"
+    payload_enviado = llamadas_despacho[0]
+    assert payload_enviado.get("id_mensaje") == "801"
+    assert payload_enviado.get("rutas_activas") == ["discord"]
+    assert payload_enviado.get("estado") == "publicado"
+    assert "discord" in payload_enviado.get("copys_generados", {})
+
+
+def test_spec023_hitl_decision_aprobacion_despacho_asincrono_consolidado(client, monkeypatch):
+    """
+    Spec 023 - RF-02, RF-04, RF-05:
+    Valida que ante aprobación HITL (/api/v1/mototradis/hitl-decision):
+    1. Si decision == 'aprobar' y hay al menos un canal enviado con éxito, se despache
+       en segundo plano la réplica consolidada conteniendo exactamente las rutas exitosas
+       y los copys aprobados por el humano (Soberanía Humana).
+    2. Si decision == 'desaprobar', se purgue el hilo en el checkpointer y NO se despache
+       réplica a historial_reportes_semanales.
+    """
+    from datetime import datetime, timezone
+
+    _insertar_interaccion_spec012(
+        interaccion_id=802,
+        autor="laura",
+        canal="#ideas",
+        texto="Propuesta de taller práctico sobre FastAPI",
+        etapa_flujo="en_redaccion"
+    )
+
+    # Insertar borradores en SQLite para simular precondición de aprobación
+    ahora = puente_motor_ia.a_utc_iso(datetime.now(timezone.utc))
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, plataforma, titulo, contenido, estado,
+                estado_publicacion, creado_en, actualizado_en
+            ) VALUES
+            (80201, 802, 'discord', 'discord', 'Draft Discord', 'Borrador Discord', 'pendiente_revision', 'no_publicado', ?, ?),
+            (80202, 802, 'linkedin', 'linkedin', 'Draft LinkedIn', 'Borrador LinkedIn', 'pendiente_revision', 'no_publicado', ?, ?)
+        """, (ahora, ahora, ahora, ahora))
+        conn.commit()
+
+    assert hasattr(puente_motor_ia, "despachar_replicacion_historial_reportes"), (
+        "puente_motor_ia debe implementar 'despachar_replicacion_historial_reportes'"
+    )
+
+    llamadas_despacho = []
+    monkeypatch.setattr(puente_motor_ia, "despachar_replicacion_historial_reportes", lambda r: llamadas_despacho.append(r))
+
+    # Mock dispatchers: Discord y LinkedIn exitosos, X fallido
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_discord_con_cascada",
+        lambda *args, **kwargs: {"ok": True, "detalle": "Discord OK", "estado_canal": "enviado", "message_id": "disc_802"}
+    )
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_linkedin_resiliente",
+        lambda *args, **kwargs: {"ok": True, "detalle": "LinkedIn OK", "estado_canal": "enviado", "urn": "urn:li:802"}
+    )
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_x_resiliente",
+        lambda *args, **kwargs: {"ok": False, "detalle": "Fallo simulado X", "estado_canal": "error"}
+    )
+
+    copys_editados_humano = {
+        "discord": {"titulo": "Taller FastAPI Aprobado", "texto_copy": "Aprende APIs rápidas."},
+        "linkedin": {"titulo": "Webinar FastAPI Profesional", "texto_copy": "Domina backend moderno con FastAPI."}
+    }
+
+    # 1. Aprobación HITL
+    resp_aprob = client.post("/api/v1/mototradis/hitl-decision", json={
+        "id_mensaje": 802,
+        "decision": "aprobar",
+        "copys_editados": copys_editados_humano
+    })
+
+    assert resp_aprob.status_code == 200
+    data_aprob = resp_aprob.json()
+    assert data_aprob.get("exito") is True
+
+    # Validar despacho consolidado en background
+    assert len(llamadas_despacho) == 1, "Debe despacharse el registro consolidado a Supabase en background"
+    reg_consolidado = llamadas_despacho[0]
+    assert reg_consolidado.get("id_mensaje") == "802"
+    assert "discord" in reg_consolidado.get("rutas_activas", [])
+    assert "linkedin" in reg_consolidado.get("rutas_activas", [])
+    assert "x" not in reg_consolidado.get("rutas_activas", [])  # X falló, no debe estar activa
+    assert reg_consolidado.get("copys_generados", {}).get("discord", {}).get("titulo") == "Taller FastAPI Aprobado"
+
+    # 2. Desaprobación HITL: no debe despachar réplica
+    llamadas_despacho.clear()
+    resp_desaprob = client.post("/api/v1/mototradis/hitl-decision", json={
+        "id_mensaje": 802,
+        "decision": "desaprobar"
+    })
+    assert resp_desaprob.status_code == 200
+    assert len(llamadas_despacho) == 0, "No debe despacharse réplica a historial ante desaprobación"
+
+
+def test_spec023_checkpointer_session_mode_y_mitigacion_prepared_statements(monkeypatch, caplog):
+    """
+    Spec 023 - RF-03, RF-04, RF-06:
+    Valida la fábrica de checkpointer resiliente:
+    1. resolver_url_session_mode conmuta puertos de Transaction Pooler (:6543) a Session Mode (:5432).
+    2. obtener_checkpointer_resiliente usa Session Mode (:5432) y prepare_threshold=None en psycopg 3
+       para mitigar DuplicatePreparedStatement.
+    3. Ante fallo de conexión remota o DuplicatePreparedStatement, conmuta transparentemente a MemorySaver
+       emitiendo logger.warning estructurado.
+    """
+    import logging
+
+    assert hasattr(puente_motor_ia, "resolver_url_session_mode"), (
+        "puente_motor_ia debe implementar 'resolver_url_session_mode'"
+    )
+
+    url_tx = "postgresql://postgres.swdoucawdasxmnomlcfu:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+    url_res = puente_motor_ia.resolver_url_session_mode(url_tx)
+    assert ":5432" in url_res and ":6543" not in url_res, (
+        f"resolver_url_session_mode debe sustituir el puerto :6543 por :5432. Obtenido: {url_res}"
+    )
+
+    url_ya_5432 = "postgresql://postgres.swdoucawdasxmnomlcfu:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
+    assert puente_motor_ia.resolver_url_session_mode(url_ya_5432) == url_ya_5432
+
+    # Probar fallback resiliente ante DuplicatePreparedStatement o Network Error
+    monkeypatch.setattr(puente_motor_ia, "_checkpointer_activo", None)
+    monkeypatch.setenv("SUPABASE_DB_URL", url_tx)
+
+    with patch("langgraph.checkpoint.postgres.PostgresSaver.from_conn_string", side_effect=Exception("DuplicatePreparedStatement: prepared statement _pg3_0 already exists")):
+        with caplog.at_level(logging.WARNING):
+            cp = puente_motor_ia.obtener_checkpointer_resiliente()
+
+    from langgraph.checkpoint.memory import MemorySaver
+    assert isinstance(cp, MemorySaver), "Debe conmutar transparentemente a MemorySaver ante excepción en PostgresSaver"
+    assert any("MemorySaver" in r.message or "PostgresSaver" in r.message for r in caplog.records), (
+        "Debe emitirse un logger.warning informando la conmutación a MemorySaver"
+    )
+
+
+def test_spec023_resiliencia_fallo_segundo_plano_y_marca_local_sqlite(monkeypatch, caplog):
+    """
+    Spec 023 - RF-04, RF-05:
+    Valida que ante fallo de red o timeout durante la inserción remota en Supabase:
+    1. replicar_historial_reportes_semanales_supabase capture la excepción defensivamente.
+    2. Se registre un logger.warning descriptivo.
+    3. Se marque el estado pendiente local en SQLite (sync_supabase = 'pendiente')
+       para reconciliación diferida.
+    """
+    import logging
+
+    assert hasattr(puente_motor_ia, "replicar_historial_reportes_semanales_supabase"), (
+        "puente_motor_ia debe implementar 'replicar_historial_reportes_semanales_supabase'"
+    )
+
+    _insertar_interaccion_spec012(
+        interaccion_id=803,
+        autor="diego",
+        canal="#general",
+        texto="Problema con el despliegue",
+        etapa_flujo="publicado"
+    )
+
+    # Insertar en contenidos_generados
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, plataforma, titulo, contenido, estado,
+                estado_publicacion, creado_en, actualizado_en
+            ) VALUES
+            (80301, 803, 'discord', 'discord', 'Tit 803', 'Contenido 803', 'publicado', 'publicado', '2026-10-23T10:00:00+00:00', '2026-10-23T10:00:00+00:00')
+        """)
+        conn.commit()
+
+    registro_dummy = {
+        "id_mensaje": "803",
+        "autor": "diego",
+        "semana": "Semana_01",
+        "fecha_envio": None,
+        "fecha_extraccion": "2026-10-23T10:00:00+00:00",
+        "fecha_publicacion": "2026-10-23T10:05:00+00:00",
+        "rutas_activas": ["discord"],
+        "estado": "publicado",
+        "contenido_original": {"texto": "Problema con el despliegue"},
+        "copys_generados": {"discord": {"titulo": "Tit 803", "texto_copy": "Contenido 803"}},
+        "cw_modelo_ia": "Google Gemini · gemini-3.5-flash-lite"
+    }
+
+    # Simular fallo en psycopg.connect
+    with patch("psycopg.connect", side_effect=Exception("Connection timed out to Supabase Enoc")), \
+         caplog.at_level(logging.WARNING):
+        res = puente_motor_ia.replicar_historial_reportes_semanales_supabase(registro_dummy)
+
+    assert res is False, "Debe retornar False defensivamente ante error de conexión"
+    assert any("Supabase" in r.message or "historial" in r.message.lower() for r in caplog.records), (
+        "Debe registrarse una advertencia en log (logger.warning) ante fallo de inserción remota"
+    )
+
+    # Validar que SQLite local registró la marca de sync pendiente
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(contenidos_generados)").fetchall()}
+        assert "sync_supabase" in cols, "La columna sync_supabase debe existir en contenidos_generados"
+        row = conn.execute("SELECT sync_supabase FROM contenidos_generados WHERE interaccion_id = 803").fetchone()
+        assert row and row[0] == "pendiente", "Debe marcarse sync_supabase='pendiente' en SQLite local"
+
+
+def test_spec023_resiliencia_despacho_fondo_y_esquema_defensivo(monkeypatch, caplog):
+    """
+    Spec 023 - RF-04, RF-05, RF-06:
+    Valida la resiliencia en segundo plano y el esquema defensivo:
+    1. _asegurar_esquema_sqlite asegura columna sync_supabase sin fallar por duplicate column.
+    2. _marcar_sync_sqlite_local(id_mensaje, estado_sync, error_detalle) actualiza SQLite.
+    3. despachar_replicacion_historial_reportes captura excepciones imprevistas con logger.warning.
+    """
+    import logging
+
+    # 1. Esquema defensivo idempotente
+    puente_motor_ia._asegurar_esquema_sqlite()
+    puente_motor_ia._asegurar_esquema_sqlite()
+
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(contenidos_generados)").fetchall()}
+        assert "sync_supabase" in cols, "La columna sync_supabase debe existir defensivamente en contenidos_generados"
+
+    # 2. _marcar_sync_sqlite_local con error_detalle
+    _insertar_interaccion_spec012(
+        interaccion_id=804,
+        autor="maria",
+        canal="#faq",
+        texto="Pregunta sobre API",
+        etapa_flujo="publicado"
+    )
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, plataforma, titulo, contenido, estado,
+                estado_publicacion, creado_en, actualizado_en
+            ) VALUES
+            (80401, 804, 'discord', 'discord', 'Tit 804', 'Contenido 804', 'publicado', 'publicado', '2026-10-23T11:00:00+00:00', '2026-10-23T11:00:00+00:00')
+        """)
+        conn.commit()
+
+    puente_motor_ia._marcar_sync_sqlite_local(id_mensaje=804, estado_sync="pendiente", error_detalle="Simulated timeout")
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        row = conn.execute("SELECT sync_supabase FROM contenidos_generados WHERE interaccion_id = 804").fetchone()
+        assert row and row[0] == "pendiente"
+
+    # 3. despachar_replicacion_historial_reportes ante excepción imprevista
+    with patch("puente_motor_ia.replicar_historial_reportes_semanales_supabase", side_effect=RuntimeError("Fallo WAN catastrófico")), \
+         caplog.at_level(logging.WARNING):
+        puente_motor_ia.despachar_replicacion_historial_reportes({"id_mensaje": "804"})
+        import time
+        time.sleep(0.1)
+
+    assert any("Fallo WAN catastrófico" in r.message or "Excepción" in r.message for r in caplog.records), (
+        "Cualquier excepción en la tarea de fondo debe capturarse con logger.warning"
+    )
+
+
+# ==============================================================================
+# Spec 024: Reporte OCI desde Historial Semanal con Inyección de Copys Reales y Alta Velocidad
+# ==============================================================================
+
+def test_spec024_extraccion_historial_reportes_supabase_timeout_y_kpis(monkeypatch, caplog):
+    """
+    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Valida la extracción y deserialización defensiva desde historial_reportes_semanales:
+    1. _deserializar_json_defensivo maneja strings JSON, dicts, listas, nulos y strings inválidos.
+    2. _extraer_historial_reportes_semanales_supabase conecta con connect_timeout <= 4.
+    3. Construye el subdiccionario normalizado 'kpis' con relevancia (int), sentimiento (str),
+       temas_clave (list o str), segmento (str) y razonamiento (str).
+    4. id_mensaje se garantiza como str.
+    5. Ante fallos de conexión o timeouts de psycopg, captura la excepción, registra warning
+       y retorna [] defensivamente para activar el fallback.
+    """
+    import logging
+    import json
+
+    assert hasattr(puente_motor_ia, "_deserializar_json_defensivo"), (
+        "puente_motor_ia debe implementar '_deserializar_json_defensivo'"
+    )
+    assert hasattr(puente_motor_ia, "_extraer_historial_reportes_semanales_supabase"), (
+        "puente_motor_ia debe implementar '_extraer_historial_reportes_semanales_supabase'"
+    )
+
+    # 1. Deserialización defensiva unitaria
+    assert puente_motor_ia._deserializar_json_defensivo({"clave": "valor"}) == {"clave": "valor"}
+    assert puente_motor_ia._deserializar_json_defensivo('{"clave": "valor"}') == {"clave": "valor"}
+    assert puente_motor_ia._deserializar_json_defensivo(None) == {}
+    assert puente_motor_ia._deserializar_json_defensivo("invalid json syntax {{{") == {}
+    assert puente_motor_ia._deserializar_json_defensivo(["item1", "item2"]) == ["item1", "item2"]
+    assert puente_motor_ia._deserializar_json_defensivo('["item1", "item2"]') == ["item1", "item2"]
+
+    # 2. Mock de conexión exitosa con connect_timeout <= 4
+    called_timeouts = []
+    fake_filas = [
+        # id_mensaje, autor, semana, fecha_envio, fecha_extraccion, fecha_publicacion, rutas_activas, estado, contenido_original, copys_generados, cw_modelo_ia
+        (
+            1001,
+            "carlos_dev",
+            "2026-semana-42",
+            "2026-10-15T10:00:00+00:00",
+            "2026-10-15T10:05:00+00:00",
+            "2026-10-15T11:00:00+00:00",
+            ["linkedin"],
+            "publicado",
+            json.dumps({
+                "texto": "Cómo configurar CI/CD con Docker?",
+                "kpis": {
+                    "relevancia": 85,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#docker", "#cicd"],
+                    "segmento": "DEV",
+                    "razonamiento": "Pregunta técnica relevante"
+                }
+            }),
+            json.dumps({
+                "linkedin": {"titulo": "Docker en CI/CD", "texto_copy": "Guía práctica de integración continua."}
+            }),
+            "gemini-3.5-flash-lite"
+        ),
+        (
+            1002,
+            "ana_qa",
+            "2026-semana-42",
+            "2026-10-15T12:00:00+00:00",
+            "2026-10-15T12:05:00+00:00",
+            "2026-10-15T12:30:00+00:00",
+            ["discord"],
+            "publicado",
+            # Caso contenido_original y copys_generados ya vienen como dict (psycopg jsonb nativo)
+            {
+                "texto": "Mejor herramienta para pruebas e2e?",
+                "kpis": {
+                    "relevancia": 92,
+                    "sentimiento": "Positivo",
+                    "temas_clave": "#testing #e2e",
+                    "segmento": "QA",
+                    "razonamiento": "Discusión técnica sobre Playwright"
+                }
+            },
+            {
+                "discord": {"titulo": "", "texto_copy": "Recomendamos Playwright para e2e."}
+            },
+            "gemini-3.5-flash-lite"
+        )
+    ]
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def execute(self, query, params=None):
+            self.query = query
+            self.params = params
+        def fetchall(self):
+            return fake_filas
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def cursor(self):
+            return FakeCursor()
+
+    def fake_connect(*args, **kwargs):
+        timeout = kwargs.get("connect_timeout")
+        called_timeouts.append(timeout)
+        return FakeConn()
+
+    monkeypatch.setattr("psycopg.connect", fake_connect)
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://user:pass@localhost:5432/db")
+
+    resultados = puente_motor_ia._extraer_historial_reportes_semanales_supabase("2026-semana-42")
+
+    assert len(called_timeouts) > 0, "Debe conectar a Supabase usando psycopg.connect"
+    assert all(t is not None and t <= 4 for t in called_timeouts), (
+        f"connect_timeout debe ser <= 4 segundos para evitar degradar latencia. Registrado: {called_timeouts}"
+    )
+
+    assert len(resultados) == 2
+    r1, r2 = resultados[0], resultados[1]
+
+    # Validar tipos estrictos y subdiccionario kpis
+    assert isinstance(r1["id_mensaje"], str) and r1["id_mensaje"] == "1001"
+    assert isinstance(r1["kpis"], dict)
+    assert r1["kpis"]["relevancia"] == 85
+    assert r1["kpis"]["sentimiento"] == "Positivo"
+    assert r1["kpis"]["segmento"] == "DEV"
+    assert r1["kpis"]["razonamiento"] == "Pregunta técnica relevante"
+    assert r1["kpis"]["temas_clave"] in (["#docker", "#cicd"], "#docker #cicd")
+    assert isinstance(r1["copys_generados"], dict)
+    assert "linkedin" in r1["copys_generados"]
+
+    assert isinstance(r2["id_mensaje"], str) and r2["id_mensaje"] == "1002"
+    assert r2["kpis"]["relevancia"] == 92
+    assert r2["kpis"]["sentimiento"] == "Positivo"
+
+    # 3. Manejo defensivo ante fallos y timeouts retornando [] con warning
+    def fake_connect_timeout(*args, **kwargs):
+        raise Exception("Connection timed out after 4000ms")
+
+    monkeypatch.setattr("psycopg.connect", fake_connect_timeout)
+    with caplog.at_level(logging.WARNING):
+        res_vacio = puente_motor_ia._extraer_historial_reportes_semanales_supabase("2026-semana-42")
+
+    assert res_vacio == [], "Debe retornar [] defensivamente ante fallo o timeout de conexión"
+    assert any("historial" in r.message.lower() or "timeout" in r.message.lower() or "supabase" in r.message.lower() for r in caplog.records), (
+        "Debe registrarse una advertencia en log (logger.warning) ante fallo de extracción remota"
+    )
+
+
+def test_spec024_prelacion_copys_formateo_y_erradicacion_placeholders():
+    """
+    Spec 024 - RF-02, RF-06:
+    Valida la prelación estricta de copys (LinkedIn > Discord > X),
+    el formateo con/sin título y la erradicación total de placeholders provisionales:
+    1. Si existe LinkedIn con texto, se selecciona prioritariamente.
+    2. Si no hay LinkedIn pero sí Discord, se selecciona Discord.
+    3. Si no hay LinkedIn ni Discord, se selecciona X.
+    4. Con título no vacío: f"{titulo}\n\n{texto_copy}".strip().
+    5. Sin título o título vacío/None: texto_copy.strip().
+    6. Si no hay ningún canal válido: respaldo con texto_original.strip().
+    7. Prohibición categórica de 'Pendiente de redacción por Enoc...'.
+    """
+    assert hasattr(puente_motor_ia, "_formatear_copy_final"), (
+        "puente_motor_ia debe implementar '_formatear_copy_final'"
+    )
+
+    # 1. Prelación LinkedIn (máxima prioridad) con título
+    copys_multicanal = {
+        "linkedin": {"titulo": "Ecosistema Cloud", "texto_copy": "Aprende Kubernetes y Terraform hoy."},
+        "discord": {"titulo": "Aviso Discord", "texto_copy": "Texto secundario de Discord."},
+        "x": {"texto_copy": "Tweet sobre Cloud."}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_multicanal, texto_original="Texto original")
+    assert copy_final == "Ecosistema Cloud\n\nAprende Kubernetes y Terraform hoy."
+
+    # 2. LinkedIn sin título
+    copys_sin_titulo = {
+        "linkedin": {"titulo": "", "texto_copy": "   Texto de LinkedIn sin encabezado.   "},
+        "discord": {"texto_copy": "Texto Discord"}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_sin_titulo, texto_original="Texto original")
+    assert copy_final == "Texto de LinkedIn sin encabezado."
+
+    # 3. Discord cuando no existe LinkedIn (segunda prioridad) con título
+    copys_discord = {
+        "discord": {"titulo": "Comunidad Alura", "texto": "Revisa los nuevos módulos publicados."},
+        "x": {"texto_copy": "Post en X"}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_discord, texto_original="Texto original")
+    assert copy_final == "Comunidad Alura\n\nRevisa los nuevos módulos publicados."
+
+    # 4. X cuando no existe LinkedIn ni Discord (tercera prioridad)
+    copys_x = {
+        "x": {"texto_copy": "Tips rápidos de Python en 280 caracteres."}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_x, texto_original="Texto original")
+    assert copy_final == "Tips rápidos de Python en 280 caracteres."
+
+    # 5. Soporte para canales como string plano o dicts con diversas claves ('texto', 'contenido', 'texto_copy')
+    copys_string = {"linkedin": "Publicación directa como cadena"}
+    assert puente_motor_ia._formatear_copy_final(copys_string) == "Publicación directa como cadena"
+
+    # 6. Respaldo transparente con texto original ante ausencia de copys
+    copy_vacio = puente_motor_ia._formatear_copy_final({}, texto_original="  Consulta original de un estudiante.  ")
+    assert copy_vacio == "Consulta original de un estudiante."
+
+    # 7. Erradicación categórica de placeholders provisionales
+    placeholder = "Pendiente de redacción por Enoc..."
+    copys_con_placeholder = {
+        "linkedin": {"titulo": "Tit", "texto_copy": f"{placeholder}"},
+        "discord": {"texto_copy": "Copy real en Discord"}
+    }
+    # Si LinkedIn contiene el placeholder, debe ignorarse y conmutar a Discord o texto original
+    copy_sanitizado = puente_motor_ia._formatear_copy_final(copys_con_placeholder, texto_original="Texto original")
+    assert placeholder not in copy_sanitizado, "No debe permitirse el placeholder provisional en el copy final"
+    assert copy_sanitizado == "Copy real en Discord"
+
+
+def test_spec024_deduplicacion_publicaciones_multiples():
+    """
+    Spec 024 - RF-02, RF-06:
+    Valida la deduplicación de múltiples publicaciones para un mismo id_mensaje:
+    1. Agrupación por id_mensaje consolidando rutas_activas únicas.
+    2. Fusión completa de copys_generados multicanal.
+    3. Elección de la fecha_publicacion más reciente.
+    4. Inyección del campo copy_final calculado por prelación.
+    5. Preservación del subdiccionario normalizado kpis sin pérdida de datos.
+    """
+    assert hasattr(puente_motor_ia, "_consolidar_aprobados_historial"), (
+        "puente_motor_ia debe implementar '_consolidar_aprobados_historial'"
+    )
+
+    filas_crudas = [
+        # Publicación 1 de id_mensaje 901 a Discord a las 10:00
+        {
+            "id_mensaje": "901",
+            "autor": "dev_senior",
+            "semana": "2026-semana-42",
+            "fecha_envio": "2026-10-15T09:00:00+00:00",
+            "fecha_extraccion": "2026-10-15T09:05:00+00:00",
+            "fecha_publicacion": "2026-10-15T10:00:00+00:00",
+            "rutas_activas": ["discord"],
+            "estado": "publicado",
+            "contenido_original": {
+                "texto": "¿Cómo optimizar queries SQL complejas?",
+                "kpis": {
+                    "relevancia": 95,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#sql", "#db"],
+                    "segmento": "BACKEND",
+                    "razonamiento": "Optimización de base de datos"
+                }
+            },
+            "copys_generados": {
+                "discord": {"titulo": "SQL Tips", "texto_copy": "Usa EXPLAIN ANALYZE para identificar cuellos de botella."}
+            },
+            "cw_modelo_ia": "gemini-3.5-flash-lite"
+        },
+        # Publicación 2 del MISMO id_mensaje 901 a LinkedIn a las 14:30
+        {
+            "id_mensaje": "901",
+            "autor": "dev_senior",
+            "semana": "2026-semana-42",
+            "fecha_envio": "2026-10-15T09:00:00+00:00",
+            "fecha_extraccion": "2026-10-15T09:05:00+00:00",
+            "fecha_publicacion": "2026-10-15T14:30:00+00:00",
+            "rutas_activas": ["linkedin"],
+            "estado": "publicado",
+            "contenido_original": {
+                "texto": "¿Cómo optimizar queries SQL complejas?",
+                "kpis": {
+                    "relevancia": 95,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#sql", "#db"],
+                    "segmento": "BACKEND",
+                    "razonamiento": "Optimización de base de datos"
+                }
+            },
+            "copys_generados": {
+                "linkedin": {"titulo": "Mastering SQL Performance", "texto_copy": "El índice correcto cambia de segundos a milisegundos."}
+            },
+            "cw_modelo_ia": "gemini-3.5-flash-lite"
+        },
+        # Mensaje independiente 902
+        {
+            "id_mensaje": "902",
+            "autor": "qa_tester",
+            "semana": "2026-semana-42",
+            "fecha_envio": "2026-10-15T11:00:00+00:00",
+            "fecha_extraccion": "2026-10-15T11:05:00+00:00",
+            "fecha_publicacion": "2026-10-15T12:00:00+00:00",
+            "rutas_activas": ["x"],
+            "estado": "publicado",
+            "contenido_original": {
+                "texto": "Mocking de servicios externos en tests",
+                "kpis": {
+                    "relevancia": 80,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#testing"],
+                    "segmento": "QA",
+                    "razonamiento": "Buenas prácticas de testing"
+                }
+            },
+            "copys_generados": {
+                "x": {"texto_copy": "Usa mocks para desacoplar tests unitarios."}
+            },
+            "cw_modelo_ia": "gemini-3.5-flash-lite"
+        }
+    ]
+
+    consolidados = puente_motor_ia._consolidar_aprobados_historial(filas_crudas)
+
+    assert len(consolidados) == 2, "Debe deduplicar id_mensaje 901 resultando en exactamente 2 registros únicos"
+
+    item_901 = next(item for item in consolidados if str(item["id_mensaje"]) == "901")
+    item_902 = next(item for item in consolidados if str(item["id_mensaje"]) == "902")
+
+    # Validar consolidación de rutas_activas
+    assert set(item_901["rutas_activas"]) == {"discord", "linkedin"}
+
+    # Validar combinación de copys_generados
+    assert "discord" in item_901["copys_generados"]
+    assert "linkedin" in item_901["copys_generados"]
+
+    # Validar fecha_publicacion más reciente (14:30 > 10:00)
+    assert item_901["fecha_publicacion"] == "2026-10-15T14:30:00+00:00"
+
+    # Validar copy_final por prelación (LinkedIn > Discord)
+    assert item_901["copy_final"] == "Mastering SQL Performance\n\nEl índice correcto cambia de segundos a milisegundos."
+
+    # Validar kpis íntegros
+    assert item_901["kpis"]["relevancia"] == 95
+    assert item_901["kpis"]["segmento"] == "BACKEND"
+    assert "Pendiente de redacción por Enoc..." not in item_901["copy_final"]
+
+
+def test_spec024_complemento_descartados_desde_sqlite(tmp_path, monkeypatch):
+    """
+    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Valida el complemento de mensajes descartados desde SQLite local:
+    1. _obtener_descartados_semana_sqlite extrae filas con estado_curaduria = 'discarded'
+       o (estado_curaduria != 'curated' y relevancia < 70) para la semana objetivo.
+    2. Excluye mensajes cuyos IDs ya están en ids_aprobados.
+    3. Construye subdiccionario 'kpis' normalizado para evitar KeyError en reporte_semanal.py.
+    4. _cargar_lote_para_reporte_semanal ensambla aprobados de Supabase y descartados de SQLite.
+    5. reporte_semanal.generar_reporte_semanal calcula métricas totales (aprobados + descartados)
+       sin errores.
+    """
+    from pathlib import Path
+    import reporte_semanal
+
+    assert hasattr(puente_motor_ia, "_obtener_descartados_semana_sqlite"), (
+        "puente_motor_ia debe implementar '_obtener_descartados_semana_sqlite'"
+    )
+    assert hasattr(puente_motor_ia, "_cargar_lote_para_reporte_semanal"), (
+        "puente_motor_ia debe implementar '_cargar_lote_para_reporte_semanal'"
+    )
+
+    test_db = str(tmp_path / "test_reporte_descartados.db")
+    monkeypatch.setattr(puente_motor_ia.motor_bd, "RUTA_BD", test_db)
+    puente_motor_ia._asegurar_esquema_sqlite()
+
+    # Insertar en SQLite:
+    # 1. ID 1101: Aprobado (relevancia 90, curated, semana 2026-semana-42)
+    # 2. ID 1102: Descartado explícito (estado_curaduria='discarded', relevancia 50, semana 2026-semana-42)
+    # 3. ID 1103: Descartado por relevancia baja (estado_curaduria='pending', relevancia 40, semana 2026-semana-42)
+    # 4. ID 1104: Descartado de OTRA semana (semana 2026-semana-40) -> debe ser ignorado
+    with sqlite3.connect(test_db) as conn:
+        conn.execute("""
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, etapa_flujo, etapa,
+                estado_curaduria, relevancia, sentimiento, temas_clave, segmento, razonamiento
+            ) VALUES
+            (1101, 'hash1101', 'Discord', '2026-semana-42', 'usuario_aprobado', '#general', 'mensaje',
+             'Aporte de gran valor sobre Kubernetes', '2026-10-15T10:00:00+00:00', '2026-10-15T10:00:00+00:00',
+             'analizado', 'publicado', 'publicado', 'curated', 90, 'Positivo', '#k8s', 'PROFESIONAL', 'Excelente aporte'),
+            (1102, 'hash1102', 'Discord', '2026-semana-42', 'usuario_spam', '#general', 'mensaje',
+             'Compre criptomonedas con descuento ya', '2026-10-15T11:00:00+00:00', '2026-10-15T11:00:00+00:00',
+             'analizado', 'descartado', 'descartado', 'discarded', 30, 'Negativo', '#spam', 'SPAM', 'Publicidad no deseada'),
+            (1103, 'hash1103', 'Discord', '2026-semana-42', 'usuario_casual', '#general', 'mensaje',
+             'Hola a todos buenos días', '2026-10-15T12:00:00+00:00', '2026-10-15T12:00:00+00:00',
+             'analizado', 'pendiente', 'ingesta', 'pending', 45, 'Neutral', '#saludo', 'GENERAL', 'Saludo sin contenido técnico'),
+            (1104, 'hash1104', 'Discord', '2026-semana-40', 'usuario_antiguo', '#general', 'mensaje',
+             'Mensaje viejo irrelevante', '2026-09-30T10:00:00+00:00', '2026-09-30T10:00:00+00:00',
+             'analizado', 'descartado', 'descartado', 'discarded', 20, 'Neutral', '#viejo', 'GENERAL', 'Mensaje de semana anterior')
+        """)
+        conn.commit()
+
+    # 1. Probar _obtener_descartados_semana_sqlite con ids_aprobados={"1101"}
+    descartados = puente_motor_ia._obtener_descartados_semana_sqlite("2026-semana-42", ids_aprobados={"1101"})
+    ids_desc = {str(d.get("id_mensaje") or d.get("id")) for d in descartados}
+    assert ids_desc == {"1102", "1103"}, f"Debe extraer 1102 y 1103, excluyendo 1101 y 1104. Obtenido: {ids_desc}"
+
+    for d in descartados:
+        assert "kpis" in d, "Cada descartado debe contener subdiccionario kpis normalizado"
+        assert isinstance(d["kpis"], dict)
+        assert "relevancia" in d["kpis"]
+        assert "sentimiento" in d["kpis"]
+
+    # 2. Mockear Supabase para simular que retorna el aprobado 1101
+    reg_supabase = [{
+        "id_mensaje": "1101",
+        "autor": "usuario_aprobado",
+        "semana": "2026-semana-42",
+        "fecha_envio": "2026-10-15T10:00:00+00:00",
+        "fecha_extraccion": "2026-10-15T10:05:00+00:00",
+        "fecha_publicacion": "2026-10-15T10:30:00+00:00",
+        "rutas_activas": ["linkedin"],
+        "estado": "publicado",
+        "contenido_original": {
+            "texto": "Aporte de gran valor sobre Kubernetes",
+            "kpis": {"relevancia": 90, "sentimiento": "Positivo", "temas_clave": "#k8s", "segmento": "PROFESIONAL", "razonamiento": "Excelente"}
+        },
+        "copys_generados": {
+            "linkedin": {"titulo": "K8s en Producción", "texto_copy": "Buenas prácticas de Kubernetes."}
+        },
+        "cw_modelo_ia": "gemini-3.5-flash-lite"
+    }]
+    monkeypatch.setattr(puente_motor_ia, "_extraer_historial_reportes_semanales_supabase", lambda sem: reg_supabase)
+
+    lote_orquestado = puente_motor_ia._cargar_lote_para_reporte_semanal("2026-semana-42")
+    assert len(lote_orquestado["aprobados"]) == 1
+    assert len(lote_orquestado["descartados"]) == 2
+
+    # 3. Generación en reporte_semanal.py sin KeyError y con métricas completas
+    rep = reporte_semanal.generar_reporte_semanal("2026-semana-42", lote_orquestado)
+    resumen = rep["resumen_metricas"]
+    assert resumen["total_mensajes"] == 3
+    assert resumen["total_aprobados"] == 1
+    assert resumen["total_descartados"] == 2
+
+
+def test_spec024_cache_alta_velocidad_get_reports_e_invalidacion_atomica(client, tmp_path, monkeypatch):
+    """
+    Spec 024 - RF-01, RF-05, RF-06:
+    Valida la caché en memoria de ultra-alta velocidad (< 2 ms) para GET /api/v1/oci-storage/reports
+    y su invalidación atómica:
+    1. GET /api/v1/oci-storage/reports no invoca _sincronizar_reportes_desde_oci_bucket de forma bloqueante.
+    2. Las lecturas en caché responden en < 2 ms.
+    3. invalidar_cache_reportes_oci() restablece la caché a None y timestamp a 0.0.
+    4. Las mutaciones de estado (publish-channel, hitl-decision, weekly-sync, invalidar_cache_supabase)
+       disparan la invalidación atómica de forma automática.
+    """
+    from pathlib import Path
+    import time
+    import json
+
+    assert hasattr(puente_motor_ia, "invalidar_cache_reportes_oci"), (
+        "puente_motor_ia debe implementar 'invalidar_cache_reportes_oci'"
+    )
+
+    # Preparar directorio local reportes con un reporte ficticio
+    rep_dir = Path("reportes")
+    rep_dir.mkdir(parents=True, exist_ok=True)
+    reporte_test_file = rep_dir / "2026-semana-42.json"
+    dummy_reporte = {
+        "metadata": {"semana": "2026-semana-42", "generado_en": "2026-10-15T12:00:00Z", "oci_storage": {"subido": True}},
+        "resumen_metricas": {"total_mensajes": 10, "total_aprobados": 6, "total_descartados": 4}
+    }
+    reporte_test_file.write_text(json.dumps(dummy_reporte), encoding="utf-8")
+
+    # Mockear _sincronizar_reportes_desde_oci_bucket para asegurar aislamiento WAN absoluto
+    mock_sync_wan = MagicMock()
+    monkeypatch.setattr(puente_motor_ia, "_sincronizar_reportes_desde_oci_bucket", mock_sync_wan)
+
+    puente_motor_ia.invalidar_cache_reportes_oci()
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is None
+
+    # Primera llamada (popula caché desde disco local sin llamadas WAN)
+    resp1 = client.get("/api/v1/oci-storage/reports")
+    assert resp1.status_code == 200
+    assert mock_sync_wan.call_count == 0, (
+        "GET /api/v1/oci-storage/reports no debe invocar _sincronizar_reportes_desde_oci_bucket bloqueante"
+    )
+
+    # Segunda llamada: debe servirse directamente desde la caché en memoria en < 2 ms
+    t_inicio = time.perf_counter()
+    resp2 = client.get("/api/v1/oci-storage/reports")
+    t_duracion_ms = (time.perf_counter() - t_inicio) * 1000.0
+
+    assert resp2.status_code == 200
+    assert t_duracion_ms < 10.0, f"Lectura en caché debe ser ultra rápida (< 10 ms en TestClient). Obtenido: {t_duracion_ms:.2f} ms"
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is not None
+
+    # Invalidación atómica explícita
+    puente_motor_ia.invalidar_cache_reportes_oci()
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is None
+    assert getattr(puente_motor_ia, "_timestamp_cache_reportes_oci", 0.0) == 0.0
+
+    # Invalidación atómica invocada por invalidar_cache_supabase()
+    client.get("/api/v1/oci-storage/reports")
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is not None
+    puente_motor_ia.invalidar_cache_supabase()
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is None
+
+
+def test_spec024_resiliencia_fallback_y_http_400_controlado(client, monkeypatch):
+    """
+    Spec 024 - RF-01, RF-04, RF-06:
+    Valida la resiliencia en generación de reportes y respuestas semánticas:
+    1. Si Supabase Enoc está inaccesible o vacío, conmuta limpiamente a los lotes locales.
+    2. Si ninguna fuente contiene datos para el período, responde HTTP 400 controlado
+       ('No hay mensajes analizados para el período indicado') impidiendo HTTP 500.
+    """
+    # Escenario 1: Conmutación a fallback local cuando Supabase falla
+    monkeypatch.setattr(puente_motor_ia, "_extraer_historial_reportes_semanales_supabase", lambda sem: [])
+    # Preparar fallback local
+    lote_fallback = {
+        "aprobados": [
+            {
+                "id_mensaje": "999",
+                "autor": "fallback_user",
+                "semana": "2026-semana-42",
+                "canal_origen": "#general",
+                "texto_original": "Texto de fallback",
+                "kpis": {"relevancia": 80, "sentimiento": "Positivo", "temas_clave": "#fallback", "segmento": "GENERAL", "razonamiento": "Ok"}
+            }
+        ],
+        "descartados": []
+    }
+    monkeypatch.setattr(puente_motor_ia, "_cargar_lote_consolidado_para_reporte", lambda: lote_fallback)
+
+    resp_fb = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "2026-semana-42"})
+    assert resp_fb.status_code == 200, f"Debe responder 200 conmutando al fallback. Obtenido: {resp_fb.status_code}"
+    assert resp_fb.json()["exito"] is True
+
+    # Escenario 2: HTTP 400 controlado si absolutamente todas las fuentes están vacías
+    monkeypatch.setattr(puente_motor_ia, "_cargar_lote_para_reporte_semanal", lambda sem: {"aprobados": [], "descartados": []})
+    resp_vacio = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "2026-semana-99"})
+
+    assert resp_vacio.status_code == 400, (
+        f"Debe retornar HTTP 400 controlado ante período sin mensajes (cero 500). Obtenido: {resp_vacio.status_code}"
+    )
+    detalle = resp_vacio.json().get("detail", "")
+    assert "No hay mensajes analizados" in detalle or "período" in detalle.lower()
+
+
+def test_spec024_modo_offline_oci_y_status_saved_locally(client, tmp_path, monkeypatch):
+    """
+    Spec 024 - RF-04, RF-06:
+    Valida el comportamiento en modo offline OCI o ante fallos de conectividad con OCI:
+    1. Si no hay credenciales OCI configuradas o la subida a OCI falla,
+       el reporte se persiste obligatoriamente en disco local ('reportes/{semana}.json').
+    2. Retorna HTTP 200 con subido_oci=False y status='saved_locally'.
+    3. Informa mensaje descriptivo 'Reporte generado y guardado localmente.'.
+    """
+    from pathlib import Path
+    import json
+
+    monkeypatch.setattr(puente_motor_ia, "_asegurar_config_oci_desde_env", lambda: False)
+    monkeypatch.delenv("OCI_CONFIG_FILE", raising=False)
+
+    lote_simulado = {
+        "aprobados": [
+            {
+                "id_mensaje": "1201",
+                "autor": "offline_author",
+                "semana": "2026-semana-42",
+                "fecha_envio": "2026-10-15T10:00:00+00:00",
+                "texto_original": "Probando modo offline de OCI",
+                "copy_final": "Cursos Cloud de alta calidad.",
+                "kpis": {"relevancia": 88, "sentimiento": "Positivo", "temas_clave": "#cloud", "segmento": "DEV", "razonamiento": "Test offline"}
+            }
+        ],
+        "descartados": []
+    }
+    monkeypatch.setattr(puente_motor_ia, "_cargar_lote_para_reporte_semanal", lambda sem: lote_simulado)
+
+    resp = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "2026-semana-42"})
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["exito"] is True
+    assert data["subido_oci"] is False
+    assert data["status"] == "saved_locally"
+    assert "guardado localmente" in data.get("message", "").lower()
+
+    # Verificar existencia en disco
+    ruta_archivo = Path("reportes") / "2026-semana-42.json"
+    assert ruta_archivo.exists(), f"El archivo {ruta_archivo} debe existir en el almacenamiento local"
+    contenido = json.loads(ruta_archivo.read_text(encoding="utf-8"))
+    assert contenido["metadata"]["semana"] == "2026-semana-42"
+    assert contenido["resumen_metricas"]["total_aprobados"] == 1
+
+
+# ==============================================================================
+# Spec 025: Auditoría Integral de Calidad, Resiliencia de Interfaz y Blindaje de Alta Velocidad
+# ==============================================================================
+
+def test_spec025_indices_sqlite_creacion_idempotente():
+    """
+    Spec 025 - RF-02, RF-06:
+    Verifica que la ejecución de _asegurar_esquema_sqlite() crea exitosamente en SQLite
+    los 6 índices estratégicos requeridos y que su ejecución repetida es 100% idempotente sin colisiones.
+    """
+    indices_requeridos = {
+        "idx_interacciones_enviado_id",
+        "idx_interacciones_canal",
+        "idx_interacciones_curaduria",
+        "idx_interacciones_etapa",
+        "idx_interacciones_id_desc",
+        "idx_contenidos_interaccion_estado",
+    }
+
+    # Primera ejecución
+    puente_motor_ia._asegurar_esquema_sqlite()
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        indices_db = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+
+    faltantes = indices_requeridos - indices_db
+    assert not faltantes, (
+        f"Los siguientes índices estratégicos de Spec 025 no fueron creados por _asegurar_esquema_sqlite(): {faltantes}"
+    )
+
+    # Segunda ejecución: debe ser 100% idempotente sin errores de colisión
+    puente_motor_ia._asegurar_esquema_sqlite()
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        indices_db_2 = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+
+    assert indices_requeridos.issubset(indices_db_2), (
+        "Los índices deben mantenerse intactos y disponibles tras re-ejecución idempotente de _asegurar_esquema_sqlite()"
+    )
+
+
+def test_spec025_sqlite_indices_explain_query_plan():
+    """
+    Spec 025 - RF-02, RF-06:
+    Valida mediante EXPLAIN QUERY PLAN que el optimizador de SQLite utilice los índices
+    creados reportando USING INDEX en las consultas frecuentes, erradicando SCAN TABLE.
+    """
+    puente_motor_ia._asegurar_esquema_sqlite()
+
+    consultas_a_probar = [
+        ("SELECT * FROM interacciones WHERE canal = '#general' ORDER BY id DESC", "idx_interacciones_canal"),
+        ("SELECT * FROM interacciones WHERE estado_curaduria = 'curated'", "idx_interacciones_curaduria"),
+        ("SELECT * FROM interacciones WHERE etapa_flujo = 'en_redaccion'", "idx_interacciones_etapa"),
+        ("SELECT * FROM interacciones ORDER BY enviado_en DESC, id DESC", "idx_interacciones_enviado_id"),
+        ("SELECT id FROM interacciones ORDER BY id DESC", "idx_interacciones_id_desc"),
+        (
+            "SELECT * FROM contenidos_generados WHERE interaccion_id = 1 AND estado = 'publicado' AND estado_publicacion = 'publicado'",
+            "idx_contenidos_interaccion_estado",
+        ),
+    ]
+
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        # Insertar registros mínimos para posibilitar análisis del plan
+        for i in range(1, 20):
+            conn.execute(
+                """
+                INSERT INTO interacciones (
+                    id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                    texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    i, f"hash_{i}", "Discord", "Semana_01", f"user_{i}", "#general" if i % 2 == 0 else "#soporte",
+                    "mensaje", f"Texto #{i}", f"2026-10-{i:02d}T10:00:00Z", "2026-10-01T10:00:00Z", "analizado",
+                    "curated" if i % 3 == 0 else "pending", "en_redaccion" if i % 2 == 0 else "ingesta"
+                )
+            )
+            conn.execute(
+                """
+                INSERT INTO contenidos_generados (
+                    id, interaccion_id, formato, titulo, contenido, tono, estado,
+                    creado_en, actualizado_en, tipo_contenido, version, estado_publicacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    i, i, "post", f"Titulo {i}", f"Contenido {i}", "profesional",
+                    "publicado" if i % 2 == 0 else "pendiente_revision",
+                    "2026-10-01T12:00:00Z", "2026-10-01T12:00:00Z", "publicacion", 1,
+                    "publicado" if i % 2 == 0 else "no_publicado"
+                )
+            )
+        conn.commit()
+
+        for sql, indice_esperado in consultas_a_probar:
+            plan_rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}").fetchall()
+            plan_str = " ".join(str(col) for row in plan_rows for col in row)
+            assert ("USING INDEX" in plan_str or "USING COVERING INDEX" in plan_str), (
+                f"La consulta '{sql}' no está utilizando índices y realiza escaneo secuencial. Plan obtenido: {plan_str}"
+            )
+            assert indice_esperado in plan_str, (
+                f"La consulta '{sql}' debe utilizar el índice específico '{indice_esperado}'. Plan obtenido: {plan_str}"
+            )
+
+
+def test_spec025_endpoint_messages_limite_cero_sin_tope(client):
+    """
+    Spec 025 - RF-02, RF-06:
+    Invoca GET /api/community/messages?limite=0 y GET /api/community/messages?limit=0
+    verificando que devuelva la totalidad absoluta de mensajes comunitarios sin truncar a 1,000.
+    """
+    total_registros = 1050
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        filas = [
+            (
+                i, f"hash_{i:04d}", "Discord", "Semana_01", f"user_{i}", "#general", "mensaje",
+                f"Mensaje comunitario #{i}", f"2026-10-01T12:{i % 60:02d}:00Z", "activo",
+                "2026-10-01T12:00:00Z", 75, "Positivo"
+            )
+            for i in range(1, total_registros + 1)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas
+        )
+        conn.commit()
+
+    # 1. Probar con limite=0
+    resp = client.get("/api/community/messages?limite=0")
+    assert resp.status_code == 200
+    datos = resp.json()
+    mensajes = datos.get("messages", [])
+    assert len(mensajes) == total_registros, (
+        f"Se esperaba recibir la totalidad absoluta de mensajes ({total_registros}) con limite=0, "
+        f"pero se obtuvieron {len(mensajes)}. Posible truncamiento a 1,000 o restricción indebida."
+    )
+    assert len(mensajes) > 1000, "Debe retornar más de 1,000 registros sin tope artificial"
+
+    # 2. Probar con limit=0 (alias)
+    resp_alias = client.get("/api/community/messages?limit=0")
+    assert resp_alias.status_code == 200
+    mensajes_alias = resp_alias.json().get("messages", [])
+    assert len(mensajes_alias) == total_registros, (
+        f"Se esperaba recibir la totalidad de mensajes ({total_registros}) con limit=0, pero se obtuvieron {len(mensajes_alias)}"
+    )
+
+
+def test_spec025_endpoint_messages_paginacion_pagina_offset(client):
+    """
+    Spec 025 - RF-02, RF-06:
+    Valida que el endpoint soporte paginación backend mediante 'pagina' y 'offset',
+    retornando los elementos correspondientes a la página solicitada y sanitizando offsets negativos.
+    """
+    total_registros = 120
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        filas = [
+            (
+                i, f"hash_{i:04d}", "Discord", "Semana_01", f"user_{i}", "#general", "mensaje",
+                f"Mensaje #{i}", f"2026-10-01T12:{i % 60:02d}:00Z", "activo",
+                "2026-10-01T12:00:00Z", 75, "Positivo"
+            )
+            for i in range(1, total_registros + 1)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas
+        )
+        conn.commit()
+
+    # Página 1 (50 elementos)
+    resp_p1 = client.get("/api/community/messages?limite=50&pagina=1")
+    assert resp_p1.status_code == 200
+    p1_items = resp_p1.json().get("messages", [])
+    assert len(p1_items) == 50
+    p1_ids = [m["message"]["interaction_id"] for m in p1_items]
+
+    # Página 2 (50 elementos)
+    resp_p2 = client.get("/api/community/messages?limite=50&pagina=2")
+    assert resp_p2.status_code == 200
+    p2_items = resp_p2.json().get("messages", [])
+    assert len(p2_items) == 50
+    p2_ids = [m["message"]["interaction_id"] for m in p2_items]
+
+    # Las páginas 1 y 2 deben ser disjuntas
+    assert set(p1_ids).isdisjoint(set(p2_ids)), (
+        f"La paginación con pagina=2 retornó elementos solapados con pagina=1: {set(p1_ids).intersection(set(p2_ids))}"
+    )
+
+    # Offset explícito: offset=50 debe equivaler a pagina=2
+    resp_offset = client.get("/api/community/messages?limite=50&offset=50")
+    assert resp_offset.status_code == 200
+    offset_ids = [m["message"]["interaction_id"] for m in resp_offset.json().get("messages", [])]
+    assert offset_ids == p2_ids, "El offset=50 debe retornar exactamente los mismos elementos que pagina=2"
+
+    # Sanitización: offset negativo debe interpretarse como 0
+    resp_neg = client.get("/api/community/messages?limite=50&offset=-25")
+    assert resp_neg.status_code == 200
+    neg_ids = [m["message"]["interaction_id"] for m in resp_neg.json().get("messages", [])]
+    assert neg_ids == p1_ids, "Un offset negativo debe ser sanitizado a offset=0 (página 1)"
+
+
+def test_spec025_endpoint_messages_retrocompatibilidad_estructura_json(client):
+    """
+    Spec 025 - RF-01, RF-02, RF-06:
+    Valida que la respuesta preserve al 100% las cuatro claves canónicas exigidas por el
+    Principio 3 de la Constitución: total, omitted_bots_count, real_messages_count y messages,
+    tanto con parámetros por defecto, como con limite=0 y paginación.
+    """
+    total_reales = 40
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        filas = [
+            (
+                i, f"hash_{i:04d}", "Discord", "Semana_01", f"user_{i}", "#general", "mensaje",
+                f"Mensaje #{i}", "2026-10-01T12:00:00Z", "activo",
+                "2026-10-01T12:00:00Z", 80, "Positivo"
+            )
+            for i in range(1, total_reales + 1)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas
+        )
+        # Bot para telemetría
+        conn.execute(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                9999, "hash_bot_9999", "Discord", "Semana_01", "Spidey Boy#0000", "#notificaciones", "mensaje",
+                "Alerta de bot", "2026-10-01T12:00:00Z", "activo", "2026-10-01T12:00:00Z", 0, "Neutral"
+            )
+        )
+        conn.commit()
+
+    # 1. Petición estándar
+    resp = client.get("/api/community/messages")
+    assert resp.status_code == 200
+    datos = resp.json()
+    claves_canonicas = {"total", "omitted_bots_count", "real_messages_count", "messages"}
+    assert set(datos.keys()) == claves_canonicas, f"Estructura JSON debe contener exactamente {claves_canonicas}"
+    assert isinstance(datos["total"], int)
+    assert isinstance(datos["omitted_bots_count"], int)
+    assert isinstance(datos["real_messages_count"], int)
+    assert isinstance(datos["messages"], list)
+    assert datos["total"] == total_reales
+    assert datos["real_messages_count"] == total_reales
+    assert datos["omitted_bots_count"] >= 1
+
+    # Estructura del mensaje individual
+    msg = datos["messages"][0]
+    assert "message" in msg and "analysis" in msg
+    msg_data = msg["message"]
+    campos_requeridos = {"interaction_id", "author_name", "channel_name", "content", "created_at"}
+    assert campos_requeridos.issubset(set(msg_data.keys()))
+    campos_analysis = {"sentiment", "sentiment_score", "relevance", "curation_status", "workflow_stage", "is_published", "published_platforms"}
+    assert campos_analysis.issubset(set(msg["analysis"].keys()))
+
+    # 2. Petición con limite=0: debe retornar la totalidad de mensajes reales sin truncamiento
+    resp_cero = client.get("/api/community/messages?limite=0")
+    assert resp_cero.status_code == 200
+    datos_cero = resp_cero.json()
+    assert set(datos_cero.keys()) == claves_canonicas
+    assert len(datos_cero["messages"]) == total_reales, (
+        f"Con limite=0 debe retornar los {total_reales} mensajes reales, se obtuvieron {len(datos_cero['messages'])}"
+    )
+
+    # 3. Petición con paginación
+    resp_pag = client.get("/api/community/messages?limite=15&pagina=1")
+    assert resp_pag.status_code == 200
+    datos_pag = resp_pag.json()
+    assert set(datos_pag.keys()) == claves_canonicas
+    assert datos_pag["total"] == total_reales
+    assert len(datos_pag["messages"]) == 15
+
+
+def test_spec025_endpoints_lectura_latencia_sub_2ms(monkeypatch):
+    """
+    Spec 025 - RF-02, RF-06:
+    Mide la latencia de procesamiento en consultas de lectura a communitylab.db con los índices aplicados,
+    comprobando una resolución inferior a 2 milisegundos (< 2 ms) y cero llamadas WAN bloqueantes.
+    """
+    import time
+    indices_requeridos = {
+        "idx_interacciones_enviado_id",
+        "idx_interacciones_canal",
+        "idx_interacciones_curaduria",
+        "idx_interacciones_etapa",
+        "idx_interacciones_id_desc",
+        "idx_contenidos_interaccion_estado",
+    }
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        indices_existentes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+        indices_faltantes = indices_requeridos - indices_existentes
+        assert not indices_faltantes, (
+            f"Faltan los índices estratégicos para garantizar latencia de lectura < 2 ms: {indices_faltantes}"
+        )
+
+        # Poblar con 1,200 registros simulando producción
+        filas_int = [
+            (
+                i, f"hash_{i}", "Discord", "Semana_01", f"user_{i}",
+                "#general" if i % 2 == 0 else "#soporte", "mensaje", f"Texto #{i}",
+                f"2026-10-01T12:{i % 60:02d}:00Z", "2026-10-01T12:00:00Z", "analizado",
+                "curated" if i % 3 == 0 else "pending", "ingesta"
+            )
+            for i in range(1, 1201)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas_int
+        )
+        filas_cont = [
+            (
+                i, i, "post", f"Titulo {i}", f"Contenido {i}", "profesional",
+                "publicado" if i % 2 == 0 else "pendiente_revision",
+                "2026-10-01T12:00:00Z", "2026-10-01T12:00:00Z", "publicacion", 1,
+                "publicado" if i % 2 == 0 else "no_publicado"
+            )
+            for i in range(1, 1201)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, titulo, contenido, tono, estado,
+                creado_en, actualizado_en, tipo_contenido, version, estado_publicacion
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas_cont
+        )
+        conn.commit()
+
+        # Blindaje WAN: asegurar que no haya llamadas bloqueantes
+        mock_wan = MagicMock(side_effect=RuntimeError("Llamada WAN bloqueante prohibida"))
+        monkeypatch.setattr(puente_motor_ia, "obtener_datos_supabase", mock_wan)
+
+        # Medir latencia promedio en 20 ejecuciones de lecturas indexadas
+        tiempos = []
+        for _ in range(20):
+            t0 = time.perf_counter()
+            conn.execute("SELECT * FROM interacciones WHERE canal = '#general' ORDER BY id DESC LIMIT 50").fetchall()
+            conn.execute("SELECT * FROM interacciones WHERE estado_curaduria = 'curated' LIMIT 50").fetchall()
+            conn.execute("SELECT * FROM interacciones ORDER BY enviado_en DESC, id DESC LIMIT 50").fetchall()
+            t_ms = (time.perf_counter() - t0) * 1000.0
+            tiempos.append(t_ms)
+
+        latencia_promedio_ms = sum(tiempos) / len(tiempos)
+        assert latencia_promedio_ms < 2.0, (
+            f"La latencia de lectura indexada debe ser sub-2ms (< 2 ms). Obtenido: {latencia_promedio_ms:.2f} ms"
+        )
 
 

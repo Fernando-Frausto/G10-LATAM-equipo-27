@@ -23,6 +23,11 @@ Proyecto en Python para evaluar, mediante inteligencia artificial (Groq/Gemini),
 ## Reglas de dominio / trampas conocidas
 - **Gestión de variables de entorno**: El código actual hace uso de `google.colab.userdata` que no funcionará en local. Es crucial reemplazar estas llamadas por `os.environ.get()` y `dotenv` antes de cualquier ejecución local.
 - **Límites de APIs**: Considerar los rate limits descritos en el código (Groq vs Gemini) al ejecutar lotes grandes de mensajes.
+- **Preservación Estricta de Alta Velocidad (Regla de Oro)**:
+  - NUNCA realizar llamadas de red externas bloqueantes (Discord REST, Supabase WAN) dentro de endpoints de lectura (GET).
+  - La sincronización y mutaciones deben responder de inmediato usando la base local SQLite, delegando cualquier replicación remota hacia Supabase o APIs externas a segundo plano (asyncio.create_task).
+  - Mantener caché unificado en memoria para lecturas (TTL >= 5 min con invalidación inmediata ante mutaciones).
+  - Prohibido el polling agresivo (< 30s) en el frontend para no saturar el worker en la nube.
 
 ## Forma de trabajar
 - Haz solo lo que se pide: no añadas funcionalidades por tu cuenta.

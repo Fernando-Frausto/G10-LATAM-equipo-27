@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import {
   BrowserRouter,
   Navigate,
@@ -6,31 +7,42 @@ import {
 } from 'react-router-dom'
 
 import MainLayout from './layouts/MainLayout'
+import ProtectedRoute from './components/ProtectedRoute'
+import RoleProtectedRoute from './components/RoleProtectedRoute'
+import LazyRouteErrorBoundary from './components/LazyRouteErrorBoundary'
+import RouteLoadingFallback from './components/RouteLoadingFallback'
 
-import Dashboard from './pages/Dashboard'
-import Messages from './pages/Messages'
-import Highlights from './pages/Highlights'
-import Analytics from './pages/Analytics'
-import ContentStudio from './pages/ContentStudio'
-import Audit from './pages/Audit'
-import Security from './pages/Security'
-import Settings from './pages/Settings'
-import Login from "./pages/Login";
-import ProtectedRoute from "./components/ProtectedRoute";
-import RoleProtectedRoute from "./components/RoleProtectedRoute";
-import Hashtags from "./pages/Hashtags";
-import Audience from "./pages/Audience";
-import Calendar from "./pages/Calendar";
-import Export from "./pages/Export";
-import MyReports from "./pages/MyReports";
-import OCIStorage from "./pages/OCIStorage";
-
+// Importaciones diferidas (React.lazy) para code-splitting por rutas
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Messages = lazy(() => import('./pages/Messages'))
+const Highlights = lazy(() => import('./pages/Highlights'))
+const Analytics = lazy(() => import('./pages/Analytics'))
+const ContentStudio = lazy(() => import('./pages/ContentStudio'))
+const Audit = lazy(() => import('./pages/Audit'))
+const Security = lazy(() => import('./pages/Security'))
+const Settings = lazy(() => import('./pages/Settings'))
+const Login = lazy(() => import('./pages/Login'))
+const Hashtags = lazy(() => import('./pages/Hashtags'))
+const Audience = lazy(() => import('./pages/Audience'))
+const Calendar = lazy(() => import('./pages/Calendar'))
+const Export = lazy(() => import('./pages/Export'))
+const MyReports = lazy(() => import('./pages/MyReports'))
+const OCIStorage = lazy(() => import('./pages/OCIStorage'))
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route
+          path="/login"
+          element={
+            <LazyRouteErrorBoundary>
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <Login />
+              </Suspense>
+            </LazyRouteErrorBoundary>
+          }
+        />
 
         <Route
           element={

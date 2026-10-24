@@ -1,7 +1,9 @@
 import { Menu } from 'lucide-react'
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
+import LazyRouteErrorBoundary from '../components/LazyRouteErrorBoundary'
+import RouteLoadingFallback from '../components/RouteLoadingFallback'
 
 function MainLayout() {
     const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -47,7 +49,11 @@ function MainLayout() {
 
             <main className="min-h-screen min-w-0 p-4 sm:p-6 lg:ml-64 lg:p-8">
                 <div className="mx-auto w-full min-w-0">
-                    <Outlet />
+                    <LazyRouteErrorBoundary>
+                        <Suspense fallback={<RouteLoadingFallback />}>
+                            <Outlet />
+                        </Suspense>
+                    </LazyRouteErrorBoundary>
                 </div>
             </main>
         </div>

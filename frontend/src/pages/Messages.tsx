@@ -2,25 +2,27 @@ import {
     AlertCircle,
     AlertTriangle,
     Bot,
+    ChevronLeft,
     ChevronRight,
     Clock3,
     Copy,
-    Filter,
-    Hash,
-    MessageCircle,
+    Inbox,
+    MessageSquare,
     RefreshCw,
     RotateCcw,
     Search,
     Server,
     ShieldAlert,
+    Smile,
     Sparkles,
-    Tag,
+    Star,
     ThumbsUp,
     X,
 } from 'lucide-react'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import KpiCard from '../components/KpiCard'
 import { updateMessageCuration } from '../api/messageCuration'
 import { syncDiscord } from '../api/discordSync'
 import { evaluateSingleMessage } from '../api/communityLive'
@@ -117,8 +119,12 @@ function Messages() {
     const [searchTerm, setSearchTerm] = useState('')
     const [channelFilter, setChannelFilter] = useState('all')
     const [sentimentFilter, setSentimentFilter] = useState('all')
+    const [topicFilter, setTopicFilter] = useState('all')
+    const [classificationFilter, setClassificationFilter] = useState('all')
     const [timeFilter, setTimeFilter] = useState('all')
     const [curationFilter, setCurationFilter] = useState('all')
+    const [pageSize, setPageSize] = useState<number>(50)
+    const [currentPage, setCurrentPage] = useState<number>(1)
     const [aiModels, setAiModels] = useState<AiModel[]>(DEFAULT_AI_MODELS)
     const [selectedAiBrain, setSelectedAiBrain] = useState<string>('Groq (Llama 3.3)')
     const [dateFrom, setDateFrom] = useState<string>('')
@@ -138,10 +144,26 @@ function Messages() {
     const [curationError, setCurationError] = useState<string | null>(null)
     const [apiConnected, setApiConnected] = useState(false)
 
+    // Reinicio reactivo a la primera página ante cualquier alteración de filtros o tamaño de página
+    useEffect(() => {
+        setCurrentPage(1)
+    }, [
+        searchTerm,
+        channelFilter,
+        sentimentFilter,
+        topicFilter,
+        classificationFilter,
+        timeFilter,
+        curationFilter,
+        dateFrom,
+        dateTo,
+        pageSize,
+    ])
+
     const loadMessages = async () => {
         try {
             const response = await fetch(
-                `${API_BASE_URL}/api/community/messages`
+                `${API_BASE_URL}/api/community/messages?limite=0`
             )
 
             if (!response.ok) {
@@ -168,8 +190,10 @@ function Messages() {
 
     useEffect(() => {
         loadMessages()
+        // Auto-sincronización silenciosa en segundo plano al ingresar a la bandeja
+        syncDiscord({ asincrono: true }).catch(() => {})
 
-        const interval = window.setInterval(loadMessages, 5000)
+        const interval = window.setInterval(loadMessages, 30000)
 
         return () => {
             window.clearInterval(interval)
@@ -250,12 +274,12 @@ function Messages() {
                     isAnalyzed: Boolean(
                         isPublished ||
                         analysis.workflow_stage === 'publicado' ||
+                        analysis.relevance > 0 ||
                         (analysis.workflow_stage !== 'ingesta' &&
                             analysis.workflow_stage !== 'en_ingesta' &&
                             (analysis.workflow_stage === 'en_analisis' ||
                                 analysis.workflow_stage === 'en_redaccion' ||
-                                analysis.workflow_stage === 'en_aprobacion' ||
-                                analysis.relevance > 0))
+                                analysis.workflow_stage === 'en_aprobacion'))
                     ),
                     isPublished,
                     publishedPlatforms,
@@ -269,9 +293,13 @@ function Messages() {
             'general',
             'faq',
             'pqrs',
-            'chat-egresados',
-            'oportunidades-laborales',
+            'notificaciones',
         ],
+        []
+    )
+
+    const EXCLUDED_CHANNELS = useMemo(
+        () => ['preguntas', 'dudas', 'anuncios', 'chat-egresados', 'oportunidades-laborales'],
         []
     )
 
@@ -284,12 +312,12 @@ function Messages() {
                         (ch) =>
                             ch &&
                             !/^\d+$/.test(ch) &&
-                            !['preguntas', 'dudas', 'anuncios'].includes(ch.toLowerCase())
+                            !EXCLUDED_CHANNELS.includes(ch.toLowerCase())
                     )
             )
         )
         const allChannels = Array.from(new Set([...PREFERRED_CHANNELS_ORDER, ...detected]))
-            .filter((ch) => !['preguntas', 'dudas', 'anuncios'].includes(ch.toLowerCase()))
+            .filter((ch) => !EXCLUDED_CHANNELS.includes(ch.toLowerCase()))
 
         return allChannels.sort((a, b) => {
             const cleanA = a.toLowerCase()
@@ -301,7 +329,23 @@ function Messages() {
             if (indexB !== -1) return 1
             return cleanA.localeCompare(cleanB)
         })
-    }, [messageItems, PREFERRED_CHANNELS_ORDER])
+    }, [messageItems, PREFERRED_CHANNELS_ORDER, EXCLUDED_CHANNELS])
+
+    const topics = useMemo(() => {
+        const set = new Set<string>()
+        for (const msg of messageItems) {
+            if (msg.isAnalyzed && msg.topic && msg.topic.trim() && msg.topic.toLowerCase() !== 'sin tema') {
+                set.add(msg.topic.trim())
+            }
+        }
+        return Array.from(set).sort((a, b) => a.localeCompare(b))
+    }, [messageItems])
+
+    const getAvatarTone = (name: string) => {
+        const tones = ['', 'c-avatar--indigo', 'c-avatar--emerald', 'c-avatar--purple', 'c-avatar--slate']
+        const sum = Array.from(name || 'U').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
+        return tones[sum % tones.length]
+    }
 
     const analyzedCount = useMemo(
         () => messageItems.filter((message) => message.isAnalyzed).length,
@@ -316,17 +360,25 @@ function Messages() {
         [messageItems]
     )
 
-    const questionMessages = messageItems.filter((message) =>
-        message.message.trim().endsWith('?')
-    ).length
+    const questionMessages = useMemo(
+        () =>
+            messageItems.filter((message) =>
+                message.message.trim().endsWith('?')
+            ).length,
+        [messageItems]
+    )
 
-    const highlightedMessages = messageItems.filter(
-        (message) => message.highlight
-    ).length
+    const highlightedMessages = useMemo(
+        () =>
+            messageItems.filter(
+                (message) => message.highlight
+            ).length,
+        [messageItems]
+    )
 
 
 
-    const matchesTimeFilter = (date: Date) => {
+    const matchesTimeFilter = useCallback((date: Date) => {
         // 1. Rango específico seleccionado por el usuario en 'Desde' y 'Hasta'
         if (dateFrom) {
             const fromTimestamp = new Date(`${dateFrom}T00:00:00`).getTime()
@@ -354,86 +406,145 @@ function Messages() {
         if (timeFilter === 'month') return hours <= 24 * 30
 
         return true
-    }
+    }, [dateFrom, dateTo, timeFilter])
 
-    const filteredMessages = messageItems.filter((message) => {
-        // Evitar que las respuestas del bot reingresen al flujo editorial.
-        if (message.author.toLowerCase().includes('cloudedtech community bot')) {
-            return false
-        }
+    const filteredMessages = useMemo(() => {
+        return messageItems.filter((message) => {
+            // Evitar que las respuestas del bot reingresen al flujo editorial.
+            if (message.author.toLowerCase().includes('cloudedtech community bot')) {
+                return false
+            }
 
-        const isMsgPublished = Boolean(message.isPublished) || message.workflowStage === 'publicado'
-        const currentCuration = curationStatus[message.id] ?? 'pending'
+            const isMsgPublished =
+                Boolean(message.isPublished) ||
+                message.workflowStage === 'publicado' ||
+                (Array.isArray(message.publishedPlatforms) && message.publishedPlatforms.length > 0)
+            const currentCuration = curationStatus[message.id] ?? 'pending'
 
-        // Precedencia humana (HITL):
-        // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
-        // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado ni restaurado a 'pending'
-        // Y NUNCA si el mensaje ya fue publicado
-        const isDiscarded =
-            !isMsgPublished &&
-            (currentCuration === 'discarded' ||
-                (message.isAnalyzed &&
-                    message.relevance < 70 &&
-                    currentCuration !== 'curated' &&
-                    currentCuration !== 'pending'))
+            // Precedencia humana (HITL):
+            // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
+            // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado explícitamente
+            // Y NUNCA si el mensaje ya fue publicado
+            const isDiscarded =
+                !isMsgPublished &&
+                (currentCuration === 'discarded' ||
+                    (message.isAnalyzed &&
+                        message.relevance < 70 &&
+                        currentCuration !== 'curated'))
 
-        const isCompleted =
-            !isDiscarded &&
-            (isMsgPublished ||
-                currentCuration === 'curated' ||
-                message.workflowStage === 'en_aprobacion' ||
-                message.workflowStage === 'en_redaccion')
+            // Solo se considera proceso completo si efectivamente fue publicado en >= 1 red social
+            const isCompleted = !isDiscarded && isMsgPublished
 
-        const isPendingEval =
-            !isDiscarded &&
-            !isCompleted &&
-            (!message.isAnalyzed ||
-                message.workflowStage === 'ingesta' ||
-                message.workflowStage === 'en_ingesta')
+            const isPendingEval =
+                !isDiscarded &&
+                !isCompleted &&
+                (!message.isAnalyzed ||
+                    (message.relevance === 0 &&
+                        (message.workflowStage === 'ingesta' ||
+                            message.workflowStage === 'en_ingesta')))
 
-        const isPendingCopy = !isDiscarded && !isCompleted && !isPendingEval
+            const isPendingCopy = !isDiscarded && !isCompleted && !isPendingEval
 
-        // Filtro unificado por Estado del mensaje
-        if (curationFilter === 'descartados') {
-            if (!isDiscarded) return false
-        } else if (curationFilter === 'completos') {
-            if (!isCompleted) return false
-        } else if (curationFilter === 'pending_copy') {
-            if (!isPendingCopy) return false
-        } else if (curationFilter === 'pending_eval') {
-            if (!isPendingEval) return false
-        }
-        // Cuando curationFilter === 'all', pasan todos los mensajes
+            // Filtro unificado por Estado del mensaje
+            if (curationFilter === 'descartados') {
+                if (!isDiscarded) return false
+            } else if (curationFilter === 'completos') {
+                if (!isCompleted) return false
+            } else if (curationFilter === 'pending_copy') {
+                if (!isPendingCopy) return false
+            } else if (curationFilter === 'pending_eval') {
+                if (!isPendingEval) return false
+            }
+            // Cuando curationFilter === 'all', pasan todos los mensajes
 
-        const search = searchTerm.trim().toLowerCase()
+            const search = searchTerm.trim().toLowerCase()
 
-        const matchesSearch =
-            !search ||
-            message.author.toLowerCase().includes(search) ||
-            message.message.toLowerCase().includes(search) ||
-            message.topic.toLowerCase().includes(search) ||
-            message.channel.toLowerCase().includes(search) ||
-            message.keywords.some((keyword) =>
-                keyword.toLowerCase().includes(search)
+            const matchesSearch =
+                !search ||
+                message.author.toLowerCase().includes(search) ||
+                message.message.toLowerCase().includes(search) ||
+                message.topic.toLowerCase().includes(search) ||
+                message.channel.toLowerCase().includes(search) ||
+                message.keywords.some((keyword) =>
+                    keyword.toLowerCase().includes(search)
+                )
+
+            const matchesChannel =
+                channelFilter === 'all' ||
+                message.channel === channelFilter ||
+                (message.channel || '').replace(/^#/, '').toLowerCase() ===
+                    channelFilter.replace(/^#/, '').toLowerCase()
+
+            const matchesSentiment =
+                sentimentFilter === 'all' ||
+                message.sentiment === sentimentFilter
+
+            const matchesTopic =
+                topicFilter === 'all' ||
+                message.topic === topicFilter
+
+            const matchesClassification =
+                classificationFilter === 'all' ||
+                message.classification === classificationFilter
+
+            return (
+                matchesSearch &&
+                matchesChannel &&
+                matchesSentiment &&
+                matchesTopic &&
+                matchesClassification &&
+                matchesTimeFilter(message.rawDate)
             )
+        })
+    }, [
+        messageItems,
+        curationStatus,
+        curationFilter,
+        searchTerm,
+        channelFilter,
+        sentimentFilter,
+        topicFilter,
+        classificationFilter,
+        matchesTimeFilter,
+    ])
 
-        const matchesChannel =
-            channelFilter === 'all' ||
-            message.channel === channelFilter ||
-            (message.channel || '').replace(/^#/, '').toLowerCase() ===
-                channelFilter.replace(/^#/, '').toLowerCase()
+    const totalPages = Math.max(1, Math.ceil(filteredMessages.length / pageSize))
 
-        const matchesSentiment =
-            sentimentFilter === 'all' ||
-            message.sentiment === sentimentFilter
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages)
+        }
+    }, [currentPage, totalPages])
 
-        return (
-            matchesSearch &&
-            matchesChannel &&
-            matchesSentiment &&
-            matchesTimeFilter(message.rawDate)
-        )
-    })
+    useEffect(() => {
+        const listEl = document.getElementById('msg-list')
+        if (listEl) {
+            listEl.scrollTop = 0
+        }
+    }, [currentPage])
+
+    const paginatedMessages = useMemo(
+        () => filteredMessages.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+        [filteredMessages, currentPage, pageSize]
+    )
+
+    const startIndex = filteredMessages.length === 0 ? 0 : (currentPage - 1) * pageSize + 1
+    const endIndex = Math.min(currentPage * pageSize, filteredMessages.length)
+
+    const getPageNumbers = () => {
+        if (totalPages <= 7) {
+            return Array.from({ length: totalPages }, (_, i) => i + 1)
+        }
+        const pages: (number | string)[] = []
+        if (currentPage <= 4) {
+            pages.push(1, 2, 3, 4, 5, '...', totalPages)
+        } else if (currentPage >= totalPages - 3) {
+            pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages)
+        } else {
+            pages.push(1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages)
+        }
+        return pages
+    }
 
     const markCuration = async (
         message: MessageItem,
@@ -543,24 +654,30 @@ function Messages() {
 
             totalInRange++
 
-            const isMsgPublished = Boolean(msg.isPublished) || msg.workflowStage === 'publicado'
+            const isMsgPublished =
+                Boolean(msg.isPublished) ||
+                msg.workflowStage === 'publicado' ||
+                (Array.isArray(msg.publishedPlatforms) && msg.publishedPlatforms.length > 0)
             const st = curationStatus[msg.id] ?? 'pending'
-            if (!isMsgPublished && st === 'discarded') {
+            const isDiscarded =
+                !isMsgPublished &&
+                (st === 'discarded' ||
+                    (msg.isAnalyzed && msg.relevance < 70 && st !== 'curated'))
+
+            if (isDiscarded) {
                 discardedInRange++
                 continue
             }
 
-            const isCompleted =
-                isMsgPublished ||
-                st === 'curated' ||
-                msg.workflowStage === 'en_aprobacion' ||
-                msg.workflowStage === 'en_redaccion'
+            // Solo se contabiliza como completo si ya fue publicado en >= 1 red social
+            const isCompleted = isMsgPublished
 
             const isPendingEval =
                 !isCompleted &&
                 (!msg.isAnalyzed ||
-                    msg.workflowStage === 'ingesta' ||
-                    msg.workflowStage === 'en_ingesta')
+                    (msg.relevance === 0 &&
+                        (msg.workflowStage === 'ingesta' ||
+                            msg.workflowStage === 'en_ingesta')))
 
             if (isCompleted) {
                 completedInRange++
@@ -601,17 +718,19 @@ function Messages() {
         if (isSyncingDiscord) return
 
         setIsSyncingDiscord(true)
-        setSyncFeedbackMessage(null)
+        setSyncFeedbackMessage({
+            type: 'warning',
+            text: '⚡ Sincronizando mensajes con Discord...',
+        })
 
         try {
-            const resp = await syncDiscord()
+            const resp = await syncDiscord({ asincrono: false })
             if (resp.exito) {
-                const metricas = `Nuevas: ${resp.guardadas_nuevas} | Omitidas: ${resp.repetidas_omitidas} | Total: ${resp.total_recibidas}`
+                await loadMessages()
                 setSyncFeedbackMessage({
                     type: 'success',
-                    text: `✅ ${resp.mensaje || 'Sincronización exitosa'} (${metricas})`,
+                    text: `✅ ${resp.mensaje || `Sincronización exitosa: ${resp.guardadas_nuevas} mensajes nuevos guardados.`}`,
                 })
-                await loadMessages()
             } else {
                 setSyncFeedbackMessage({
                     type: 'warning',
@@ -619,31 +738,18 @@ function Messages() {
                 })
             }
         } catch (error) {
-            const err = error as Error & { status?: number; codigoError?: string }
-            const errMsg = err.message || 'Error desconocido al sincronizar Discord'
-            const isConflict = err.status === 409 || errMsg.includes('409') || errMsg.includes('Sincronizaci')
-            const isRateLimit =
-                err.status === 429 ||
-                err.codigoError === 'RATE_LIMIT_CLOUDFLARE_1015' ||
-                errMsg.includes('429') ||
-                errMsg.includes('1015') ||
-                errMsg.toLowerCase().includes('rate limit') ||
-                errMsg.toLowerCase().includes('too many requests')
-
-            if (isConflict) {
+            const err = error as Error & { status?: number; codigoError?: string; name?: string }
+            const is409 = err.status === 409 || (err.message && err.message.toLowerCase().includes('en curso'))
+            if (is409) {
                 setSyncFeedbackMessage({
                     type: 'warning',
-                    text: '⏳ Sincronización en curso. Por favor espera a que finalice el proceso anterior.',
-                })
-            } else if (isRateLimit) {
-                setSyncFeedbackMessage({
-                    type: 'warning',
-                    text: '⚠️ Discord o Cloudflare ha limitado temporalmente la IP del servidor en la nube (Error 1015 / Rate Limit). Sincroniza desde tu entorno local o intenta en unos minutos.',
+                    text: '⚡ Hay una sincronización en curso. Por favor espera unos instantes.',
                 })
             } else {
+                const errMsg = err.message || 'Error al conectar con el servidor'
                 setSyncFeedbackMessage({
-                    type: 'error',
-                    text: `Error al sincronizar Discord: ${errMsg}`,
+                    type: 'warning',
+                    text: `Sincronización: ${errMsg}`,
                 })
             }
         } finally {
@@ -731,10 +837,13 @@ function Messages() {
         setSearchTerm('')
         setChannelFilter('all')
         setSentimentFilter('all')
+        setTopicFilter('all')
+        setClassificationFilter('all')
         setTimeFilter('all')
         setCurationFilter('all')
         setDateFrom('')
         setDateTo('')
+        setCurrentPage(1)
         setBatchEvalMessage(null)
         setSyncFeedbackMessage(null)
     }
@@ -743,85 +852,137 @@ function Messages() {
         <div className="space-y-6">
 
             {/* Encabezado */}
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-500">
-                        <MessageCircle size={21} />
-                    </div>
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight t-page t-page--xl">
+                        Ingesta de mensajes
+                    </h1>
 
-                    <div>
-                        <h2 className="text-2xl font-bold text-slate-900">
-                            Ingesta de mensajes
-                        </h2>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                            Monitoreo, análisis y curaduría de conversaciones de Discord
-                        </p>
-                    </div>
+                    <p className="mt-1 text-sm text-slate-500">
+                        Monitoreo, análisis y curaduría de conversaciones de Discord
+                    </p>
                 </div>
 
-                <div
-                    className={`flex items-center gap-2 rounded-lg px-3 py-2 ${
-                        apiConnected
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-amber-50 text-amber-700'
-                    }`}
-                >
-                    <div
-                        className={`h-2 w-2 rounded-full ${
-                            apiConnected
-                                ? 'bg-emerald-500'
-                                : 'bg-amber-500'
-                        }`}
-                    />
+                {/* Sección compacta: Mensajes totales recibidos, telemetría y sincronización */}
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/90 bg-white px-4 py-2.5 shadow-sm tabular-nums">
+                        <div>
+                            <div className="flex items-baseline gap-1.5">
+                                <span className="text-2xl font-black tracking-tight text-slate-950">
+                                    {(apiData.total || messageItems.length).toLocaleString('es-CO')}
+                                </span>
+                                <span className="text-xs font-semibold text-slate-500">
+                                    Mensajes totales recibidos
+                                </span>
+                            </div>
 
-                    <span className="text-xs font-semibold">
-                        {apiConnected
-                            ? 'Motor de ingesta conectado'
-                            : 'Esperando conexión del Motor IA'}
-                    </span>
+                            <div className="flex items-center gap-1.5 text-[11px]">
+                                <span
+                                    className={`inline-flex items-center gap-1 font-semibold ${
+                                        apiConnected
+                                            ? 'text-emerald-700'
+                                            : 'text-amber-700'
+                                    }`}
+                                >
+                                    <span
+                                        className={`h-1.5 w-1.5 rounded-full ${
+                                            apiConnected
+                                                ? 'bg-emerald-500'
+                                                : 'bg-amber-500'
+                                        }`}
+                                    />
+                                    {apiConnected
+                                        ? 'Conexión a Discord activa'
+                                        : 'Conexión pendiente'}
+                                </span>
+                                <span className="text-slate-400">· Datos en Motor IA</span>
+                            </div>
+                        </div>
+
+                        <div className="hidden h-8 w-px bg-slate-200 sm:block" />
+
+                        <div className="flex divide-x divide-slate-100 text-center">
+                            <div className="px-2.5">
+                                <p className="text-[10px] font-medium text-slate-400">Bots omitidos</p>
+                                <p className="text-sm font-bold text-slate-600">
+                                    {(apiData.omitted_bots_count ?? 0).toLocaleString('es-CO')}
+                                </p>
+                            </div>
+
+                            <div className="px-2.5">
+                                <p className="text-[10px] font-medium text-slate-400">Reales detectados</p>
+                                <p className="text-sm font-bold text-emerald-600">
+                                    {(apiData.real_messages_count ?? apiData.total ?? messageItems.length).toLocaleString('es-CO')}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleSyncDiscord}
+                        disabled={isSyncingDiscord}
+                        className="c-btn c-btn--primary inline-flex items-center gap-2"
+                        style={{ height: '2.625rem' }}
+                    >
+                        <RefreshCw
+                            size={14}
+                            className={isSyncingDiscord ? 'animate-spin' : ''}
+                        />
+                        <span>{isSyncingDiscord ? 'Sincronizando...' : 'Sincronizar Discord'}</span>
+                    </button>
                 </div>
             </div>
 
             {/* KPIs */}
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="l-grid l-grid--4 tabular-nums" id="msg-summary">
                 <KpiCard
-                    label="Mensajes analizados"
-                    value={analyzedCount}
-                    helper={
-                        messageItems.length > 0
-                            ? `${analyzedCount} de ${messageItems.length} (${messageItems.length - analyzedCount} pendientes)`
-                            : 'Sin mensajes'
+                    title="Analizados"
+                    value={analyzedCount.toLocaleString('es-CO')}
+                    description="Últimos 30 días"
+                    icon={<Inbox size={18} />}
+                    iconKind=""
+                    spark={false}
+                />
+
+                <KpiCard
+                    title="Positivos"
+                    value={positiveMessages.toLocaleString('es-CO')}
+                    description={
+                        <>
+                            <b className="t-success font-semibold text-emerald-600">
+                                {analyzedCount > 0
+                                    ? Math.round(
+                                          (positiveMessages / analyzedCount) *
+                                              100
+                                      )
+                                    : 0}
+                                %
+                            </b>{' '}
+                            del total
+                        </>
                     }
+                    icon={<Smile size={18} />}
+                    iconKind="success"
+                    spark={false}
                 />
 
                 <KpiCard
-                    label="Positivos"
-                    value={positiveMessages}
-                    helper={
-                        analyzedCount > 0
-                            ? `${Math.round(
-                                  (positiveMessages /
-                                      analyzedCount) *
-                                      100
-                              )}% de los analizados`
-                            : 'Sin mensajes analizados'
-                    }
-                    valueClass="text-emerald-600"
+                    title="Preguntas"
+                    value={questionMessages.toLocaleString('es-CO')}
+                    description="Candidatas a FAQ"
+                    icon={<MessageSquare size={18} />}
+                    iconKind="info"
+                    spark={false}
                 />
 
                 <KpiCard
-                    label="Preguntas"
-                    value={questionMessages}
-                    helper="Detectadas en la ingesta"
-                    valueClass="text-blue-600"
-                />
-
-                <KpiCard
-                    label="Destacados"
-                    value={highlightedMessages}
-                    helper="Interacciones relevantes"
-                    valueClass="text-orange-500"
+                    title="Destacados"
+                    value={highlightedMessages.toLocaleString('es-CO')}
+                    description="Relevancia ≥ 85"
+                    icon={<Star size={18} />}
+                    iconKind=""
+                    spark={false}
                 />
             </div>
 
@@ -848,144 +1009,233 @@ function Messages() {
                 </div>
             )}
 
-            {/* Estado Discord */}
-            <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                    <div className="flex items-center gap-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm">
-                            <MessageCircle size={25} />
-                        </div>
-
-                        <div>
-                            <div className="flex flex-wrap items-baseline gap-2">
-                                <span className="text-3xl font-black tracking-tight text-slate-950">
-                                    {apiData.total || messageItems.length}
-                                </span>
-
-                                <span className="text-sm font-semibold text-slate-500">
-                                    Mensajes totales recibidos
-                                </span>
-                            </div>
-
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                                <span
-                                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ${
-                                        apiConnected
-                                            ? 'bg-emerald-50 text-emerald-700'
-                                            : 'bg-amber-50 text-amber-700'
-                                    }`}
-                                >
-                                    <span
-                                        className={`h-1.5 w-1.5 rounded-full ${
-                                            apiConnected
-                                                ? 'bg-emerald-500'
-                                                : 'bg-amber-500'
-                                        }`}
-                                    />
-
-                                    {apiConnected
-                                        ? 'Conexión a Discord activa'
-                                        : 'Conexión pendiente'}
-                                </span>
-
-                                <span className="text-slate-400">
-                                    Datos almacenados en Motor IA
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex divide-x divide-slate-200 rounded-xl border border-slate-100">
-                            <div className="px-6 py-2 text-center">
-                                <p className="text-xs font-medium text-slate-500">Mensajes omitidos de bots</p>
-                                <p className="mt-1 text-lg font-bold text-slate-600">
-                                    {apiData.omitted_bots_count ?? 0}
-                                </p>
-                            </div>
-
-                            <div className="px-6 py-2 text-center">
-                                <p className="text-xs font-medium text-slate-500">Mensajes reales detectados</p>
-                                <p className="mt-1 text-lg font-bold text-emerald-600">
-                                    {apiData.real_messages_count ?? apiData.total ?? messageItems.length}
-                                </p>
-                            </div>
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={handleSyncDiscord}
-                            disabled={isSyncingDiscord}
-                            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            <RefreshCw
-                                size={14}
-                                className={isSyncingDiscord ? 'animate-spin' : ''}
-                            />
-                            {isSyncingDiscord ? 'Sincronizando...' : '📥 Sincronizar Discord'}
-                        </button>
-                    </div>
-                </div>
-            </section>
-
-            {/* Panel de Evaluación IA por Lotes con Filtro de Fechas */}
-            <section className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            {/* Panel de Evaluación IA por Lotes con Filtro de Fechas (compacto - CommunityLab DS) */}
+            <section className="c-card" style={{ padding: '1rem 1.25rem' }}>
+                {/* Encabezado compacto */}
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-center gap-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-100 text-purple-600">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600">
                             <Bot size={20} />
                         </div>
-                        <div>
-                            <h3 className="font-bold text-slate-900">
+                        <div className="min-w-0">
+                            <h3 className="text-sm font-bold text-slate-900">
                                 Evaluación por Lote con Inteligencia Artificial
                             </h3>
-                            <p className="text-xs text-slate-500">
+                            <p className="text-[11px] text-slate-500">
                                 Clasifica sentimiento, relevancia y temas usando los modelos del motor IA
                             </p>
                         </div>
                     </div>
 
-                    {aiModels.length > 0 && (
-                        <div className="flex items-center gap-1.5 rounded-lg bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">
-                            <span className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
-                            {aiModels.length} cerebros IA disponibles
-                        </div>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        {aiModels.length > 0 && (
+                            <span className="c-pill c-pill--accent tabular-nums">
+                                <span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
+                                {aiModels.length} cerebros IA disponibles
+                            </span>
+                        )}
+
+                        <span className={`c-pill ${apiConnected ? 'c-pill--success' : 'c-pill--warning'}`}>
+                            <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                    apiConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                                }`}
+                            />
+                            {apiConnected
+                                ? 'Motor de ingesta conectado'
+                                : 'Esperando conexión del Motor IA'}
+                        </span>
+                    </div>
                 </div>
 
-                {/* Contador reactivo e indicadores de estado */}
-                <div className="mb-4 space-y-2">
+                {/* Controles en una sola fila */}
+                <div className="mt-3 grid grid-cols-1 items-end gap-2.5 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                    {/* Selector de Cerebro IA */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Cerebro IA
+                        </label>
+                        <select
+                            value={selectedAiBrain}
+                            onChange={(e) => setSelectedAiBrain(e.target.value)}
+                            className="c-select"
+                            style={{ padding: '0.45rem 2rem 0.45rem 0.75rem', fontSize: '0.75rem' }}
+                        >
+                            {aiModels.map((m) => (
+                                <option key={m.id} value={m.name}>
+                                    {m.name} ({m.provider})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Fecha Desde */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Desde (opcional)
+                        </label>
+                        <input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => setDateFrom(e.target.value)}
+                            className="c-input"
+                            style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
+                        />
+                    </div>
+
+                    {/* Fecha Hasta */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Hasta (opcional)
+                        </label>
+                        <input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => setDateTo(e.target.value)}
+                            className="c-input"
+                            style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
+                        />
+                    </div>
+
+                    {/* Selector de tamaño de lote */}
+                    <div className="min-w-0">
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                            Tamaño del lote
+                        </label>
+                        <select
+                            value={batchEvalMetrics.evaluableCount === 0 ? 0 : batchLimit}
+                            onChange={(e) => setBatchLimit(Number(e.target.value))}
+                            disabled={batchEvalMetrics.evaluableCount === 0 || isEvaluatingBatch}
+                            className="c-select disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                            style={{ padding: '0.45rem 2rem 0.45rem 0.75rem', fontSize: '0.75rem' }}
+                        >
+                            {batchEvalMetrics.evaluableCount === 0 ? (
+                                <option value={0} disabled>Sin pendientes</option>
+                            ) : (
+                                <>
+                                    <option value={1}>1 mensaje</option>
+                                    {batchEvalMetrics.evaluableCount > 1 && batchEvalMetrics.evaluableCount < 5 && (
+                                        <option value={batchEvalMetrics.evaluableCount}>
+                                            Evaluar todos ({batchEvalMetrics.evaluableCount})
+                                        </option>
+                                    )}
+                                    <option value={5}>5 mensajes</option>
+                                    {batchEvalMetrics.evaluableCount > 5 && batchEvalMetrics.evaluableCount < 10 && (
+                                        <option value={batchEvalMetrics.evaluableCount}>
+                                            Evaluar todos ({batchEvalMetrics.evaluableCount})
+                                        </option>
+                                    )}
+                                    <option value={10}>10 mensajes</option>
+                                </>
+                            )}
+                        </select>
+                    </div>
+
+                    {/* Botón de Acción */}
+                    <button
+                        type="button"
+                        disabled={
+                            isEvaluatingBatch ||
+                            batchEvalMetrics.evaluableCount === 0 ||
+                            batchEvalMetrics.isDateRangeInverted
+                        }
+                        onClick={handleEvaluateBatch}
+                        title={
+                            batchEvalMetrics.isDateRangeInverted
+                                ? "La fecha 'Desde' no puede ser posterior a 'Hasta'"
+                                : batchEvalMetrics.evaluableCount === 0
+                                ? "No hay mensajes para evaluar con los criterios actuales"
+                                : undefined
+                        }
+                        className="c-btn c-btn--primary inline-flex items-center justify-center gap-2 whitespace-nowrap"
+                        style={{ height: '2.125rem', fontSize: '0.75rem' }}
+                    >
+                        <RefreshCw
+                            size={14}
+                            className={isEvaluatingBatch ? 'animate-spin' : ''}
+                        />
+                        <span>{isEvaluatingBatch ? 'Evaluando con IA...' : 'Evaluar mensajes con IA'}</span>
+                    </button>
+                </div>
+
+                {selectedAiBrain.toLowerCase().includes('gemma') && (
+                    <p className="mt-1.5 text-[11px] font-medium text-amber-700">
+                        ⚠️ Google Gemma 4 es un modelo denso (31B) y puede demorar entre 30 y 45s. Para respuesta inmediata usa Groq.
+                    </p>
+                )}
+
+                {/* Franja de estado: cobertura IA + conteos del rango */}
+                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
                     {batchEvalMetrics.isDateRangeInverted ? (
                         <div
                             role="alert"
-                            className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-700"
+                            className="flex items-center gap-2 text-xs font-semibold text-rose-700"
                         >
-                            <AlertCircle size={16} className="shrink-0 text-rose-600" />
+                            <AlertCircle size={15} className="shrink-0 text-rose-600" />
                             <span>La fecha 'Desde' no puede ser posterior a 'Hasta'.</span>
                         </div>
                     ) : (
-                        <div className="flex flex-wrap items-center gap-2">
-                            <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-purple-100 bg-purple-50/80 px-3.5 py-2 text-xs text-slate-700">
-                                <span className="font-bold text-purple-950">
+                        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:gap-4">
+                            {/* Medidor de Progreso de Evaluación (.c-meter) */}
+                            <div className="shrink-0 xl:w-80">
+                                <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
+                                    <span className="font-semibold text-slate-600">
+                                        Cobertura de evaluación IA en el rango seleccionado
+                                    </span>
+                                    <span className="font-bold text-slate-800 tabular-nums whitespace-nowrap">
+                                        {Math.max(0, batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange)} / {batchEvalMetrics.totalInRange} evaluados (
+                                        {batchEvalMetrics.totalInRange > 0
+                                            ? Math.round(
+                                                  ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
+                                                      batchEvalMetrics.totalInRange) *
+                                                      100
+                                              )
+                                            : 0}
+                                        %)
+                                    </span>
+                                </div>
+                                <div className="c-meter">
+                                    <div
+                                        className="c-meter__bar"
+                                        style={{
+                                            width: `${
+                                                batchEvalMetrics.totalInRange > 0
+                                                    ? Math.min(
+                                                          100,
+                                                          Math.round(
+                                                              ((batchEvalMetrics.totalInRange - batchEvalMetrics.pendingEvalInRange) /
+                                                                  batchEvalMetrics.totalInRange) *
+                                                                  100
+                                                          )
+                                                      )
+                                                    : 0
+                                            }%`,
+                                        }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="hidden h-8 w-px bg-slate-200 xl:block" />
+
+                            {/* Contador reactivo e indicadores de estado */}
+                            <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-700 tabular-nums">
+                                <span className="font-bold text-slate-900">
                                     📊 {batchEvalMetrics.totalInRange} mensajes en este rango:
                                 </span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-amber-700">
-                                    <Clock3 size={13} className="shrink-0" />
+                                    <Clock3 size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.pendingEvalInRange}</strong> pendientes de evaluar
                                 </span>
-                                <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-indigo-700">
-                                    <Sparkles size={13} className="shrink-0" />
+                                    <Sparkles size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.pendingCopyInRange}</strong> Pendientes de publicar
                                 </span>
-                                <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-emerald-700">
-                                    <ThumbsUp size={13} className="shrink-0" />
+                                    <ThumbsUp size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.completedInRange}</strong> con proceso completo
                                 </span>
-                                <span className="text-slate-300">·</span>
                                 <span className="inline-flex items-center gap-1 font-semibold text-rose-700">
-                                    <X size={13} className="shrink-0" />
+                                    <X size={12} className="shrink-0" />
                                     <strong>{batchEvalMetrics.discardedInRange}</strong> descartados
                                 </span>
                             </div>
@@ -997,27 +1247,27 @@ function Messages() {
                                         setDateFrom('')
                                         setDateTo('')
                                     }}
-                                    className="inline-flex items-center gap-1.5 rounded-xl border border-purple-200 bg-white px-3 py-1.5 text-xs font-semibold text-purple-700 shadow-sm transition hover:bg-purple-50"
+                                    className="c-btn c-btn--secondary c-btn--sm shrink-0"
                                     title="Quitar filtro de fechas para ver todos los mensajes"
                                 >
-                                    <X size={13} />
+                                    <X size={12} />
                                     Mostrar todos los mensajes
                                 </button>
                             )}
+                        </div>
+                    )}
 
-                            {batchEvalMetrics.evaluableCount === 0 && (
-                                <div
-                                    role="status"
-                                    className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800"
-                                >
-                                    <AlertTriangle size={15} className="shrink-0 text-amber-600" />
-                                    <span>
-                                        {batchEvalMetrics.totalInRange === 0
-                                            ? 'Sin mensajes en este rango de fechas.'
-                                            : 'Todos los mensajes de este rango ya fueron evaluados (puedes explorarlos abajo).'}
-                                    </span>
-                                </div>
-                            )}
+                    {!batchEvalMetrics.isDateRangeInverted && batchEvalMetrics.evaluableCount === 0 && (
+                        <div
+                            role="status"
+                            className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-800"
+                        >
+                            <AlertTriangle size={13} className="shrink-0 text-amber-600" />
+                            <span>
+                                {batchEvalMetrics.totalInRange === 0
+                                    ? 'Sin mensajes en este rango de fechas.'
+                                    : 'Todos los mensajes de este rango ya fueron evaluados (puedes explorarlos abajo).'}
+                            </span>
                         </div>
                     )}
                 </div>
@@ -1025,7 +1275,7 @@ function Messages() {
                 {batchEvalMessage && (
                     <div
                         role="alert"
-                        className={`mb-4 flex items-center justify-between rounded-xl border px-4 py-3 text-xs font-medium ${
+                        className={`mt-3 flex items-center justify-between rounded-xl border px-3 py-2 text-xs font-medium ${
                             batchEvalMessage.type === 'success'
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                                 : batchEvalMessage.type === 'warning'
@@ -1043,561 +1293,333 @@ function Messages() {
                         </button>
                     </div>
                 )}
-
-                <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    {/* Selector de Cerebro IA */}
-                    <div>
-                        <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                            Cerebro IA
-                        </label>
-                        <select
-                            value={selectedAiBrain}
-                            onChange={(e) => setSelectedAiBrain(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-                        >
-                            {aiModels.map((m) => (
-                                <option key={m.id} value={m.name}>
-                                    {m.name} ({m.provider})
-                                </option>
-                            ))}
-                        </select>
-                        {selectedAiBrain.toLowerCase().includes('gemma') && (
-                            <p className="mt-1 text-[11px] font-medium text-amber-700">
-                                ⚠️ Google Gemma 4 es un modelo denso (31B) y puede demorar entre 30 y 45s. Para respuesta inmediata usa Groq.
-                            </p>
-                        )}
-                    </div>
-
-                    {/* Fecha Desde */}
-                    <div>
-                        <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                            Desde (opcional)
-                        </label>
-                        <input
-                            type="date"
-                            value={dateFrom}
-                            onChange={(e) => setDateFrom(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-                        />
-                    </div>
-
-                    {/* Fecha Hasta */}
-                    <div>
-                        <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                            Hasta (opcional)
-                        </label>
-                        <input
-                            type="date"
-                            value={dateTo}
-                            onChange={(e) => setDateTo(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-                        />
-                    </div>
-
-                    {/* Selector de tamaño de lote y Botón de Acción */}
-                    <div className="flex flex-col gap-2">
-                        <div>
-                            <label className="mb-1.5 block text-xs font-semibold text-slate-700">
-                                Tamaño del lote
-                            </label>
-                            <select
-                                value={batchEvalMetrics.evaluableCount === 0 ? 0 : batchLimit}
-                                onChange={(e) => setBatchLimit(Number(e.target.value))}
-                                disabled={batchEvalMetrics.evaluableCount === 0 || isEvaluatingBatch}
-                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                            >
-                                {batchEvalMetrics.evaluableCount === 0 ? (
-                                    <option value={0} disabled>Sin pendientes</option>
-                                ) : (
-                                    <>
-                                        <option value={1}>1 mensaje</option>
-                                        {batchEvalMetrics.evaluableCount > 1 && batchEvalMetrics.evaluableCount < 5 && (
-                                            <option value={batchEvalMetrics.evaluableCount}>
-                                                Evaluar todos ({batchEvalMetrics.evaluableCount})
-                                            </option>
-                                        )}
-                                        <option value={5}>5 mensajes</option>
-                                        {batchEvalMetrics.evaluableCount > 5 && batchEvalMetrics.evaluableCount < 10 && (
-                                            <option value={batchEvalMetrics.evaluableCount}>
-                                                Evaluar todos ({batchEvalMetrics.evaluableCount})
-                                            </option>
-                                        )}
-                                        <option value={10}>10 mensajes</option>
-                                    </>
-                                )}
-                            </select>
-                        </div>
-
-                        <button
-                            type="button"
-                            disabled={
-                                isEvaluatingBatch ||
-                                batchEvalMetrics.evaluableCount === 0 ||
-                                batchEvalMetrics.isDateRangeInverted
-                            }
-                            onClick={handleEvaluateBatch}
-                            title={
-                                batchEvalMetrics.isDateRangeInverted
-                                    ? "La fecha 'Desde' no puede ser posterior a 'Hasta'"
-                                    : batchEvalMetrics.evaluableCount === 0
-                                    ? "No hay mensajes para evaluar con los criterios actuales"
-                                    : undefined
-                            }
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            <RefreshCw
-                                size={14}
-                                className={isEvaluatingBatch ? 'animate-spin' : ''}
-                            />
-                            {isEvaluatingBatch ? 'Evaluando con IA...' : 'Evaluar mensajes con IA'}
-                        </button>
-                    </div>
-                </div>
             </section>
 
-            {/* Panel de filtrado */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex items-center gap-2">
-                        <Filter size={17} className="text-orange-500" />
-                        <h3 className="font-bold text-slate-900">
-                            Panel de filtrado de mensajes
-                        </h3>
-                    </div>
+            {/* Sección unificada: Panel de filtrado de mensajes + Lista de mensajes (CommunityLab DS) */}
+            <article className="c-card c-card--flush">
+                <div className="c-card__section">
+                    <div className="c-card__header" style={{ marginBottom: 'var(--space-4)' }}>
+                        <div>
+                            <h2 className="t-card">Panel de filtrado de mensajes</h2>
+                            <p className="c-card__desc tabular-nums">
+                                Mostrando{' '}
+                                <strong className="font-bold text-slate-900" id="msg-count">
+                                    {filteredMessages.length}
+                                </strong>{' '}
+                                {curationFilter === 'descartados'
+                                    ? filteredMessages.length === 1
+                                        ? 'mensaje descartado que coincide con los filtros.'
+                                        : 'mensajes descartados que coinciden con los filtros.'
+                                    : curationFilter === 'completos'
+                                    ? 'mensajes con proceso completo que coinciden con los filtros.'
+                                    : curationFilter === 'pending_eval'
+                                    ? 'mensajes pendientes de evaluar que coinciden con los filtros.'
+                                    : curationFilter === 'pending_copy'
+                                    ? 'mensajes en la cola de publicación que coinciden con los filtros.'
+                                    : 'mensajes en total (Todos los mensajes) que coinciden con los filtros.'}
+                                {(dateFrom || dateTo) && (
+                                    <span className="ml-1 font-semibold text-purple-700">
+                                        (en rango: {dateFrom || 'inicio'} a {dateTo || 'hoy'})
+                                    </span>
+                                )}
+                            </p>
+                        </div>
 
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            onClick={clearFilters}
-                            className="rounded-xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
-                        >
-                            Deseleccionar
-                        </button>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.1fr_1.35fr_1fr]">
-                    {/* Tiempo */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Filtro de tiempo
-                        </label>
-
-                        <div className="grid grid-cols-4 rounded-xl bg-slate-100 p-1">
-                            {[
-                                ['24h', '24 Horas'],
-                                ['week', 'Semana'],
-                                ['month', 'Mes'],
-                                ['all', 'Todo'],
-                            ].map(([value, label]) => (
-                                <button
-                                    key={value}
-                                    type="button"
-                                    onClick={() =>
-                                        setTimeFilter(value)
-                                    }
-                                    className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition ${
-                                        timeFilter === value
-                                            ? 'bg-white text-slate-900 shadow-sm'
-                                            : 'text-slate-500'
+                        <div className="l-cluster">
+                            <span className="c-pill c-pill--outline">
+                                <span
+                                    className={`h-1.5 w-1.5 rounded-full ${
+                                        apiConnected ? 'bg-emerald-500' : 'bg-amber-400'
                                     }`}
-                                >
-                                    {label}
-                                </button>
-                            ))}
+                                />
+                                Actualización en streaming {apiConnected ? 'activa' : 'pendiente'}
+                            </span>
+
+                            <button
+                                className="c-btn c-btn--ghost c-btn--sm"
+                                type="button"
+                                id="msg-reset"
+                                onClick={clearFilters}
+                            >
+                                Limpiar filtros
+                            </button>
                         </div>
                     </div>
 
-                    {/* Canal */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Canales monitoreados
-                        </label>
+                    <div className="c-toolbar">
+                        {/* Buscar */}
+                        <div className="c-field" style={{ flexBasis: '16rem' }}>
+                            <label className="c-label sr-only" htmlFor="msg-q">
+                                Buscar
+                            </label>
+                            <div className="c-input-group">
+                                <Search size={15} className="icon" />
+                                <input
+                                    id="msg-q"
+                                    type="text"
+                                    className="c-input"
+                                    placeholder="Buscar por autor o contenido…"
+                                    value={searchTerm}
+                                    onChange={(event) => setSearchTerm(event.target.value)}
+                                />
+                            </div>
+                        </div>
 
-                        <div className="relative">
-                            <Hash
-                                size={15}
-                                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                            />
-
+                        {/* Canal */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-channel">
+                                Canal
+                            </label>
                             <select
+                                id="msg-channel"
+                                className="c-select"
                                 value={channelFilter}
-                                onChange={(event) =>
-                                    setChannelFilter(
-                                        event.target.value
-                                    )
-                                }
-                                className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-4 text-xs font-medium text-slate-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                                onChange={(event) => setChannelFilter(event.target.value)}
                             >
                                 <option value="all">
                                     Todos los canales ({channels.length})
                                 </option>
-
                                 {channels.map((channel) => (
-                                    <option
-                                        key={channel}
-                                        value={channel}
-                                    >
+                                    <option key={channel} value={channel}>
                                         #{channel}
                                     </option>
                                 ))}
                             </select>
                         </div>
-                    </div>
 
-                    {/* Búsqueda */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Identificación y búsqueda
-                        </label>
+                        {/* Sentimiento */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-sent">
+                                Sentimiento
+                            </label>
+                            <select
+                                id="msg-sent"
+                                className="c-select"
+                                value={sentimentFilter}
+                                onChange={(event) => setSentimentFilter(event.target.value)}
+                            >
+                                <option value="all">Todo sentimiento</option>
+                                <option value="positive">Positivo</option>
+                                <option value="neutral">Neutral</option>
+                                <option value="negative">Negativo</option>
+                            </select>
+                        </div>
 
-                        <div className="relative">
-                            <Search
-                                size={15}
-                                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                            />
+                        {/* Tema */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-topic">
+                                Tema
+                            </label>
+                            <select
+                                id="msg-topic"
+                                className="c-select"
+                                value={topicFilter}
+                                onChange={(event) => setTopicFilter(event.target.value)}
+                            >
+                                <option value="all">Todos los temas</option>
+                                {topics.map((topic) => (
+                                    <option key={topic} value={topic}>
+                                        {topic}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
 
-                            <input
-                                type="text"
-                                placeholder="Buscar usuario, tema, canal o palabra clave..."
-                                value={searchTerm}
-                                onChange={(event) =>
-                                    setSearchTerm(event.target.value)
-                                }
-                                className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-4 text-xs outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
-                            />
+                        {/* Estado del mensaje */}
+                        <div className="c-field">
+                            <label className="c-label sr-only" htmlFor="msg-status">
+                                Estado del mensaje
+                            </label>
+                            <select
+                                id="msg-status"
+                                aria-label="Estado del mensaje"
+                                className="c-select"
+                                value={curationFilter}
+                                onChange={(event) => setCurationFilter(event.target.value)}
+                            >
+                                <option value="all">Todos los estados</option>
+                                <option value="pending_eval">Pendientes de evaluar</option>
+                                <option value="pending_copy">Pendientes de publicar</option>
+                                <option value="completos">Proceso completo</option>
+                                <option value="descartados">Descartado</option>
+                            </select>
                         </div>
                     </div>
 
-                    {/* Estado */}
-                    <div>
-                        <label className="mb-2 block text-xs font-semibold text-slate-600">
-                            Estado del mensaje
-                        </label>
+                    <div className="l-cluster" id="msg-chips" style={{ marginTop: 'var(--space-4)' }}>
+                        {[
+                            ['all', 'Todo el tiempo'],
+                            ['24h', '24 Horas'],
+                            ['week', 'Semana'],
+                            ['month', 'Mes'],
+                        ].map(([value, label]) => (
+                            <button
+                                key={value}
+                                type="button"
+                                onClick={() => setTimeFilter(value)}
+                                className={`c-chip${timeFilter === value ? ' is-active' : ''}`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
 
-                        <select
-                            value={curationFilter}
-                            onChange={(event) =>
-                                setCurationFilter(event.target.value)
-                            }
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                    {curationError && (
+                        <div
+                            role="alert"
+                            className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-medium text-rose-700"
                         >
-                            <option value="all">
-                                Todos los estados
-                            </option>
-                            <option value="pending_eval">
-                                Pendientes de evaluar
-                            </option>
-                            <option value="pending_copy">
-                                Pendientes de publicar
-                            </option>
-                            <option value="completos">
-                                Proceso completo
-                            </option>
-                            <option value="descartados">
-                                Descartado
-                            </option>
-                        </select>
-                    </div>
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <select
-                        value={sentimentFilter}
-                        onChange={(event) =>
-                            setSentimentFilter(event.target.value)
-                        }
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 outline-none focus:border-orange-400"
-                    >
-                        <option value="all">
-                            Todos los sentimientos
-                        </option>
-                        <option value="positive">
-                            Positivo
-                        </option>
-                        <option value="neutral">
-                            Neutral
-                        </option>
-                        <option value="negative">
-                            Negativo
-                        </option>
-                    </select>
-                </div>
-            </section>
-
-            {/* Cabecera de cola */}
-            <div className="flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs font-medium text-slate-500">
-                    Mostrando{' '}
-                    <span className="font-bold text-slate-700">
-                        {filteredMessages.length}
-                    </span>{' '}
-                    {curationFilter === 'descartados'
-                        ? filteredMessages.length === 1
-                            ? 'mensaje descartado'
-                            : 'mensajes descartados'
-                        : curationFilter === 'completos'
-                        ? 'mensajes con proceso completo'
-                        : curationFilter === 'pending_eval'
-                        ? 'mensajes pendientes de evaluar'
-                        : curationFilter === 'pending_copy'
-                        ? 'mensajes en la cola de publicación'
-                        : 'mensajes en total (Todos los mensajes)'}
-                    {(dateFrom || dateTo) && (
-                        <span className="ml-1 font-semibold text-purple-700">
-                            (en rango: {dateFrom || 'inicio'} a {dateTo || 'hoy'})
-                        </span>
+                            No se guardó la curaduría: {curationError}
+                        </div>
                     )}
-                </p>
-
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <span
-                        className={`h-2 w-2 rounded-full ${
-                            apiConnected
-                                ? 'bg-emerald-500'
-                                : 'bg-amber-400'
-                        }`}
-                    />
-                    Actualización en streaming
-                    {apiConnected ? ' activa' : ' pendiente'}
                 </div>
-            </div>
 
-            {curationError && (
-                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                    No se guardó la curaduría: {curationError}
-                </div>
-            )}
+                {/* Lista de Mensajes (#msg-list) */}
+                <div id="msg-list" className="max-h-[min(850px,70vh)] overflow-y-auto">
+                    {filteredMessages.length === 0 && (
+                        <div className="c-empty">
+                            <div className="c-empty__icon">
+                                <Search size={22} />
+                            </div>
+                            <p className="c-empty__title">No se encontraron mensajes</p>
+                            <p className="c-empty__text">
+                                Prueba con otros filtros o limpia la búsqueda.
+                            </p>
+                        </div>
+                    )}
 
-            {/* Mensajes */}
-            <div className="max-h-[min(850px,70vh)] overflow-y-auto pr-2 space-y-4">
-                {filteredMessages.length === 0 && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
-                        <MessageCircle
-                            size={36}
-                            className="mx-auto text-slate-300"
-                        />
-
-                        <h3 className="mt-4 font-semibold text-slate-900">
-                            No se encontraron mensajes
-                        </h3>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                            No hay mensajes disponibles con los filtros seleccionados.
-                        </p>
-                    </div>
-                )}
-
-                {filteredMessages.map((message) => {
-                    const isMsgPublished = Boolean(message.isPublished) || message.workflowStage === 'publicado'
-                    const currentCuration =
-                        curationStatus[message.id] ?? 'pending'
-                    const status =
-                        isMsgPublished
+                    {paginatedMessages.map((message) => {
+                        const isMsgPublished =
+                            Boolean(message.isPublished) ||
+                            message.workflowStage === 'publicado' ||
+                            (Array.isArray(message.publishedPlatforms) && message.publishedPlatforms.length > 0)
+                        const currentCuration = curationStatus[message.id] ?? 'pending'
+                        const status = isMsgPublished
                             ? 'curated'
                             : currentCuration === 'discarded' ||
                               (message.isAnalyzed &&
                                   message.relevance < 70 &&
-                                  currentCuration !== 'curated' &&
-                                  currentCuration !== 'pending')
+                                  currentCuration !== 'curated')
                             ? 'discarded'
                             : currentCuration
 
-                    const ALL_PLATFORMS = ['Discord', 'LinkedIn', 'X'] as const
-                    const rawPublished = (message.publishedPlatforms || []).map((p) => {
-                        const lower = p.toLowerCase()
-                        if (lower === 'discord') return 'Discord'
-                        if (lower === 'linkedin') return 'LinkedIn'
-                        if (lower === 'x' || lower === 'twitter') return 'X'
-                        return p
-                    })
-                    const canonicalPublished = ALL_PLATFORMS.filter((p) => rawPublished.includes(p))
-                    const effectivePublished = canonicalPublished.length > 0 ? canonicalPublished : ['Discord']
-                    const missingPlatforms = ALL_PLATFORMS.filter((p) => !effectivePublished.includes(p))
-                    const publishedPlatformsText = effectivePublished.join(', ')
+                        const ALL_PLATFORMS = ['Discord', 'LinkedIn', 'X'] as const
+                        const rawPublished = (message.publishedPlatforms || []).map((p) => {
+                            const lower = p.toLowerCase()
+                            if (lower === 'discord') return 'Discord'
+                            if (lower === 'linkedin') return 'LinkedIn'
+                            if (lower === 'x' || lower === 'twitter') return 'X'
+                            return p
+                        })
+                        const canonicalPublished = ALL_PLATFORMS.filter((p) =>
+                            rawPublished.includes(p)
+                        )
+                        const effectivePublished =
+                            canonicalPublished.length > 0
+                                ? canonicalPublished
+                                : isMsgPublished
+                                ? ['Discord']
+                                : []
+                        const missingPlatforms = ALL_PLATFORMS.filter(
+                            (p) => !effectivePublished.includes(p)
+                        )
+                        const publishedPlatformsText = effectivePublished.join(', ')
 
-                    const actionButtonLabel = !isMsgPublished
-                        ? 'Generar publicación'
-                        : missingPlatforms.length > 0
+                        const actionButtonLabel = !isMsgPublished
+                            ? 'Generar publicación'
+                            : missingPlatforms.length > 0
                             ? `Publicar en demás redes (${missingPlatforms.join(', ')})`
                             : 'Ver en mesa de trabajo'
 
-                    return (
-                        <article
-                            key={message.id}
-                            className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
-                        >
-                            <div className="flex flex-col xl:flex-row">
-                                {/* Contenido */}
-                                <div className="min-w-0 flex-1 p-5">
-                                    <div className="flex items-start gap-3">
-                                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700">
-                                            {message.initials}
+                        const relevanceScore = message.relevance
+                        const sentimentPillClass =
+                            message.sentiment === 'positive'
+                                ? 'c-pill--success'
+                                : message.sentiment === 'negative'
+                                ? 'c-pill--danger'
+                                : ''
+
+                        return (
+                            <div
+                                key={message.id}
+                                className="c-msg flex-col lg:flex-row lg:items-center"
+                            >
+                                <div className="flex min-w-0 flex-1 items-start gap-3">
+                                    <span className={`c-avatar ${getAvatarTone(message.author)}`}>
+                                        {message.initials}
+                                    </span>
+
+                                    <div className="c-msg__body">
+                                        <div className="c-msg__head">
+                                            <span className="c-msg__author">{message.author}</span>
+                                            <span className="t-caption text-slate-400">
+                                                @{message.author.toLowerCase().replace(/\s+/g, '_')}
+                                            </span>
+                                            <span className="c-tag c-tag--channel">
+                                                {message.channel.replace(/^#/, '')}
+                                            </span>
+                                            <span className="c-msg__time tabular-nums">
+                                                {message.time}
+                                            </span>
                                         </div>
 
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                                <p className="font-bold text-slate-900">
-                                                    {message.author}
-                                                </p>
+                                        <p className="c-msg__text">{message.message}</p>
 
-                                                <span className="text-xs text-slate-400">
-                                                    @{message.author
-                                                        .toLowerCase()
-                                                        .replace(
-                                                            /\s+/g,
-                                                            '_'
-                                                        )}
-                                                </span>
-
-                                                <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">
-                                                    {message.classification}
-                                                </span>
-
-                                                <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
-                                                    isMsgPublished
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
-                                                        ? 'bg-amber-100 text-amber-700'
-                                                        : 'bg-indigo-100 text-indigo-700'
-                                                }`}>
-                                                    {isMsgPublished
-                                                        ? 'Publicado'
-                                                        : status === 'curated' || message.workflowStage === 'en_aprobacion' || message.workflowStage === 'en_redaccion'
-                                                        ? 'Completo'
-                                                        : !message.isAnalyzed || message.workflowStage === 'ingesta' || message.workflowStage === 'en_ingesta'
-                                                        ? 'Ingesta / IA'
-                                                        : 'Publicar'}
-                                                </span>
-
-                                                <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600">
-                                                    <Hash size={11} />
-                                                    {message.channel}
-                                                </span>
-
-                                                <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
-                                                    <Clock3 size={11} />
-                                                    {message.time}
-                                                </span>
-                                            </div>
-
-                                            <p className="mt-3 text-sm leading-6 text-slate-700">
-                                                {message.message}
-                                            </p>
-
-                                            {/* Keywords */}
-                                            {message.isAnalyzed && message.keywords.length > 0 && (
-                                                <div className="mt-3 flex flex-wrap items-center gap-2">
-                                                    <Tag
-                                                        size={13}
-                                                        className="text-slate-400"
-                                                    />
-
-                                                    {message.keywords
-                                                        .slice(0, 6)
-                                                        .map(
-                                                            (
-                                                                keyword
-                                                            ) => (
-                                                                <span
-                                                                    key={
-                                                                        keyword
-                                                                    }
-                                                                    className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-600"
-                                                                >
-                                                                    #
-                                                                    {
-                                                                        keyword
-                                                                    }
-                                                                </span>
-                                                            )
-                                                        )}
-                                                </div>
-                                            )}
-
-                                            {/* Reacciones visuales */}
-                                            <div className="mt-4 flex flex-wrap gap-2">
-                                                {message.isAnalyzed ? (
-                                                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                                                        <ThumbsUp size={12} />
+                                        <div className="c-msg__meta">
+                                            {message.isAnalyzed ? (
+                                                <>
+                                                    <span
+                                                        className={`c-pill c-pill--dot ${sentimentPillClass}`}
+                                                    >
+                                                        {message.sentimentLabel}
+                                                    </span>
+                                                    <span className="c-pill c-pill--brand">
+                                                        {message.topic}
+                                                    </span>
+                                                    <span className="c-pill c-pill--success">
+                                                        <ThumbsUp size={11} />
                                                         Analizado con IA
                                                     </span>
-                                                ) : (
-                                                    <span className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
-                                                        <Clock3 size={12} />
-                                                        Pendiente por Analizar
-                                                    </span>
-                                                )}
-
-                                                {message.highlight && (
-                                                    <span className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-700">
-                                                        Destacado
-                                                    </span>
-                                                )}
-
-                                                {isMsgPublished && (
-                                                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                                                        ✓ Publicado en: {publishedPlatformsText}
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {/* Metadatos IA */}
-                                            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3 text-[11px]">
-                                                {message.isAnalyzed ? (
-                                                    <>
-                                                        <span className="text-slate-500">
-                                                             Tema:{' '}
-                                                            <strong className="text-slate-700">
-                                                                {message.topic}
-                                                            </strong>
+                                                    {message.highlight && (
+                                                        <span className="c-pill c-pill--brand">
+                                                            Destacado
                                                         </span>
-
-                                                        <span className="text-slate-500">
-                                                            Relevancia:{' '}
-                                                            <strong className="text-slate-700">
-                                                                {message.relevance}%
-                                                            </strong>
+                                                    )}
+                                                    {isMsgPublished && (
+                                                        <span className="c-pill c-pill--success">
+                                                            ✓ Publicado en: {publishedPlatformsText}
                                                         </span>
-
-                                                        <span className="text-slate-500">
-                                                            Sentimiento:{' '}
-                                                            <strong
-                                                                className={
-                                                                    message.sentiment ===
-                                                                    'positive'
-                                                                        ? 'text-emerald-600'
-                                                                        : message.sentiment ===
-                                                                            'negative'
-                                                                          ? 'text-rose-600'
-                                                                          : 'text-blue-600'
-                                                                }
-                                                            >
-                                                                {
-                                                                    message.sentimentLabel
-                                                                }
-                                                            </strong>
-                                                        </span>
-                                                    </>
-                                                ) : (
-                                                    <span className="inline-flex items-center gap-1.5 text-xs text-amber-700 font-medium italic">
-                                                        <span>⚡ Pendiente por Analizar</span>
-                                                        <span className="text-slate-300">·</span>
-                                                        <span className="text-slate-500 font-normal">
-                                                            Mensaje crudo en ingesta. Pulsa &apos;Evaluar IA&apos; para clasificarlo
-                                                        </span>
+                                                    )}
+                                                    {message.keywords
+                                                        .flatMap((kw) => kw.split(/\s+/))
+                                                        .map((kw) => kw.replace(/^#+/, '').trim())
+                                                        .filter(Boolean)
+                                                        .slice(0, 6)
+                                                        .map((keyword) => (
+                                                            <span key={keyword} className="c-tag">
+                                                                #{keyword}
+                                                            </span>
+                                                        ))}
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span className="c-pill c-pill--warning c-pill--dot">
+                                                        <Clock3 size={11} />
+                                                        Pendiente de evaluar
                                                     </span>
-                                                )}
-                                            </div>
+                                                    <span className="t-caption text-slate-400">
+                                                        Mensaje crudo en ingesta
+                                                    </span>
+                                                </>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* Acciones */}
-                                <aside className="flex shrink-0 flex-col justify-between gap-4 border-t border-slate-100 bg-slate-50/40 p-4 xl:w-56 xl:border-l xl:border-t-0">
-                                    <div>
+                                {/* Control compacto de estado, relevancia y acciones (Estilo pod CommunityLab DS) */}
+                                <aside className="shrink-0 flex flex-col items-end justify-center gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/70 p-2.5 shadow-xs lg:self-center">
+                                    {/* Fila superior: Estado y Relevancia unidos de forma contigua */}
+                                    <div className="flex items-center justify-end gap-2">
                                         <StatusBadge
                                             status={status}
                                             isAnalyzed={message.isAnalyzed}
@@ -1605,65 +1627,83 @@ function Messages() {
                                             workflowStage={message.workflowStage}
                                         />
 
-                                        <div className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1">
-                                            {status === 'discarded' ? (
-                                                <button
-                                                    type="button"
-                                                    title="Restaurar mensaje a pendientes"
-                                                    disabled={savingCurationId !== null}
-                                                    onClick={() =>
-                                                        markCuration(
-                                                            message,
-                                                            'pending'
-                                                        )
-                                                    }
-                                                    className="flex h-9 items-center justify-center rounded-lg text-emerald-600 transition hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    <RotateCcw size={15} />
-                                                </button>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    title={
-                                                        isMsgPublished
-                                                            ? 'Mensaje ya publicado (no se puede descartar)'
-                                                            : 'Descartar'
-                                                    }
-                                                    disabled={savingCurationId !== null || isMsgPublished}
-                                                    onClick={() =>
-                                                        markCuration(
-                                                            message,
-                                                            'discarded'
-                                                        )
-                                                    }
-                                                    className="flex h-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    <X size={15} />
-                                                </button>
-                                            )}
+                                        <span className="h-4 w-px bg-slate-200" aria-hidden="true" />
 
-                                            <button
-                                                type="button"
-                                                title="Copiar contenido"
-                                                onClick={() =>
-                                                    navigator.clipboard.writeText(
-                                                        message.message
-                                                    )
+                                        <div className="inline-flex shrink-0 items-center gap-1.5">
+                                            <div
+                                                className="score-ring score-ring--sm"
+                                                style={
+                                                    { '--p': relevanceScore } as React.CSSProperties
                                                 }
-                                                className="flex h-9 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                                                title={`Relevancia IA: ${relevanceScore}%`}
                                             >
-                                                <Copy size={15} />
-                                            </button>
+                                                <span className="tabular-nums">
+                                                    {relevanceScore}%
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-col items-end gap-0.5 pr-0.5">
+                                                <span className="text-[10px] font-medium text-slate-500 leading-none">
+                                                    relevancia
+                                                </span>
+                                                <div
+                                                    className="c-progress c-progress--sm"
+                                                    style={{ width: '2.5rem', height: '4px' }}
+                                                >
+                                                    <div
+                                                        className="c-progress__bar"
+                                                        style={{ width: `${relevanceScore}%` }}
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 gap-2">
+                                    {/* Fila inferior: Botones de acción compactos */}
+                                    <div className="flex items-center justify-end gap-1.5">
+                                        {status === 'discarded' ? (
+                                            <button
+                                                type="button"
+                                                title="Restaurar mensaje a pendientes"
+                                                aria-label="Restaurar mensaje a pendientes"
+                                                disabled={savingCurationId !== null}
+                                                onClick={() => markCuration(message, message.isAnalyzed ? 'curated' : 'pending')}
+                                                className="c-btn c-btn--secondary c-btn--icon c-btn--sm text-emerald-600 hover:text-emerald-700"
+                                            >
+                                                <RotateCcw size={14} />
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                title={
+                                                    isMsgPublished
+                                                        ? 'Mensaje ya publicado (no se puede descartar)'
+                                                        : 'Descartar'
+                                                }
+                                                aria-label="Descartar"
+                                                disabled={savingCurationId !== null || isMsgPublished}
+                                                onClick={() => markCuration(message, 'discarded')}
+                                                className="c-btn c-btn--secondary c-btn--icon c-btn--sm hover:text-rose-600"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        )}
+
+                                        <button
+                                            type="button"
+                                            title="Copiar contenido"
+                                            aria-label="Copiar contenido"
+                                            onClick={() =>
+                                                navigator.clipboard.writeText(message.message)
+                                            }
+                                            className="c-btn c-btn--secondary c-btn--icon c-btn--sm"
+                                        >
+                                            <Copy size={14} />
+                                        </button>
+
                                         {!message.isAnalyzed && (
                                             <button
                                                 type="button"
-                                                onClick={() =>
-                                                    handleEvaluateSingleMessage(message)
-                                                }
+                                                onClick={() => handleEvaluateSingleMessage(message)}
                                                 disabled={
                                                     status === 'discarded' ||
                                                     evaluatingMessageId === message.interactionId
@@ -1673,7 +1713,7 @@ function Messages() {
                                                         ? 'Restaura el mensaje para evaluarlo con IA'
                                                         : `Evaluar este mensaje con ${selectedAiBrain}`
                                                 }
-                                                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-purple-600 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                className="c-btn c-btn--primary c-btn--sm"
                                             >
                                                 <Sparkles
                                                     size={13}
@@ -1683,9 +1723,11 @@ function Messages() {
                                                             : ''
                                                     }
                                                 />
-                                                {evaluatingMessageId === message.interactionId
-                                                    ? 'Evaluando...'
-                                                    : 'Evaluar IA'}
+                                                <span>
+                                                    {evaluatingMessageId === message.interactionId
+                                                        ? 'Evaluando...'
+                                                        : 'Evaluar con IA'}
+                                                </span>
                                             </button>
                                         )}
 
@@ -1693,9 +1735,14 @@ function Messages() {
                                             <button
                                                 type="button"
                                                 onClick={() =>
-                                                    navigate(`/content?interaction=${message.interactionId}`, {
-                                                        state: { interactionId: message.interactionId },
-                                                    })
+                                                    navigate(
+                                                        `/content?interaction=${message.interactionId}`,
+                                                        {
+                                                            state: {
+                                                                interactionId: message.interactionId,
+                                                            },
+                                                        }
+                                                    )
                                                 }
                                                 disabled={status === 'discarded' && !isMsgPublished}
                                                 title={
@@ -1703,19 +1750,123 @@ function Messages() {
                                                         ? 'Restaura el mensaje para generar publicación'
                                                         : actionButtonLabel
                                                 }
-                                                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-orange-500 px-2.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                                className="c-btn c-btn--primary c-btn--sm max-w-[13.5rem]"
                                             >
-                                                <span>{actionButtonLabel}</span>
-                                                <ChevronRight size={14} />
+                                                <span className="truncate">{actionButtonLabel}</span>
+                                                <ChevronRight size={14} className="shrink-0" />
                                             </button>
                                         )}
                                     </div>
                                 </aside>
                             </div>
-                        </article>
-                    )
-                })}
-            </div>
+                        )
+                    })}
+                </div>
+
+                {/* Barra de controles de paginación canónica CloudEdTech */}
+                <footer className="flex flex-col gap-3 border-t border-slate-200/90 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                        <span className="tabular-nums font-medium">
+                            Mostrando{' '}
+                            <strong className="font-semibold text-slate-900">
+                                {startIndex}–{endIndex}
+                            </strong>{' '}
+                            de{' '}
+                            <strong className="font-semibold text-slate-900">
+                                {filteredMessages.length.toLocaleString('es-CO')}
+                            </strong>{' '}
+                            mensajes
+                        </span>
+
+                        <span className="hidden h-4 w-px bg-slate-300 sm:inline-block" aria-hidden="true" />
+
+                        <div className="flex items-center gap-2">
+                            <label htmlFor="msg-page-size" className="text-slate-500 font-medium">
+                                Por página:
+                            </label>
+                            <select
+                                id="msg-page-size"
+                                aria-label="Mensajes por página"
+                                value={pageSize}
+                                onChange={(e) => setPageSize(Number(e.target.value))}
+                                className="c-select py-1 pl-2.5 pr-7 text-xs font-semibold rounded-lg border-slate-200 bg-white"
+                                style={{ width: 'auto', height: '2rem' }}
+                            >
+                                <option value={25}>25</option>
+                                <option value={50}>50</option>
+                                <option value={100}>100</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
+                        <span className="text-xs font-medium text-slate-500 tabular-nums">
+                            Página <strong className="font-semibold text-slate-900">{currentPage}</strong> de{' '}
+                            <strong className="font-semibold text-slate-900">{totalPages}</strong>
+                        </span>
+
+                        <nav aria-label="Navegación de páginas" className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                disabled={currentPage <= 1}
+                                aria-label="Página anterior"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                style={{ padding: '0.35rem 0.65rem' }}
+                            >
+                                <ChevronLeft size={14} />
+                                <span className="hidden sm:inline">Anterior</span>
+                            </button>
+
+                            {/* Botones numéricos de salto de página */}
+                            <div className="hidden items-center gap-1 md:flex">
+                                {getPageNumbers().map((item, idx) => {
+                                    if (item === '...') {
+                                        return (
+                                            <span
+                                                key={`ellipsis-${idx}`}
+                                                className="px-1.5 text-xs text-slate-400 select-none"
+                                            >
+                                                …
+                                            </span>
+                                        )
+                                    }
+                                    const pageNum = Number(item)
+                                    const isActive = pageNum === currentPage
+                                    return (
+                                        <button
+                                            key={pageNum}
+                                            type="button"
+                                            onClick={() => setCurrentPage(pageNum)}
+                                            aria-label={`Ir a la página ${pageNum}`}
+                                            aria-current={isActive ? 'page' : undefined}
+                                            className={`c-btn c-btn--sm min-w-[2rem] px-2 text-xs font-semibold tabular-nums ${
+                                                isActive
+                                                    ? 'c-btn--primary font-bold shadow-xs'
+                                                    : 'c-btn--secondary'
+                                            }`}
+                                        >
+                                            {pageNum}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                disabled={currentPage >= totalPages}
+                                aria-label="Página siguiente"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                style={{ padding: '0.35rem 0.65rem' }}
+                            >
+                                <span className="hidden sm:inline">Siguiente</span>
+                                <ChevronRight size={14} />
+                            </button>
+                        </nav>
+                    </div>
+                </footer>
+            </article>
 
             {/* Nota integración */}
             <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
@@ -1742,31 +1893,6 @@ function Messages() {
     )
 }
 
-function KpiCard({
-    label,
-    value,
-    helper,
-    valueClass = 'text-slate-900',
-}: {
-    label: string
-    value: number
-    helper: string
-    valueClass?: string
-}) {
-    return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">{label}</p>
-
-            <p className={`mt-2 text-3xl font-bold ${valueClass}`}>
-                {value.toLocaleString('es-CO')}
-            </p>
-
-            <p className="mt-1 text-xs text-slate-400">
-                {helper}
-            </p>
-        </div>
-    )
-}
 
 function StatusBadge({
     status,
@@ -1781,8 +1907,7 @@ function StatusBadge({
 }) {
     if (isPublished || workflowStage === 'publicado') {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className="c-pill c-pill--success c-pill--dot">
                 Proceso completo
             </span>
         )
@@ -1790,8 +1915,8 @@ function StatusBadge({
 
     if (status === 'discarded') {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-700">
-                <ShieldAlert size={12} />
+            <span className="c-pill c-pill--danger">
+                <ShieldAlert size={11} />
                 Descartado
             </span>
         )
@@ -1803,9 +1928,9 @@ function StatusBadge({
         workflowStage === 'en_redaccion'
     ) {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Listo / Aprobado
+            <span className="c-pill c-pill--info">
+                <Sparkles size={11} />
+                Pendiente de publicar
             </span>
         )
     }
@@ -1813,18 +1938,18 @@ function StatusBadge({
     // Si es totalmente crudo y le falta el análisis con IA
     if (!isAnalyzed || workflowStage === 'ingesta' || workflowStage === 'en_ingesta') {
         return (
-            <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700">
-                <Clock3 size={12} />
-                Falta análisis con IA
+            <span className="c-pill c-pill--warning">
+                <Clock3 size={11} />
+                Pendiente de evaluar
             </span>
         )
     }
 
     // Ya analizado por IA, pero le falta la parte de redacción / publicación
     return (
-        <span className="inline-flex w-full items-center justify-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700">
-            <Sparkles size={12} />
-            Falta redacción de publicación
+        <span className="c-pill c-pill--info">
+            <Sparkles size={11} />
+            Pendiente de publicar
         </span>
     )
 }
