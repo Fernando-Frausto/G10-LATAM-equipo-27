@@ -240,6 +240,17 @@ _cache_reportes_oci_bytes: bytes | None = None
 _timestamp_cache_reportes_oci: float = 0.0
 TTL_CACHE_REPORTES_OCI: float = 300.0  # 5 minutos / 300 segundos
 
+_cache_community_analytics: dict | None = None
+_timestamp_cache_community_analytics: float = 0.0
+TTL_CACHE_COMMUNITY_ANALYTICS: float = 60.0  # 60 segundos
+
+
+def invalidar_cache_analytics():
+    """Invalida de forma atómica la caché en memoria de analítica comunitaria."""
+    global _cache_community_analytics, _timestamp_cache_community_analytics
+    _cache_community_analytics = None
+    _timestamp_cache_community_analytics = 0.0
+
 
 def invalidar_cache_reportes_oci():
     """Invalida de forma atómica la caché en memoria de reportes OCI."""
@@ -256,6 +267,7 @@ def invalidar_cache_supabase():
     _ultimo_sync_sqlite = 0.0
     _cache_datos_supabase = None
     invalidar_cache_reportes_oci()
+    invalidar_cache_analytics()
 
 
 def obtener_datos_supabase(forzar: bool = False) -> dict | None:
@@ -679,7 +691,13 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
                     razonamiento, 1, "no_publicado", None, canal, str(id_msg)
                 ))
 
+        # Limpieza de registros en SQLite que hayan sido eliminados en Supabase
+        if ids_procesados:
+            placeholders = ",".join("?" for _ in ids_procesados)
+            conn.execute(f"DELETE FROM interacciones WHERE id NOT IN ({placeholders})", list(ids_procesados))
+
         conn.commit()
+    invalidar_cache_analytics()
     global _ultimo_sync_sqlite
     _ultimo_sync_sqlite = time.time()
     return len(ids_procesados)
@@ -4584,6 +4602,11 @@ app.router.routes = [
 @app.get("/api/community/analytics/")
 def community_analytics_enriquecido():
     """Retorna analíticas consolidadas de comunidad con telemetría de emojis y salvaguarda matemática."""
+    global _cache_community_analytics, _timestamp_cache_community_analytics
+    ahora = time.time()
+    if _cache_community_analytics is not None and (ahora - _timestamp_cache_community_analytics < TTL_CACHE_COMMUNITY_ANALYTICS):
+        return _cache_community_analytics
+
     sincronizar_supabase_si_necesario()
     datos_sb = obtener_datos_supabase()
     interacciones_sb = datos_sb.get("interacciones", []) if isinstance(datos_sb, dict) else []
@@ -4727,7 +4750,7 @@ def community_analytics_enriquecido():
             "percentage": pct,
         })
 
-    return {
+    resultado = {
         "sentiment": {
             "distribution": dist_sent,
             "evolution": evol_sent,
@@ -4739,6 +4762,9 @@ def community_analytics_enriquecido():
         "brand_alignment_percentage": brand_alignment_percentage,
         "analizados": total_analizados,
     }
+    _cache_community_analytics = resultado
+    _timestamp_cache_community_analytics = ahora
+    return resultado
 
 
 _cache_bots_omitidos_discord = 173

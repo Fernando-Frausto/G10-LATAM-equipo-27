@@ -110,6 +110,7 @@ function Analytics() {
 
     const [messageStats, setMessageStats] = useState<{
         total: number
+        analyzedCount: number
         positive: number
         relevance: number | null
         alerts: number
@@ -170,8 +171,10 @@ function Analytics() {
                     )[0] ?? null
 
                 if (controller.signal.aborted) return
+                const analyzedCount = analyzed.length
                 setMessageStats({
                     total: data.total ?? messages.length,
+                    analyzedCount,
                     positive: messages.filter(
                         (item) => item.analysis?.sentiment === 'positive',
                     ).length,
@@ -202,11 +205,24 @@ function Analytics() {
     }, [])
 
     const totalMessages = messageStats?.total ?? 0
-    const positivePercentage =
-        messageStats && totalMessages > 0
-            ? (messageStats.positive / totalMessages) * 100
-            : null
-    const relevanceAverage = messageStats?.relevance ?? null
+    const analyzedCount = messageStats?.analyzedCount ?? 0
+
+    let positivePercentage: number | null = null
+    if (analyzedCount > 0 && messageStats) {
+        positivePercentage = (messageStats.positive / analyzedCount) * 100
+    } else if (motorAnalytics?.sentiment?.distribution) {
+        const posDist = motorAnalytics.sentiment.distribution.find(
+            (d) => d.name.toLowerCase().includes('pos') || d.name.toLowerCase().includes('positivo'),
+        )
+        if (posDist && typeof posDist.value === 'number') {
+            positivePercentage = posDist.value
+        }
+    }
+
+    let relevanceAverage = messageStats?.relevance ?? null
+    if (relevanceAverage === null && motorAnalytics?.brand_alignment_percentage) {
+        relevanceAverage = motorAnalytics.brand_alignment_percentage
+    }
 
     const interactionIndex =
         totalMessages > 0
@@ -216,7 +232,7 @@ function Analytics() {
                       (((messageStats?.positive ?? 0) +
                           (messageStats?.questionCount ?? 0) +
                           (messageStats?.alerts ?? 0)) /
-                          totalMessages) *
+                          Math.max(1, analyzedCount || Math.min(totalMessages, 100))) *
                           100,
                   ),
               )
@@ -230,9 +246,11 @@ function Analytics() {
             kind: 'success' as const,
             progress: positivePercentage !== null ? Math.min(100, Math.max(0, Math.round(positivePercentage))) : 0,
             note:
-                totalMessages > 0
-                    ? `${messageStats?.positive ?? 0} de ${totalMessages} mensajes`
-                    : 'Sin datos suficientes',
+                analyzedCount > 0
+                    ? `${messageStats?.positive ?? 0} de ${analyzedCount} analizados`
+                    : totalMessages > 0
+                      ? `${messageStats?.positive ?? 0} de ${totalMessages} mensajes`
+                      : 'Sin datos suficientes',
         },
         {
             label: 'Índice de interacción',
