@@ -1,111 +1,80 @@
-# 📋 Informe de Sprint Review — Sesión del 15 de octubre
+# 📋 Informe de Sprint Review — Sesión del 22 de octubre
 
 ## ℹ️ Información General
 
-* **Fecha:** 15 de octubre.
-
-
-* **Próxima sesión:** Lunes (meta: definir ideas de presentación y presentadores para el Demo Day).
-
-
-* **Fase actual:** Integración de frontend/backend, depuración de base de datos, ajustes del orquestador y preparación para Demo Day.
-
-
-* **Objetivo principal:** Revisar el estado de la unificación de la rama `main`, resolver los bloqueos de persistencia de datos en el flujo de mensajes, mostrar las pruebas del orquestador en redes sociales y establecer la estrategia del pitch final.
-
-
+- **Fecha:** Jueves, 22 de octubre de 2026 (semana 5 de 5).
+- **Duración estimada:** ~1 h 30 min.
+- **Proyecto y equipo:** Simulación No Country — Equipo 27, CommunityLab.
+- **Producto:** **CloudPulse**, solución de CloudEDTech.
+- **Objetivo principal:** Ensayar la presentación del Demo Day con los presentadores asignados, revisar el rediseño de la plataforma y cerrar pendientes de entregables y feedback.
 
 ## 📌 Resumen Ejecutivo
 
-La sesión se centró en la integración del sistema y la planificación del evento de cierre. Se logró la unificación de todas las ramas en el repositorio `main`, aunque el despliegue del frontend presentó pérdidas de variables de entorno y bloqueos de estado en la base de datos durante la transición de mensajes, los cuales ya están siendo abordados. El flujo del orquestador está estructurado y realizando publicaciones coherentes de prueba en plataformas como LinkedIn, aplicando filtros de relevancia mediante modelos de IA. Finalmente, se introdujo la dinámica de evaluación para el Demo Day, acordando utilizar una técnica de *storytelling* de 5 minutos y delegando la definición de presentadores (y sus respaldos) para la sesión del lunes.
+Se realizó un ensayo del Demo Day con cuatro presentadores sobre el producto **CloudPulse**. Se mostró el rediseño de la plataforma basado en la propuesta de Cristian. En uno de los ensayos la plataforma cayó por sincronización masiva de mensajes y se usó el video de respaldo. La presentación quedó en su versión final y se acordó un último ensayo el sábado con cámara encendida.
 
 ## 💬 Temas Clave y Discusiones
 
-### ⚙️ Integración de Frontend y Base de Datos
+### 🎤 Ensayos de presentación (5 minutos cada uno)
+- **Enoc Ramírez (principal):** presentó el problema, el flujo en 3 pasos y el recorrido por la plataforma.
+- **Eduardo Alonso:** primer intento interrumpido por la caída de la plataforma; en el segundo usó el video de respaldo (diapositiva 5).
+- **Eduardo García:** recorrido completo en vivo (172 mensajes procesados) y mención a la escalabilidad hacia salud, construcción y gaming.
+- **Tania Orantes:** reinició por un problema de audio y terminó dentro del tiempo.
+- **Narrativa común:** la historia de Matías (community manager), de 10 pasos manuales a 3; equipo de 12 personas de 5 países; lema *"Ningún mensaje sin respuesta, ningún logro sin celebrar"*.
 
-* **Unificación:** Se consolidaron todas las ramas en `main` utilizando auditorías asistidas por IA para evitar pérdida de datos o exposición de claves de seguridad.
+### 🗂️ Orden de diapositivas
+- Diapositiva 5: demostración de la plataforma en vivo.
+- Diapositiva 6: cómo funciona CloudPulse (diagrama de arquitectura).
+- Cada presentador puede ajustar el orden según su estilo.
 
+### 🎨 Rediseño de la plataforma (Fernando)
+- Se aplicó la propuesta visual de Cristian en tarjetas y gráficas de Dashboard, Ingesta, Análisis e Informes OCI.
+- **Redacción de contenidos:** carga de mensajes por ID, ejecución por *pipeline* o edición manual y publicación conjunta en LinkedIn, X y Discord.
+- **Anuncios** y **Quejas y soporte** quedaron en pestañas separadas.
+- Todo funciona con datos reales.
 
-* **Problemas de Despliegue:** Al cambiar de rama en Netlify, se perdieron las variables de conexión a la base de datos. Se está migrando el despliegue a Google Cloud para aprovechar los créditos y restaurar la conexión.
+### ⚠️ Incidente técnico
+- La plataforma colapsó al sincronizar Discord por intentar cargar muchos mensajes a la vez.
+- Propuesta: quitar la sincronización automática o agregar un botón manual. Lo revisarán Fernando y Andrés.
 
+### 🎬 Video de respaldo y entregable 2
+- Cristian incluyó un video de 50 segundos en la diapositiva 5, solo como respaldo si falla la demo en vivo.
+- **Entregable 2:** video de máximo 10 minutos (objetivo: 3–4). Avance el viernes; se sube el sábado o domingo (fecha límite).
 
-* **Bloqueos de Estado:** Los mensajes transferidos entre ingesta y *copywriting* desaparecían de la interfaz debido a bloqueos de memoria en la base de datos. Se resolvieron creando estados y variables específicas en las tablas para encapsular y retener el mensaje durante todo el flujo.
+### 🧑‍⚖️ Formato del Demo Day
+- Presentación **en vivo y con cámara** ante jurado.
+- De los 5 minutos, ~3 son para la demostración de la herramienta.
+- Ya llegó el correo de registro; Enoc inscribe al equipo (un registro por grupo).
 
+### 📝 Feedback en No Country
+- Es obligatorio para la certificación individual y es anónimo.
+- Marcar a **Miguel Márquez como ausente**. Cuidado con las iniciales repetidas: hay dos Eduardo y dos Miguel; Samuel aparece como "AR".
 
-* **Tablero OCI:** Es el único módulo pendiente de integración en el frontend. Se solicitó apoyo del equipo para completarlo, requiriendo que quien ayude descargue el proyecto en local desde `main` y modifique exclusivamente la vista de OCI sin alterar otras variables.
-
-
-
-### 🧠 Avances del Orquestador y Flujo de Publicación
-
-```mermaid
-flowchart LR
-    A[(Supabase)] --> B{Orquestador}
-    B --> C1[Nodo LinkedIn]
-    B --> C2[Nodo X]
-    B --> C3[Nodo Discord]
-    C1 & C2 & C3 --> D[Validador]
-    D --> E[HITL: Intervención Humana]
-    E --> F[Publicador / Actualización BD]
-
-```
-
-* **Manejo de Nodos:** El orquestador extrae datos de la tabla de lotes/historial y decide la distribución a redes sociales basándose en la relevancia del mensaje.
-
-
-* **Modelos de IA:** Se están implementando modelos de respaldo (ej. Llama 3.1 y Gemma) para gestionar automáticamente peticiones de menor impacto (puntaje menor a 35) o descartar spam.
-
-
-* **Pruebas en vivo:** Las interacciones automáticas del bot en LinkedIn han demostrado ser muy coherentes y contextuales.
-
-
-* **Ajuste de Marca:** Se acordó eliminar validaciones secundarias para dejar un solo perfil oficial ("club de hecho oficial") publicando, unificando la identidad de la marca.
-
-
-
-### 🎬 Preparación para el Demo Day
-
-* **Formato y Evaluación:** El pitch dura estrictamente 5 minutos. La calificación se divide en: 50% trabajo en equipo (métricas previas), 35% integración de la solución y 15% calidad del pitch.
-
-
-* **Estrategia Recomendada:** Se sugiere fuertemente utilizar *storytelling*, presentando un problema inicial, mostrando la herramienta por ~3 minutos y concluyendo con el impacto generado.
-
-
-* **Respaldos Técnicos:** Es obligatorio designar presentadores secundarios o "backups" organizados en lista, para evitar la descalificación en caso de fallos de internet o energía del presentador principal.
-
-
+### 💬 Mensajes de Discord
+- Quienes no lo han hecho deben enviar sus 5–6 mensajes. Meta: superar 1,000 mensajes en la base.
 
 ## 🤝 Acuerdos y Decisiones
 
-* Organizar una sesión extraordinaria de trabajo en equipo (Front/Back) para ayudar a finalizar el tablero OCI.
-
-
-* Centralizar la identidad del bot en un solo perfil validador oficial ("club de hecho oficial") para mantener la cohesión de marca.
-
-
-* Cada miembro del equipo deberá llevar ideas de presentación estructuradas como historias para la reunión del lunes.
-
-
-* Elegir a un presentador principal y al menos dos personas de respaldo técnico para el día del Demo Day.
-
-
+- 🏷️ **Nombre del producto:** CloudPulse, de CloudEDTech.
+- 📑 **Presentación:** la versión actual (~v8) queda como final, salvo ajustes menores.
+- 📺 **Demo en vivo:** el video solo se usa como respaldo.
+- 🗓️ **Último ensayo:** sábado 24 de octubre, 1:00 p. m. (México) / 2:00 p. m. (Colombia) / 4:00 p. m. (Chile), con cámara encendida.
+- ⏳ **Fecha límite de ajustes:** sábado; el domingo se sube lo final.
+- 🚫 **Feedback:** Miguel Márquez se marca como ausente.
 
 ## 🚀 Plan de Acción / Tareas Pendientes
 
 | Tarea / Acción a realizar | Responsable | Contexto o detalles clave |
-| --- | --- | --- |
-| Completar integración del tablero OCI en el frontend | Andrés (y voluntarios) | Descargar `main` localmente e integrar solo OCI sin tocar variables de otros módulos.
+|---|---|---|
+| Corregir la caída por sincronización masiva | Fernando Frausto y Andrés Martínez | Quitar sincronización automática o agregar botón manual |
+| Terminar y subir el video del entregable 2 | Cristian Astudillo | Avance el viernes; subir sábado o domingo |
+| Registrar al equipo para el Demo Day | Enoc Ramírez | Un registro por grupo |
+| Completar el feedback en No Country | Todo el equipo | Obligatorio; marcar ausente a Miguel Márquez |
+| Enviar los mensajes pendientes al canal | Integrantes que no lo han hecho | 5–6 mensajes; meta de más de 1,000 en la base |
+| Practicar la presentación en 5 minutos | Presentadores | Cada uno puede llevar su versión en video |
+| Asistir al ensayo con cámara | Todo el equipo | Sábado 24, 1:00 p. m. (México) |
+| Subir el documento resumen | Patricia Madrid y Cristian Astudillo | Similar a la presentación |
+| Transcribir la reunión | Eduardo Alonso | Base para la minuta |
+| Actualizar el README en GitHub | Samuel Ramírez | Último registro de avances |
+| Elaborar la minuta y actualizar No Country | No asignado | Plazo: hoy o mañana |
 
- |
-| Coordinar reunión técnica de apoyo para el frontend | Equipo | Para distribuir la carga de trabajo actual.
-
- |
-| Limpiar perfiles de prueba y dejar un solo publicador oficial | Enoc | Uniformar la salida de información en redes sociales.
-
- |
-| Elaborar propuestas de *storytelling* para el Pitch | Todos | Preparar ideas de casos de uso reales para la próxima sesión.
-
- |
-| Definir lista de presentadores (Principal y Backups) | Equipo | Se decidirá el lunes para mitigar riesgos de conexión el día de la presentación.
-
- |
+---
