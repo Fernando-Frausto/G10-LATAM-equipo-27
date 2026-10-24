@@ -2969,7 +2969,7 @@ def _sincronizar_reportes_desde_oci_bucket(rep_dir: Path) -> None:
         objects = getattr(resp.data, "objects", []) or []
         for obj in objects:
             obj_name = str(getattr(obj, "name", "") or "")
-            m = re.fullmatch(r"activos/(\d{4}-semana-\d{2})/paquete-distribucion\.json", obj_name)
+            m = re.search(r"activos/([^/]+)/paquete-distribucion\.json", obj_name)
             if not m:
                 continue
             semana_tag = m.group(1)
@@ -3008,6 +3008,47 @@ def _sincronizar_reportes_desde_oci_bucket(rep_dir: Path) -> None:
         pass
 
 
+_sincronizacion_oci_en_progreso = False
+_oci_sincronizado_al_menos_una_vez = False
+
+
+async def _sincronizar_oci_background_async():
+    """
+    Descarga en segundo plano los reportes históricos guardados en OCI
+    sin bloquear la UI ni los endpoints GET.
+    """
+    global _sincronizacion_oci_en_progreso, _oci_sincronizado_al_menos_una_vez
+    if _sincronizacion_oci_en_progreso or os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    _sincronizacion_oci_en_progreso = True
+    try:
+        rep_dir = Path("reportes")
+        rep_dir.mkdir(parents=True, exist_ok=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _sincronizar_reportes_desde_oci_bucket, rep_dir)
+        _oci_sincronizado_al_menos_una_vez = True
+        invalidar_cache_reportes_oci()
+    except Exception as e:
+        logger.warning("Fallo en sincronización background OCI: %s", e)
+    finally:
+        _sincronizacion_oci_en_progreso = False
+
+
+@app.on_event("startup")
+async def _on_startup_sincronizar_oci():
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        asyncio.create_task(_sincronizar_oci_background_async())
+
+
+@app.post("/api/v1/oci-storage/sync-bucket")
+@app.post("/api/v1/oci-storage/sync-bucket/")
+async def oci_sync_bucket_v1():
+    """Dispara la sincronización en segundo plano desde el bucket de OCI a disco local."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        asyncio.create_task(_sincronizar_oci_background_async())
+    return {"status": "syncing", "message": "Sincronización en segundo plano con OCI iniciada."}
+
+
 @app.get("/api/v1/oci-storage/reports")
 @app.get("/api/v1/oci-storage/reports/")
 async def oci_reports_v1():
@@ -3015,10 +3056,19 @@ async def oci_reports_v1():
     Spec 024 - RF-01, RF-05:
     Lista el historial de reportes semanales desde memoria (< 2 ms) o disco local 'reportes/*.json'.
     Erradica llamadas de red bloqueantes WAN durante lecturas GET.
+    Dispara descarga background si aún no se ha sincronizado con OCI.
     """
-    global _cache_reportes_oci, _cache_reportes_oci_bytes, _timestamp_cache_reportes_oci
+    global _cache_reportes_oci, _cache_reportes_oci_bytes, _timestamp_cache_reportes_oci, _oci_sincronizado_al_menos_una_vez
     from starlette.responses import Response
     import json
+
+    # Disparar sincronización silenciosa en background sin bloquear la respuesta si no se ha ejecutado
+    if not _oci_sincronizado_al_menos_una_vez and not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            asyncio.create_task(_sincronizar_oci_background_async())
+        except Exception:
+            pass
+
     ahora = time.time()
     if _cache_reportes_oci is not None and (ahora - _timestamp_cache_reportes_oci < TTL_CACHE_REPORTES_OCI):
         if _cache_reportes_oci_bytes is not None:
