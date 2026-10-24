@@ -14,9 +14,13 @@ import time
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 import re
 import logging
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
 
 logger = logging.getLogger("puente_motor_ia")
 
@@ -56,6 +60,21 @@ def resolver_url_base_datos(url_db: str | None = None, url_enoc: str | None = No
         return url_enoc or None
 
     return url_db or url_enoc or None
+
+
+def resolver_url_session_mode(url: str | None = None) -> str | None:
+    """
+    Spec 023 - RF-03, RF-04:
+    Convierte URLs con puerto :6543 (Transaction Pooler de Supabase) al puerto :5432
+    (Session Mode Pooler de Supabase Enoc), garantizando aislamiento de sesión y
+    mitigando colisiones de sentencias preparadas en LangGraph Checkpointer.
+    Si url es None, resuelve mediante SUPABASE_DB_URL o resolver_url_base_datos().
+    """
+    if url is None:
+        url = os.getenv("SUPABASE_DB_URL") or resolver_url_base_datos()
+    if not url:
+        return None
+    return re.sub(r":6543(?=[/?#]|$)", ":5432", str(url))
 
 
 # Homologación preventiva de variables de entorno para motor Mototradis (Spec 015 - RF-02) y Spec 022 (RF-04)
@@ -347,6 +366,15 @@ def _asegurar_esquema_sqlite():
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_respuestas_quejas_interaccion ON respuestas_quejas_discord(interaccion_id)")
+
+        # Spec 023 - RF-04, RF-05: Garantizar columna sync_supabase en contenidos_generados
+        if "contenidos_generados" in tables:
+            try:
+                conn.execute("ALTER TABLE contenidos_generados ADD COLUMN sync_supabase TEXT DEFAULT 'sincronizado'")
+            except Exception as exc_col:
+                if "duplicate column name" not in str(exc_col).lower():
+                    logger.debug(f"Aviso asegurando columna sync_supabase en contenidos_generados: {exc_col}")
+
         conn.commit()
 
 
@@ -4779,6 +4807,7 @@ def api_channel_participation():
 # ==============================================================================
 
 _checkpointer_activo = None
+_checkpointer_context_manager = None
 _grafo_mototradis_activo = None
 
 
@@ -4814,33 +4843,68 @@ def homologar_entorno_mototradis():
 
 def obtener_checkpointer_resiliente():
     """
+    Spec 023 - RF-03, RF-04, RF-06:
     Fábrica de checkpointer resiliente:
-    Intenta conectar PostgresSaver sobre SUPABASE_DB_URL / DATABASE_URL.
-    Si falla la conexión o no está configurada, conmuta transparentemente
-    a MemorySaver en memoria sin colapsar el proceso del servidor.
+    Intenta conectar PostgresSaver sobre SUPABASE_DB_URL o resolver_url_base_datos()
+    en Session Mode (puerto :5432) y con prepare_threshold=None en el driver psycopg 3
+    para mitigar colisiones de DuplicatePreparedStatement.
+    Si falla la inicialización o conexión, o no está configurada, registra una advertencia
+    estructurada (logger.warning) y conmuta transparentemente a MemorySaver en memoria
+    sin colapsar el proceso del servidor.
     """
-    global _checkpointer_activo
+    global _checkpointer_activo, _checkpointer_context_manager
     if _checkpointer_activo is not None:
         return _checkpointer_activo
 
     homologar_entorno_mototradis()
-    db_url = os.environ.get("SUPABASE_DB_URL") or resolver_url_base_datos()
+    db_url_raw = os.environ.get("SUPABASE_DB_URL") or resolver_url_base_datos()
+    db_url = resolver_url_session_mode(db_url_raw)
+
     if db_url and "postgres" in db_url:
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
-            cp = PostgresSaver.from_conn_string(db_url)
-            cp.setup()
+            cm = PostgresSaver.from_conn_string(db_url)
+            cp = cm.__enter__() if hasattr(cm, "__enter__") else cm
+            if hasattr(cp, "conn") and hasattr(cp.conn, "prepare_threshold"):
+                cp.conn.prepare_threshold = None
+            if hasattr(cp, "setup") and callable(cp.setup):
+                cp.setup()
+            _checkpointer_context_manager = cm
             _checkpointer_activo = cp
             return _checkpointer_activo
         except Exception as exc:
-            import logging
-            logging.getLogger("puente_motor_ia").warning(
-                f"PostgresSaver no disponible ({exc}). Conmutando automáticamente a MemorySaver."
+            logger.warning(
+                f"PostgresSaver no disponible o fallo de conexión ({exc}). "
+                "Conmutando automáticamente a MemorySaver."
             )
 
     from langgraph.checkpoint.memory import MemorySaver
     _checkpointer_activo = MemorySaver()
     return _checkpointer_activo
+
+
+def limpiar_checkpoint_hilo(thread_id: str) -> bool:
+    """Purga los registros del hilo en Supabase Enoc y en el checkpointer local activo."""
+    global _checkpointer_activo
+    if _checkpointer_activo is not None:
+        if hasattr(_checkpointer_activo, "delete_thread"):
+            try:
+                _checkpointer_activo.delete_thread(thread_id)
+            except Exception:
+                pass
+        elif hasattr(_checkpointer_activo, "storage") and isinstance(_checkpointer_activo.storage, dict):
+            try:
+                keys_to_del = [k for k in _checkpointer_activo.storage if (k == thread_id or (isinstance(k, tuple) and thread_id in k))]
+                for k in keys_to_del:
+                    del _checkpointer_activo.storage[k]
+            except Exception:
+                pass
+    try:
+        from src.checkpoints import limpiar_checkpoint_hilo as _limpiar_remoto
+        return _limpiar_remoto(thread_id)
+    except Exception as e:
+        logger.warning(f"No se pudo limpiar checkpoint remoto para {thread_id}: {e}")
+        return False
 
 
 def obtener_grafo_mototradis():
@@ -4886,6 +4950,285 @@ def resolver_modelo_canal(canal: str, proveedor: str | None = None) -> str:
         elif "llama" in p_low:
             return "Groq · llama-3.3-70b-versatile"
     return MODELOS_UTILIZADOS_CATALOGO.get(c_norm, "Google Gemini · gemini-3.5-flash-lite")
+
+
+# ==============================================================================
+# Persistencia Desacoplada en Historial de Reportes Semanales (Spec 023)
+# ==============================================================================
+
+def construir_registro_historial_reporte(
+    id_mensaje: Any = None,
+    autor: Optional[str] = None,
+    semana: Optional[str] = None,
+    fecha_envio: Optional[str] = None,
+    fecha_extraccion: Optional[str] = None,
+    rutas_activas: Optional[list] = None,
+    texto_original: Optional[str] = None,
+    copys_dict: Optional[dict] = None,
+    canal_especifico: Optional[str] = None,
+    modelo_ia: Optional[str] = None,
+    *,
+    canal: Optional[str] = None,
+    copy_generado: Optional[dict] = None,
+    copys_generados: Optional[dict] = None,
+    interaccion: Optional[dict] = None,
+    **kwargs
+) -> dict:
+    """
+    Spec 023 - RF-01, RF-02, RF-05:
+    Normaliza los 12 campos canónicos para la tabla public.historial_reportes_semanales:
+    - id_mensaje: siempre normalizado como string (str)
+    - autor: texto del autor ('Comunidad' por defecto)
+    - semana: etiqueta de semana ('Semana_01' por defecto)
+    - fecha_envio: ISO UTC o None
+    - fecha_extraccion: ISO UTC de la extracción original
+    - fecha_publicacion: ISO UTC de publicación inmediata
+    - rutas_activas: lista con canales publicados efectivamente
+    - estado: literal 'publicado'
+    - contenido_original: JSON con texto y metadatos de la interacción
+    - copys_generados: JSON indexado por canal {canal: {titulo, texto_copy, ...}}
+    - cw_modelo_ia: resuelto con catálogo oficial y transparencia multi-LLM
+    """
+    # 1. Normalización de id_mensaje como string
+    id_msg_str = str(id_mensaje) if id_mensaje is not None else "0"
+
+    # 2. Extracción de datos contextuales desde interaccion si fue provista
+    interaccion_dict = interaccion if isinstance(interaccion, dict) else {}
+    autor_final = str(
+        autor
+        or interaccion_dict.get("autor")
+        or kwargs.get("author")
+        or "Comunidad"
+    )
+    semana_final = str(
+        semana
+        or interaccion_dict.get("semana")
+        or kwargs.get("week")
+        or "Semana_01"
+    )
+    f_envio = (
+        fecha_envio
+        or interaccion_dict.get("fecha_envio")
+        or kwargs.get("created_at")
+    )
+    f_extraccion = (
+        fecha_extraccion
+        or interaccion_dict.get("fecha_extraccion")
+        or a_utc_iso(datetime.now(timezone.utc))
+    )
+    f_publicacion = a_utc_iso(datetime.now(timezone.utc))
+
+    # 3. Normalización de rutas_activas
+    canal_target = canal or canal_especifico
+    if rutas_activas is not None:
+        rutas_lista = [str(r).strip().lower() for r in rutas_activas]
+    elif canal_target:
+        rutas_lista = [str(canal_target).strip().lower()]
+    else:
+        rutas_lista = []
+
+    # 4. Normalización de copys_generados indexado por canal
+    copys_finales: dict[str, Any] = {}
+    if copys_generados and isinstance(copys_generados, dict):
+        copys_finales.update(copys_generados)
+    elif copys_dict and isinstance(copys_dict, dict):
+        copys_finales.update(copys_dict)
+
+    if copy_generado and canal_target:
+        copys_finales[str(canal_target).strip().lower()] = copy_generado
+    elif copy_generado and rutas_lista and len(rutas_lista) == 1:
+        copys_finales[rutas_lista[0]] = copy_generado
+
+    # 5. Normalización de contenido_original
+    txt_orig = (
+        texto_original
+        or interaccion_dict.get("texto")
+        or interaccion_dict.get("texto_original")
+        or kwargs.get("texto")
+        or ""
+    )
+    contenido_original_dict = {
+        "texto": txt_orig,
+        "autor": autor_final,
+        "canal": interaccion_dict.get("canal", "#general"),
+    }
+    for k, v in interaccion_dict.items():
+        if k not in contenido_original_dict:
+            contenido_original_dict[k] = v
+
+    # 6. Resolución de modelo IA utilizado
+    if modelo_ia:
+        modelo_ia_final = str(modelo_ia)
+    elif len(rutas_lista) == 1:
+        modelo_ia_final = resolver_modelo_canal(rutas_lista[0])
+    elif len(rutas_lista) > 1:
+        modelo_ia_final = "orquestador-multi-llm"
+    else:
+        modelo_ia_final = "Google Gemini · gemini-3.5-flash-lite"
+
+    return {
+        "id_mensaje": id_msg_str,
+        "autor": autor_final,
+        "semana": semana_final,
+        "fecha_envio": f_envio,
+        "fecha_extraccion": f_extraccion,
+        "fecha_publicacion": f_publicacion,
+        "rutas_activas": rutas_lista,
+        "estado": "publicado",
+        "contenido_original": contenido_original_dict,
+        "copys_generados": copys_finales,
+        "cw_modelo_ia": modelo_ia_final,
+    }
+
+
+def _marcar_sync_sqlite_local(
+    id_mensaje: Any = None,
+    estado_sync: str = "pendiente",
+    error_detalle: str | None = None,
+    **kwargs
+):
+    """
+    Spec 023 - RF-04, RF-05:
+    Marca de forma segura el estado de sincronización con Supabase en SQLite local sin degradar rendimiento.
+    """
+    id_msg = id_mensaje if id_mensaje is not None else kwargs.get("id_msg")
+    estado = estado_sync if estado_sync is not None else kwargs.get("estado", "pendiente")
+    if id_msg is None:
+        return
+    try:
+        interaccion_id = int(id_msg) if str(id_msg).isdigit() else id_msg
+        with sqlite3.connect(motor_bd.RUTA_BD, timeout=2.0) as conn:
+            try:
+                conn.execute("ALTER TABLE contenidos_generados ADD COLUMN sync_supabase TEXT DEFAULT 'sincronizado'")
+                conn.commit()
+            except Exception as exc_alter:
+                if "duplicate column name" not in str(exc_alter).lower():
+                    pass
+            conn.execute(
+                "UPDATE contenidos_generados SET sync_supabase = ? WHERE interaccion_id = ?",
+                (str(estado), interaccion_id)
+            )
+            conn.commit()
+    except Exception as sqle:
+        logger.warning(f"No se pudo actualizar sync_supabase en SQLite local: {sqle}")
+
+
+def replicar_historial_reportes_semanales_supabase(registro: dict) -> bool:
+    """
+    Spec 023 - RF-01, RF-04, RF-05, RF-06:
+    Inserta el registro canónico en public.historial_reportes_semanales de Supabase Enoc
+    utilizando psycopg conectado a SUPABASE_DB_URL o DATABASE_URL.
+    En caso de timeout o fallo de conexión remota, captura defensivamente la excepción,
+    registra una advertencia estructurada (logger.warning), actualiza sync_supabase = 'pendiente'
+    en SQLite local y retorna False sin interrumpir la operación del backend.
+    """
+    id_msg = registro.get("id_mensaje") if isinstance(registro, dict) else None
+    url_supabase = os.environ.get("SUPABASE_DB_URL") or resolver_url_base_datos()
+
+    if not url_supabase:
+        logger.warning("No se encontró URL válida de Supabase Enoc para replicar historial.")
+        _marcar_sync_sqlite_local(id_msg, "pendiente", error_detalle="URL de Supabase no configurada")
+        return False
+
+    try:
+        import psycopg
+        with psycopg.connect(url_supabase, autocommit=True, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                sql = """
+                INSERT INTO public.historial_reportes_semanales (
+                    id_mensaje, autor, semana, fecha_envio, fecha_extraccion,
+                    fecha_publicacion, rutas_activas, estado, contenido_original,
+                    copys_generados, cw_modelo_ia
+                ) VALUES (
+                    %(id_mensaje)s, %(autor)s, %(semana)s, %(fecha_envio)s, %(fecha_extraccion)s,
+                    %(fecha_publicacion)s, %(rutas_activas)s, %(estado)s, %(contenido_original)s::jsonb,
+                    %(copys_generados)s::jsonb, %(cw_modelo_ia)s
+                );
+                """
+                cont_orig_raw = registro.get("contenido_original", {}) if isinstance(registro, dict) else {}
+                cont_orig_json = (
+                    json.dumps(cont_orig_raw, ensure_ascii=False)
+                    if isinstance(cont_orig_raw, (dict, list))
+                    else str(cont_orig_raw)
+                )
+                copys_raw = registro.get("copys_generados", {}) if isinstance(registro, dict) else {}
+                copys_json = (
+                    json.dumps(copys_raw, ensure_ascii=False)
+                    if isinstance(copys_raw, (dict, list))
+                    else str(copys_raw)
+                )
+                params = {
+                    "id_mensaje": str(registro.get("id_mensaje", "")),
+                    "autor": str(registro.get("autor", "Comunidad")),
+                    "semana": str(registro.get("semana", "Semana_01")),
+                    "fecha_envio": registro.get("fecha_envio"),
+                    "fecha_extraccion": registro.get("fecha_extraccion") or a_utc_iso(datetime.now(timezone.utc)),
+                    "fecha_publicacion": registro.get("fecha_publicacion") or a_utc_iso(datetime.now(timezone.utc)),
+                    "rutas_activas": list(registro.get("rutas_activas", [])),
+                    "estado": str(registro.get("estado", "publicado")),
+                    "contenido_original": cont_orig_json,
+                    "copys_generados": copys_json,
+                    "cw_modelo_ia": str(registro.get("cw_modelo_ia", "Google Gemini · gemini-3.5-flash-lite")),
+                }
+                cur.execute(sql, params)
+        _marcar_sync_sqlite_local(id_msg, "sincronizado")
+        return True
+    except Exception as exc:
+        logger.warning(f"Error replicando historial a Supabase Enoc: {exc}")
+        _marcar_sync_sqlite_local(id_msg, "pendiente", error_detalle=str(exc))
+        return False
+
+
+def despachar_replicacion_historial_reportes(registro: dict):
+    """
+    Spec 023 - RF-01, RF-02, RF-05, RF-06:
+    Despacha la replicación de historial_reportes_semanales en segundo plano
+    mediante asyncio.create_task si hay un loop en ejecución o mediante
+    hilo daemon de fondo en contextos síncronos.
+    Garantiza resiliencia total: cualquier excepción en segundo plano es
+    capturada con logger.warning sin emitir 'unhandled exception' ni quebrar
+    el proceso principal.
+    """
+    def _trabajador_fondo(reg: dict):
+        try:
+            replicar_historial_reportes_semanales_supabase(reg)
+        except Exception as exc_fondo:
+            logger.warning(f"Excepción capturada en tarea de fondo de replicación de historial: {exc_fondo}")
+
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            async def _coro_fondo():
+                try:
+                    await asyncio.to_thread(_trabajador_fondo, registro)
+                except Exception as exc_coro:
+                    logger.warning(f"Excepción asíncrona en tarea de replicación: {exc_coro}")
+
+            task = loop.create_task(_coro_fondo())
+            def _on_done(t):
+                try:
+                    if not t.cancelled():
+                        err = t.exception()
+                        if err:
+                            logger.warning(f"Tarea en segundo plano finalizó con error: {err}")
+                except Exception:
+                    pass
+            task.add_done_callback(_on_done)
+        else:
+            import threading
+            t = threading.Thread(
+                target=_trabajador_fondo,
+                args=(registro,),
+                daemon=True
+            )
+            t.start()
+    except Exception as exc_despacho:
+        logger.warning(f"Error al despachar replicación en segundo plano: {exc_despacho}")
+
 
 
 MENSAJES_OMISION_ORQUESTADOR = {
@@ -5744,10 +6087,13 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
 
         # Obtener datos de la interacción para contexto y citación
         with sqlite3.connect(motor_bd.RUTA_BD) as conn:
-            row_int = conn.execute("SELECT autor, texto, canal FROM interacciones WHERE id = ?", (id_msg,)).fetchone()
-            autor = row_int[0] if row_int else "comunidad"
-            texto_orig = row_int[1] if row_int else ""
-            canal_def = row_int[2] if row_int else "#general"
+            conn.row_factory = sqlite3.Row
+            row_int = conn.execute("SELECT * FROM interacciones WHERE id = ?", (id_msg,)).fetchone()
+            autor = (row_int["autor"] if row_int and "autor" in row_int.keys() and row_int["autor"] else "comunidad")
+            texto_orig = (row_int["texto"] if row_int and "texto" in row_int.keys() and row_int["texto"] else "")
+            canal_def = (row_int["canal"] if row_int and "canal" in row_int.keys() and row_int["canal"] else "#general")
+            semana = (row_int["periodo_referencia"] if row_int and "periodo_referencia" in row_int.keys() and row_int["periodo_referencia"] else "Semana_01")
+            fecha_env = (row_int["enviado_en"] if row_int and "enviado_en" in row_int.keys() and row_int["enviado_en"] else None)
 
         # Despacho multicanal usando estrictamente los textos aprobados / editados por el humano
         b_disc = copys_finales.get("discord") or copys_finales.get("reclamos") or {}
@@ -5808,6 +6154,27 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
         except Exception:
             pass
 
+        # Spec 023 - RF-02, RF-04, RF-05: Despachar replicación consolidada en segundo plano si hay canales enviados
+        if canales_enviados:
+            invalidar_cache_supabase()
+            reg_consolidado = construir_registro_historial_reporte(
+                id_mensaje=id_msg,
+                autor=autor,
+                semana=semana,
+                fecha_envio=fecha_env,
+                rutas_activas=canales_enviados,
+                texto_original=texto_orig,
+                copys_dict=copys_finales,
+                interaccion={
+                    "autor": autor,
+                    "texto": texto_orig,
+                    "canal": canal_def,
+                    "semana": semana,
+                    "fecha_envio": fecha_env,
+                }
+            )
+            despachar_replicacion_historial_reportes(reg_consolidado)
+
         return {
             "exito": True,
             "decision": "aprobar",
@@ -5825,7 +6192,6 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
             except Exception:
                 pass
         try:
-            from src.checkpoints import limpiar_checkpoint_hilo
             limpiar_checkpoint_hilo(thread_id)
         except Exception:
             pass
@@ -5931,6 +6297,15 @@ def api_mototradis_publish_channel(req: MototradisPublishChannelRequest):
             )
             conn.commit()
         invalidar_cache_supabase()
+
+        # Spec 023 - RF-01, RF-05: Despachar replicación asíncrona a public.historial_reportes_semanales
+        reg_historial = construir_registro_historial_reporte(
+            id_mensaje=id_msg,
+            canal=canal,
+            copy_generado={"titulo": tit, "texto_copy": txt},
+            interaccion={"autor": autor, "texto": texto_orig, "canal": canal_def}
+        )
+        despachar_replicacion_historial_reportes(reg_historial)
 
     ret_dict = {
         "id_mensaje": id_msg,

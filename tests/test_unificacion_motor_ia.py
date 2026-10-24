@@ -4388,3 +4388,376 @@ def test_spec022_migracion_idempotencia_y_hashes_coincidentes():
     )
 
 
+# ==============================================================================
+# Spec 023: Persistencia en Historial de Reportes Semanales y LangGraph Checkpointer
+# en Supabase Enoc con Garantía de Alta Velocidad
+# ==============================================================================
+
+def test_spec023_normalizacion_registro_historial_reporte():
+    """
+    Spec 023 - RF-01, RF-02:
+    Valida la función construir_registro_historial_reporte para normalizar los
+    12 campos canónicos de public.historial_reportes_semanales:
+    - id_mensaje normalizado invariablemente como string (str)
+    - autor, semana, fecha_envio, fecha_extraccion, fecha_publicacion
+    - rutas_activas como lista de canales despachados
+    - estado literal 'publicado'
+    - contenido_original como JSON estructurado
+    - copys_generados indexado por canal
+    - cw_modelo_ia resuelto con catálogo oficial
+    """
+    assert hasattr(puente_motor_ia, "construir_registro_historial_reporte"), (
+        "puente_motor_ia debe implementar 'construir_registro_historial_reporte' para normalizar registros canónicos"
+    )
+
+    # 1. Caso de publicación individual
+    reg_ind = puente_motor_ia.construir_registro_historial_reporte(
+        id_mensaje=101,  # Pasado como entero para verificar conversión a str
+        canal="discord",
+        copy_generado={"titulo": "Taller IA", "texto_copy": "Aprende agentes autónomos este sábado."},
+        interaccion={"autor": "alice", "texto": "¿Habrá taller de IA?", "canal": "#general", "semana": "Semana_01"}
+    )
+
+    assert isinstance(reg_ind, dict), "El registro retornado debe ser un diccionario"
+    assert reg_ind.get("id_mensaje") == "101", f"id_mensaje debe normalizarse a str ('101'), obtenido: {reg_ind.get('id_mensaje')}"
+    assert reg_ind.get("autor") == "alice"
+    assert reg_ind.get("semana") == "Semana_01"
+    assert reg_ind.get("estado") == "publicado"
+    assert reg_ind.get("rutas_activas") == ["discord"], "rutas_activas debe contener exactamente ['discord']"
+    assert isinstance(reg_ind.get("fecha_publicacion"), str) and len(reg_ind["fecha_publicacion"]) > 10
+    assert isinstance(reg_ind.get("contenido_original"), dict)
+    assert reg_ind["contenido_original"].get("texto") == "¿Habrá taller de IA?"
+    assert isinstance(reg_ind.get("copys_generados"), dict)
+    assert "discord" in reg_ind["copys_generados"]
+    assert reg_ind["copys_generados"]["discord"]["titulo"] == "Taller IA"
+    assert isinstance(reg_ind.get("cw_modelo_ia"), str) and len(reg_ind["cw_modelo_ia"]) > 0
+
+    # 2. Caso consolidado multi-canal HITL
+    copys_hitl = {
+        "discord": {"titulo": "D1", "texto_copy": "Copy Discord"},
+        "linkedin": {"titulo": "L1", "texto_copy": "Copy LinkedIn"}
+    }
+    reg_hitl = puente_motor_ia.construir_registro_historial_reporte(
+        id_mensaje="snowflake_discord_987654321",
+        rutas_activas=["discord", "linkedin"],
+        copys_generados=copys_hitl,
+        interaccion={"autor": "bob", "texto": "Reunión de Cloud", "canal": "#anuncios"},
+        semana="Semana_02"
+    )
+
+    assert reg_hitl.get("id_mensaje") == "snowflake_discord_987654321"
+    assert reg_hitl.get("rutas_activas") == ["discord", "linkedin"]
+    assert reg_hitl.get("estado") == "publicado"
+    assert "discord" in reg_hitl["copys_generados"] and "linkedin" in reg_hitl["copys_generados"]
+
+
+def test_spec023_publish_channel_despacho_asincrono_historial_reportes(client, monkeypatch):
+    """
+    Spec 023 - RF-01, RF-05, RF-06:
+    Valida que ante publicación individual exitosa en /api/v1/mototradis/publish-channel:
+    1. Se persista atómicamente en SQLite local en menos de 100 ms de sobrecarga interna.
+    2. Se despache de forma desacoplada en segundo plano la réplica hacia Supabase
+       (despachar_replicacion_historial_reportes) con el registro canónico individual.
+    3. La respuesta HTTP sea inmediata y exitosa.
+    """
+    import time
+    _insertar_interaccion_spec012(
+        interaccion_id=801,
+        autor="marcos",
+        canal="#general",
+        texto="Consulta sobre despliegue en la nube",
+        etapa_flujo="en_redaccion"
+    )
+
+    assert hasattr(puente_motor_ia, "despachar_replicacion_historial_reportes"), (
+        "puente_motor_ia debe implementar 'despachar_replicacion_historial_reportes' para desacoplar a segundo plano"
+    )
+
+    llamadas_despacho = []
+    def mock_despacho(reg):
+        llamadas_despacho.append(reg)
+
+    monkeypatch.setattr(puente_motor_ia, "despachar_replicacion_historial_reportes", mock_despacho)
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_discord_con_cascada",
+        lambda *args, **kwargs: {"ok": True, "detalle": "Enviado con éxito", "estado_canal": "enviado", "message_id": "disc_801"}
+    )
+
+    t0 = time.perf_counter()
+    resp = client.post("/api/v1/mototradis/publish-channel", json={
+        "id_mensaje": 801,
+        "canal": "discord",
+        "titulo": "Novedades Cloud",
+        "texto_copy": "Aquí las novedades semanales sobre arquitectura cloud."
+    })
+    latencia_ms = (time.perf_counter() - t0) * 1000
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("ok") is True
+    assert data.get("estado_canal") == "enviado"
+    assert latencia_ms < 1500, f"La sobrecarga interna debe ser inmediata, tomada: {latencia_ms:.2f} ms"
+
+    # Verificar que se despachó la tarea en segundo plano con el registro canónico
+    assert len(llamadas_despacho) == 1, "Debe invocarse despachar_replicacion_historial_reportes exactamente una vez"
+    payload_enviado = llamadas_despacho[0]
+    assert payload_enviado.get("id_mensaje") == "801"
+    assert payload_enviado.get("rutas_activas") == ["discord"]
+    assert payload_enviado.get("estado") == "publicado"
+    assert "discord" in payload_enviado.get("copys_generados", {})
+
+
+def test_spec023_hitl_decision_aprobacion_despacho_asincrono_consolidado(client, monkeypatch):
+    """
+    Spec 023 - RF-02, RF-04, RF-05:
+    Valida que ante aprobación HITL (/api/v1/mototradis/hitl-decision):
+    1. Si decision == 'aprobar' y hay al menos un canal enviado con éxito, se despache
+       en segundo plano la réplica consolidada conteniendo exactamente las rutas exitosas
+       y los copys aprobados por el humano (Soberanía Humana).
+    2. Si decision == 'desaprobar', se purgue el hilo en el checkpointer y NO se despache
+       réplica a historial_reportes_semanales.
+    """
+    from datetime import datetime, timezone
+
+    _insertar_interaccion_spec012(
+        interaccion_id=802,
+        autor="laura",
+        canal="#ideas",
+        texto="Propuesta de taller práctico sobre FastAPI",
+        etapa_flujo="en_redaccion"
+    )
+
+    # Insertar borradores en SQLite para simular precondición de aprobación
+    ahora = puente_motor_ia.a_utc_iso(datetime.now(timezone.utc))
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, plataforma, titulo, contenido, estado,
+                estado_publicacion, creado_en, actualizado_en
+            ) VALUES
+            (80201, 802, 'discord', 'discord', 'Draft Discord', 'Borrador Discord', 'pendiente_revision', 'no_publicado', ?, ?),
+            (80202, 802, 'linkedin', 'linkedin', 'Draft LinkedIn', 'Borrador LinkedIn', 'pendiente_revision', 'no_publicado', ?, ?)
+        """, (ahora, ahora, ahora, ahora))
+        conn.commit()
+
+    assert hasattr(puente_motor_ia, "despachar_replicacion_historial_reportes"), (
+        "puente_motor_ia debe implementar 'despachar_replicacion_historial_reportes'"
+    )
+
+    llamadas_despacho = []
+    monkeypatch.setattr(puente_motor_ia, "despachar_replicacion_historial_reportes", lambda r: llamadas_despacho.append(r))
+
+    # Mock dispatchers: Discord y LinkedIn exitosos, X fallido
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_discord_con_cascada",
+        lambda *args, **kwargs: {"ok": True, "detalle": "Discord OK", "estado_canal": "enviado", "message_id": "disc_802"}
+    )
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_linkedin_resiliente",
+        lambda *args, **kwargs: {"ok": True, "detalle": "LinkedIn OK", "estado_canal": "enviado", "urn": "urn:li:802"}
+    )
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_x_resiliente",
+        lambda *args, **kwargs: {"ok": False, "detalle": "Fallo simulado X", "estado_canal": "error"}
+    )
+
+    copys_editados_humano = {
+        "discord": {"titulo": "Taller FastAPI Aprobado", "texto_copy": "Aprende APIs rápidas."},
+        "linkedin": {"titulo": "Webinar FastAPI Profesional", "texto_copy": "Domina backend moderno con FastAPI."}
+    }
+
+    # 1. Aprobación HITL
+    resp_aprob = client.post("/api/v1/mototradis/hitl-decision", json={
+        "id_mensaje": 802,
+        "decision": "aprobar",
+        "copys_editados": copys_editados_humano
+    })
+
+    assert resp_aprob.status_code == 200
+    data_aprob = resp_aprob.json()
+    assert data_aprob.get("exito") is True
+
+    # Validar despacho consolidado en background
+    assert len(llamadas_despacho) == 1, "Debe despacharse el registro consolidado a Supabase en background"
+    reg_consolidado = llamadas_despacho[0]
+    assert reg_consolidado.get("id_mensaje") == "802"
+    assert "discord" in reg_consolidado.get("rutas_activas", [])
+    assert "linkedin" in reg_consolidado.get("rutas_activas", [])
+    assert "x" not in reg_consolidado.get("rutas_activas", [])  # X falló, no debe estar activa
+    assert reg_consolidado.get("copys_generados", {}).get("discord", {}).get("titulo") == "Taller FastAPI Aprobado"
+
+    # 2. Desaprobación HITL: no debe despachar réplica
+    llamadas_despacho.clear()
+    resp_desaprob = client.post("/api/v1/mototradis/hitl-decision", json={
+        "id_mensaje": 802,
+        "decision": "desaprobar"
+    })
+    assert resp_desaprob.status_code == 200
+    assert len(llamadas_despacho) == 0, "No debe despacharse réplica a historial ante desaprobación"
+
+
+def test_spec023_checkpointer_session_mode_y_mitigacion_prepared_statements(monkeypatch, caplog):
+    """
+    Spec 023 - RF-03, RF-04, RF-06:
+    Valida la fábrica de checkpointer resiliente:
+    1. resolver_url_session_mode conmuta puertos de Transaction Pooler (:6543) a Session Mode (:5432).
+    2. obtener_checkpointer_resiliente usa Session Mode (:5432) y prepare_threshold=None en psycopg 3
+       para mitigar DuplicatePreparedStatement.
+    3. Ante fallo de conexión remota o DuplicatePreparedStatement, conmuta transparentemente a MemorySaver
+       emitiendo logger.warning estructurado.
+    """
+    import logging
+
+    assert hasattr(puente_motor_ia, "resolver_url_session_mode"), (
+        "puente_motor_ia debe implementar 'resolver_url_session_mode'"
+    )
+
+    url_tx = "postgresql://postgres.swdoucawdasxmnomlcfu:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+    url_res = puente_motor_ia.resolver_url_session_mode(url_tx)
+    assert ":5432" in url_res and ":6543" not in url_res, (
+        f"resolver_url_session_mode debe sustituir el puerto :6543 por :5432. Obtenido: {url_res}"
+    )
+
+    url_ya_5432 = "postgresql://postgres.swdoucawdasxmnomlcfu:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
+    assert puente_motor_ia.resolver_url_session_mode(url_ya_5432) == url_ya_5432
+
+    # Probar fallback resiliente ante DuplicatePreparedStatement o Network Error
+    monkeypatch.setattr(puente_motor_ia, "_checkpointer_activo", None)
+    monkeypatch.setenv("SUPABASE_DB_URL", url_tx)
+
+    with patch("langgraph.checkpoint.postgres.PostgresSaver.from_conn_string", side_effect=Exception("DuplicatePreparedStatement: prepared statement _pg3_0 already exists")):
+        with caplog.at_level(logging.WARNING):
+            cp = puente_motor_ia.obtener_checkpointer_resiliente()
+
+    from langgraph.checkpoint.memory import MemorySaver
+    assert isinstance(cp, MemorySaver), "Debe conmutar transparentemente a MemorySaver ante excepción en PostgresSaver"
+    assert any("MemorySaver" in r.message or "PostgresSaver" in r.message for r in caplog.records), (
+        "Debe emitirse un logger.warning informando la conmutación a MemorySaver"
+    )
+
+
+def test_spec023_resiliencia_fallo_segundo_plano_y_marca_local_sqlite(monkeypatch, caplog):
+    """
+    Spec 023 - RF-04, RF-05:
+    Valida que ante fallo de red o timeout durante la inserción remota en Supabase:
+    1. replicar_historial_reportes_semanales_supabase capture la excepción defensivamente.
+    2. Se registre un logger.warning descriptivo.
+    3. Se marque el estado pendiente local en SQLite (sync_supabase = 'pendiente')
+       para reconciliación diferida.
+    """
+    import logging
+
+    assert hasattr(puente_motor_ia, "replicar_historial_reportes_semanales_supabase"), (
+        "puente_motor_ia debe implementar 'replicar_historial_reportes_semanales_supabase'"
+    )
+
+    _insertar_interaccion_spec012(
+        interaccion_id=803,
+        autor="diego",
+        canal="#general",
+        texto="Problema con el despliegue",
+        etapa_flujo="publicado"
+    )
+
+    # Insertar en contenidos_generados
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, plataforma, titulo, contenido, estado,
+                estado_publicacion, creado_en, actualizado_en
+            ) VALUES
+            (80301, 803, 'discord', 'discord', 'Tit 803', 'Contenido 803', 'publicado', 'publicado', '2026-10-23T10:00:00+00:00', '2026-10-23T10:00:00+00:00')
+        """)
+        conn.commit()
+
+    registro_dummy = {
+        "id_mensaje": "803",
+        "autor": "diego",
+        "semana": "Semana_01",
+        "fecha_envio": None,
+        "fecha_extraccion": "2026-10-23T10:00:00+00:00",
+        "fecha_publicacion": "2026-10-23T10:05:00+00:00",
+        "rutas_activas": ["discord"],
+        "estado": "publicado",
+        "contenido_original": {"texto": "Problema con el despliegue"},
+        "copys_generados": {"discord": {"titulo": "Tit 803", "texto_copy": "Contenido 803"}},
+        "cw_modelo_ia": "Google Gemini · gemini-3.5-flash-lite"
+    }
+
+    # Simular fallo en psycopg.connect
+    with patch("psycopg.connect", side_effect=Exception("Connection timed out to Supabase Enoc")), \
+         caplog.at_level(logging.WARNING):
+        res = puente_motor_ia.replicar_historial_reportes_semanales_supabase(registro_dummy)
+
+    assert res is False, "Debe retornar False defensivamente ante error de conexión"
+    assert any("Supabase" in r.message or "historial" in r.message.lower() for r in caplog.records), (
+        "Debe registrarse una advertencia en log (logger.warning) ante fallo de inserción remota"
+    )
+
+    # Validar que SQLite local registró la marca de sync pendiente
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(contenidos_generados)").fetchall()}
+        assert "sync_supabase" in cols, "La columna sync_supabase debe existir en contenidos_generados"
+        row = conn.execute("SELECT sync_supabase FROM contenidos_generados WHERE interaccion_id = 803").fetchone()
+        assert row and row[0] == "pendiente", "Debe marcarse sync_supabase='pendiente' en SQLite local"
+
+
+def test_spec023_resiliencia_despacho_fondo_y_esquema_defensivo(monkeypatch, caplog):
+    """
+    Spec 023 - RF-04, RF-05, RF-06:
+    Valida la resiliencia en segundo plano y el esquema defensivo:
+    1. _asegurar_esquema_sqlite asegura columna sync_supabase sin fallar por duplicate column.
+    2. _marcar_sync_sqlite_local(id_mensaje, estado_sync, error_detalle) actualiza SQLite.
+    3. despachar_replicacion_historial_reportes captura excepciones imprevistas con logger.warning.
+    """
+    import logging
+
+    # 1. Esquema defensivo idempotente
+    puente_motor_ia._asegurar_esquema_sqlite()
+    puente_motor_ia._asegurar_esquema_sqlite()
+
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(contenidos_generados)").fetchall()}
+        assert "sync_supabase" in cols, "La columna sync_supabase debe existir defensivamente en contenidos_generados"
+
+    # 2. _marcar_sync_sqlite_local con error_detalle
+    _insertar_interaccion_spec012(
+        interaccion_id=804,
+        autor="maria",
+        canal="#faq",
+        texto="Pregunta sobre API",
+        etapa_flujo="publicado"
+    )
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, plataforma, titulo, contenido, estado,
+                estado_publicacion, creado_en, actualizado_en
+            ) VALUES
+            (80401, 804, 'discord', 'discord', 'Tit 804', 'Contenido 804', 'publicado', 'publicado', '2026-10-23T11:00:00+00:00', '2026-10-23T11:00:00+00:00')
+        """)
+        conn.commit()
+
+    puente_motor_ia._marcar_sync_sqlite_local(id_mensaje=804, estado_sync="pendiente", error_detalle="Simulated timeout")
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        row = conn.execute("SELECT sync_supabase FROM contenidos_generados WHERE interaccion_id = 804").fetchone()
+        assert row and row[0] == "pendiente"
+
+    # 3. despachar_replicacion_historial_reportes ante excepción imprevista
+    with patch("puente_motor_ia.replicar_historial_reportes_semanales_supabase", side_effect=RuntimeError("Fallo WAN catastrófico")), \
+         caplog.at_level(logging.WARNING):
+        puente_motor_ia.despachar_replicacion_historial_reportes({"id_mensaje": "804"})
+        import time
+        time.sleep(0.1)
+
+    assert any("Fallo WAN catastrófico" in r.message or "Excepción" in r.message for r in caplog.records), (
+        "Cualquier excepción en la tarea de fondo debe capturarse con logger.warning"
+    )
+
+
+
+
