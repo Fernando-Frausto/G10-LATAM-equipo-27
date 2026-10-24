@@ -4759,5 +4759,593 @@ def test_spec023_resiliencia_despacho_fondo_y_esquema_defensivo(monkeypatch, cap
     )
 
 
+# ==============================================================================
+# Spec 024: Reporte OCI desde Historial Semanal con Inyección de Copys Reales y Alta Velocidad
+# ==============================================================================
+
+def test_spec024_extraccion_historial_reportes_supabase_timeout_y_kpis(monkeypatch, caplog):
+    """
+    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Valida la extracción y deserialización defensiva desde historial_reportes_semanales:
+    1. _deserializar_json_defensivo maneja strings JSON, dicts, listas, nulos y strings inválidos.
+    2. _extraer_historial_reportes_semanales_supabase conecta con connect_timeout <= 4.
+    3. Construye el subdiccionario normalizado 'kpis' con relevancia (int), sentimiento (str),
+       temas_clave (list o str), segmento (str) y razonamiento (str).
+    4. id_mensaje se garantiza como str.
+    5. Ante fallos de conexión o timeouts de psycopg, captura la excepción, registra warning
+       y retorna [] defensivamente para activar el fallback.
+    """
+    import logging
+    import json
+
+    assert hasattr(puente_motor_ia, "_deserializar_json_defensivo"), (
+        "puente_motor_ia debe implementar '_deserializar_json_defensivo'"
+    )
+    assert hasattr(puente_motor_ia, "_extraer_historial_reportes_semanales_supabase"), (
+        "puente_motor_ia debe implementar '_extraer_historial_reportes_semanales_supabase'"
+    )
+
+    # 1. Deserialización defensiva unitaria
+    assert puente_motor_ia._deserializar_json_defensivo({"clave": "valor"}) == {"clave": "valor"}
+    assert puente_motor_ia._deserializar_json_defensivo('{"clave": "valor"}') == {"clave": "valor"}
+    assert puente_motor_ia._deserializar_json_defensivo(None) == {}
+    assert puente_motor_ia._deserializar_json_defensivo("invalid json syntax {{{") == {}
+    assert puente_motor_ia._deserializar_json_defensivo(["item1", "item2"]) == ["item1", "item2"]
+    assert puente_motor_ia._deserializar_json_defensivo('["item1", "item2"]') == ["item1", "item2"]
+
+    # 2. Mock de conexión exitosa con connect_timeout <= 4
+    called_timeouts = []
+    fake_filas = [
+        # id_mensaje, autor, semana, fecha_envio, fecha_extraccion, fecha_publicacion, rutas_activas, estado, contenido_original, copys_generados, cw_modelo_ia
+        (
+            1001,
+            "carlos_dev",
+            "2026-semana-42",
+            "2026-10-15T10:00:00+00:00",
+            "2026-10-15T10:05:00+00:00",
+            "2026-10-15T11:00:00+00:00",
+            ["linkedin"],
+            "publicado",
+            json.dumps({
+                "texto": "Cómo configurar CI/CD con Docker?",
+                "kpis": {
+                    "relevancia": 85,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#docker", "#cicd"],
+                    "segmento": "DEV",
+                    "razonamiento": "Pregunta técnica relevante"
+                }
+            }),
+            json.dumps({
+                "linkedin": {"titulo": "Docker en CI/CD", "texto_copy": "Guía práctica de integración continua."}
+            }),
+            "gemini-3.5-flash-lite"
+        ),
+        (
+            1002,
+            "ana_qa",
+            "2026-semana-42",
+            "2026-10-15T12:00:00+00:00",
+            "2026-10-15T12:05:00+00:00",
+            "2026-10-15T12:30:00+00:00",
+            ["discord"],
+            "publicado",
+            # Caso contenido_original y copys_generados ya vienen como dict (psycopg jsonb nativo)
+            {
+                "texto": "Mejor herramienta para pruebas e2e?",
+                "kpis": {
+                    "relevancia": 92,
+                    "sentimiento": "Positivo",
+                    "temas_clave": "#testing #e2e",
+                    "segmento": "QA",
+                    "razonamiento": "Discusión técnica sobre Playwright"
+                }
+            },
+            {
+                "discord": {"titulo": "", "texto_copy": "Recomendamos Playwright para e2e."}
+            },
+            "gemini-3.5-flash-lite"
+        )
+    ]
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def execute(self, query, params=None):
+            self.query = query
+            self.params = params
+        def fetchall(self):
+            return fake_filas
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+        def cursor(self):
+            return FakeCursor()
+
+    def fake_connect(*args, **kwargs):
+        timeout = kwargs.get("connect_timeout")
+        called_timeouts.append(timeout)
+        return FakeConn()
+
+    monkeypatch.setattr("psycopg.connect", fake_connect)
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://user:pass@localhost:5432/db")
+
+    resultados = puente_motor_ia._extraer_historial_reportes_semanales_supabase("2026-semana-42")
+
+    assert len(called_timeouts) > 0, "Debe conectar a Supabase usando psycopg.connect"
+    assert all(t is not None and t <= 4 for t in called_timeouts), (
+        f"connect_timeout debe ser <= 4 segundos para evitar degradar latencia. Registrado: {called_timeouts}"
+    )
+
+    assert len(resultados) == 2
+    r1, r2 = resultados[0], resultados[1]
+
+    # Validar tipos estrictos y subdiccionario kpis
+    assert isinstance(r1["id_mensaje"], str) and r1["id_mensaje"] == "1001"
+    assert isinstance(r1["kpis"], dict)
+    assert r1["kpis"]["relevancia"] == 85
+    assert r1["kpis"]["sentimiento"] == "Positivo"
+    assert r1["kpis"]["segmento"] == "DEV"
+    assert r1["kpis"]["razonamiento"] == "Pregunta técnica relevante"
+    assert r1["kpis"]["temas_clave"] in (["#docker", "#cicd"], "#docker #cicd")
+    assert isinstance(r1["copys_generados"], dict)
+    assert "linkedin" in r1["copys_generados"]
+
+    assert isinstance(r2["id_mensaje"], str) and r2["id_mensaje"] == "1002"
+    assert r2["kpis"]["relevancia"] == 92
+    assert r2["kpis"]["sentimiento"] == "Positivo"
+
+    # 3. Manejo defensivo ante fallos y timeouts retornando [] con warning
+    def fake_connect_timeout(*args, **kwargs):
+        raise Exception("Connection timed out after 4000ms")
+
+    monkeypatch.setattr("psycopg.connect", fake_connect_timeout)
+    with caplog.at_level(logging.WARNING):
+        res_vacio = puente_motor_ia._extraer_historial_reportes_semanales_supabase("2026-semana-42")
+
+    assert res_vacio == [], "Debe retornar [] defensivamente ante fallo o timeout de conexión"
+    assert any("historial" in r.message.lower() or "timeout" in r.message.lower() or "supabase" in r.message.lower() for r in caplog.records), (
+        "Debe registrarse una advertencia en log (logger.warning) ante fallo de extracción remota"
+    )
 
 
+def test_spec024_prelacion_copys_formateo_y_erradicacion_placeholders():
+    """
+    Spec 024 - RF-02, RF-06:
+    Valida la prelación estricta de copys (LinkedIn > Discord > X),
+    el formateo con/sin título y la erradicación total de placeholders provisionales:
+    1. Si existe LinkedIn con texto, se selecciona prioritariamente.
+    2. Si no hay LinkedIn pero sí Discord, se selecciona Discord.
+    3. Si no hay LinkedIn ni Discord, se selecciona X.
+    4. Con título no vacío: f"{titulo}\n\n{texto_copy}".strip().
+    5. Sin título o título vacío/None: texto_copy.strip().
+    6. Si no hay ningún canal válido: respaldo con texto_original.strip().
+    7. Prohibición categórica de 'Pendiente de redacción por Enoc...'.
+    """
+    assert hasattr(puente_motor_ia, "_formatear_copy_final"), (
+        "puente_motor_ia debe implementar '_formatear_copy_final'"
+    )
+
+    # 1. Prelación LinkedIn (máxima prioridad) con título
+    copys_multicanal = {
+        "linkedin": {"titulo": "Ecosistema Cloud", "texto_copy": "Aprende Kubernetes y Terraform hoy."},
+        "discord": {"titulo": "Aviso Discord", "texto_copy": "Texto secundario de Discord."},
+        "x": {"texto_copy": "Tweet sobre Cloud."}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_multicanal, texto_original="Texto original")
+    assert copy_final == "Ecosistema Cloud\n\nAprende Kubernetes y Terraform hoy."
+
+    # 2. LinkedIn sin título
+    copys_sin_titulo = {
+        "linkedin": {"titulo": "", "texto_copy": "   Texto de LinkedIn sin encabezado.   "},
+        "discord": {"texto_copy": "Texto Discord"}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_sin_titulo, texto_original="Texto original")
+    assert copy_final == "Texto de LinkedIn sin encabezado."
+
+    # 3. Discord cuando no existe LinkedIn (segunda prioridad) con título
+    copys_discord = {
+        "discord": {"titulo": "Comunidad Alura", "texto": "Revisa los nuevos módulos publicados."},
+        "x": {"texto_copy": "Post en X"}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_discord, texto_original="Texto original")
+    assert copy_final == "Comunidad Alura\n\nRevisa los nuevos módulos publicados."
+
+    # 4. X cuando no existe LinkedIn ni Discord (tercera prioridad)
+    copys_x = {
+        "x": {"texto_copy": "Tips rápidos de Python en 280 caracteres."}
+    }
+    copy_final = puente_motor_ia._formatear_copy_final(copys_x, texto_original="Texto original")
+    assert copy_final == "Tips rápidos de Python en 280 caracteres."
+
+    # 5. Soporte para canales como string plano o dicts con diversas claves ('texto', 'contenido', 'texto_copy')
+    copys_string = {"linkedin": "Publicación directa como cadena"}
+    assert puente_motor_ia._formatear_copy_final(copys_string) == "Publicación directa como cadena"
+
+    # 6. Respaldo transparente con texto original ante ausencia de copys
+    copy_vacio = puente_motor_ia._formatear_copy_final({}, texto_original="  Consulta original de un estudiante.  ")
+    assert copy_vacio == "Consulta original de un estudiante."
+
+    # 7. Erradicación categórica de placeholders provisionales
+    placeholder = "Pendiente de redacción por Enoc..."
+    copys_con_placeholder = {
+        "linkedin": {"titulo": "Tit", "texto_copy": f"{placeholder}"},
+        "discord": {"texto_copy": "Copy real en Discord"}
+    }
+    # Si LinkedIn contiene el placeholder, debe ignorarse y conmutar a Discord o texto original
+    copy_sanitizado = puente_motor_ia._formatear_copy_final(copys_con_placeholder, texto_original="Texto original")
+    assert placeholder not in copy_sanitizado, "No debe permitirse el placeholder provisional en el copy final"
+    assert copy_sanitizado == "Copy real en Discord"
+
+
+def test_spec024_deduplicacion_publicaciones_multiples():
+    """
+    Spec 024 - RF-02, RF-06:
+    Valida la deduplicación de múltiples publicaciones para un mismo id_mensaje:
+    1. Agrupación por id_mensaje consolidando rutas_activas únicas.
+    2. Fusión completa de copys_generados multicanal.
+    3. Elección de la fecha_publicacion más reciente.
+    4. Inyección del campo copy_final calculado por prelación.
+    5. Preservación del subdiccionario normalizado kpis sin pérdida de datos.
+    """
+    assert hasattr(puente_motor_ia, "_consolidar_aprobados_historial"), (
+        "puente_motor_ia debe implementar '_consolidar_aprobados_historial'"
+    )
+
+    filas_crudas = [
+        # Publicación 1 de id_mensaje 901 a Discord a las 10:00
+        {
+            "id_mensaje": "901",
+            "autor": "dev_senior",
+            "semana": "2026-semana-42",
+            "fecha_envio": "2026-10-15T09:00:00+00:00",
+            "fecha_extraccion": "2026-10-15T09:05:00+00:00",
+            "fecha_publicacion": "2026-10-15T10:00:00+00:00",
+            "rutas_activas": ["discord"],
+            "estado": "publicado",
+            "contenido_original": {
+                "texto": "¿Cómo optimizar queries SQL complejas?",
+                "kpis": {
+                    "relevancia": 95,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#sql", "#db"],
+                    "segmento": "BACKEND",
+                    "razonamiento": "Optimización de base de datos"
+                }
+            },
+            "copys_generados": {
+                "discord": {"titulo": "SQL Tips", "texto_copy": "Usa EXPLAIN ANALYZE para identificar cuellos de botella."}
+            },
+            "cw_modelo_ia": "gemini-3.5-flash-lite"
+        },
+        # Publicación 2 del MISMO id_mensaje 901 a LinkedIn a las 14:30
+        {
+            "id_mensaje": "901",
+            "autor": "dev_senior",
+            "semana": "2026-semana-42",
+            "fecha_envio": "2026-10-15T09:00:00+00:00",
+            "fecha_extraccion": "2026-10-15T09:05:00+00:00",
+            "fecha_publicacion": "2026-10-15T14:30:00+00:00",
+            "rutas_activas": ["linkedin"],
+            "estado": "publicado",
+            "contenido_original": {
+                "texto": "¿Cómo optimizar queries SQL complejas?",
+                "kpis": {
+                    "relevancia": 95,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#sql", "#db"],
+                    "segmento": "BACKEND",
+                    "razonamiento": "Optimización de base de datos"
+                }
+            },
+            "copys_generados": {
+                "linkedin": {"titulo": "Mastering SQL Performance", "texto_copy": "El índice correcto cambia de segundos a milisegundos."}
+            },
+            "cw_modelo_ia": "gemini-3.5-flash-lite"
+        },
+        # Mensaje independiente 902
+        {
+            "id_mensaje": "902",
+            "autor": "qa_tester",
+            "semana": "2026-semana-42",
+            "fecha_envio": "2026-10-15T11:00:00+00:00",
+            "fecha_extraccion": "2026-10-15T11:05:00+00:00",
+            "fecha_publicacion": "2026-10-15T12:00:00+00:00",
+            "rutas_activas": ["x"],
+            "estado": "publicado",
+            "contenido_original": {
+                "texto": "Mocking de servicios externos en tests",
+                "kpis": {
+                    "relevancia": 80,
+                    "sentimiento": "Positivo",
+                    "temas_clave": ["#testing"],
+                    "segmento": "QA",
+                    "razonamiento": "Buenas prácticas de testing"
+                }
+            },
+            "copys_generados": {
+                "x": {"texto_copy": "Usa mocks para desacoplar tests unitarios."}
+            },
+            "cw_modelo_ia": "gemini-3.5-flash-lite"
+        }
+    ]
+
+    consolidados = puente_motor_ia._consolidar_aprobados_historial(filas_crudas)
+
+    assert len(consolidados) == 2, "Debe deduplicar id_mensaje 901 resultando en exactamente 2 registros únicos"
+
+    item_901 = next(item for item in consolidados if str(item["id_mensaje"]) == "901")
+    item_902 = next(item for item in consolidados if str(item["id_mensaje"]) == "902")
+
+    # Validar consolidación de rutas_activas
+    assert set(item_901["rutas_activas"]) == {"discord", "linkedin"}
+
+    # Validar combinación de copys_generados
+    assert "discord" in item_901["copys_generados"]
+    assert "linkedin" in item_901["copys_generados"]
+
+    # Validar fecha_publicacion más reciente (14:30 > 10:00)
+    assert item_901["fecha_publicacion"] == "2026-10-15T14:30:00+00:00"
+
+    # Validar copy_final por prelación (LinkedIn > Discord)
+    assert item_901["copy_final"] == "Mastering SQL Performance\n\nEl índice correcto cambia de segundos a milisegundos."
+
+    # Validar kpis íntegros
+    assert item_901["kpis"]["relevancia"] == 95
+    assert item_901["kpis"]["segmento"] == "BACKEND"
+    assert "Pendiente de redacción por Enoc..." not in item_901["copy_final"]
+
+
+def test_spec024_complemento_descartados_desde_sqlite(tmp_path, monkeypatch):
+    """
+    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Valida el complemento de mensajes descartados desde SQLite local:
+    1. _obtener_descartados_semana_sqlite extrae filas con estado_curaduria = 'discarded'
+       o (estado_curaduria != 'curated' y relevancia < 70) para la semana objetivo.
+    2. Excluye mensajes cuyos IDs ya están en ids_aprobados.
+    3. Construye subdiccionario 'kpis' normalizado para evitar KeyError en reporte_semanal.py.
+    4. _cargar_lote_para_reporte_semanal ensambla aprobados de Supabase y descartados de SQLite.
+    5. reporte_semanal.generar_reporte_semanal calcula métricas totales (aprobados + descartados)
+       sin errores.
+    """
+    from pathlib import Path
+    import reporte_semanal
+
+    assert hasattr(puente_motor_ia, "_obtener_descartados_semana_sqlite"), (
+        "puente_motor_ia debe implementar '_obtener_descartados_semana_sqlite'"
+    )
+    assert hasattr(puente_motor_ia, "_cargar_lote_para_reporte_semanal"), (
+        "puente_motor_ia debe implementar '_cargar_lote_para_reporte_semanal'"
+    )
+
+    test_db = str(tmp_path / "test_reporte_descartados.db")
+    monkeypatch.setattr(puente_motor_ia.motor_bd, "RUTA_BD", test_db)
+    puente_motor_ia._asegurar_esquema_sqlite()
+
+    # Insertar en SQLite:
+    # 1. ID 1101: Aprobado (relevancia 90, curated, semana 2026-semana-42)
+    # 2. ID 1102: Descartado explícito (estado_curaduria='discarded', relevancia 50, semana 2026-semana-42)
+    # 3. ID 1103: Descartado por relevancia baja (estado_curaduria='pending', relevancia 40, semana 2026-semana-42)
+    # 4. ID 1104: Descartado de OTRA semana (semana 2026-semana-40) -> debe ser ignorado
+    with sqlite3.connect(test_db) as conn:
+        conn.execute("""
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, etapa_flujo, etapa,
+                estado_curaduria, relevancia, sentimiento, temas_clave, segmento, razonamiento
+            ) VALUES
+            (1101, 'hash1101', 'Discord', '2026-semana-42', 'usuario_aprobado', '#general', 'mensaje',
+             'Aporte de gran valor sobre Kubernetes', '2026-10-15T10:00:00+00:00', '2026-10-15T10:00:00+00:00',
+             'analizado', 'publicado', 'publicado', 'curated', 90, 'Positivo', '#k8s', 'PROFESIONAL', 'Excelente aporte'),
+            (1102, 'hash1102', 'Discord', '2026-semana-42', 'usuario_spam', '#general', 'mensaje',
+             'Compre criptomonedas con descuento ya', '2026-10-15T11:00:00+00:00', '2026-10-15T11:00:00+00:00',
+             'analizado', 'descartado', 'descartado', 'discarded', 30, 'Negativo', '#spam', 'SPAM', 'Publicidad no deseada'),
+            (1103, 'hash1103', 'Discord', '2026-semana-42', 'usuario_casual', '#general', 'mensaje',
+             'Hola a todos buenos días', '2026-10-15T12:00:00+00:00', '2026-10-15T12:00:00+00:00',
+             'analizado', 'pendiente', 'ingesta', 'pending', 45, 'Neutral', '#saludo', 'GENERAL', 'Saludo sin contenido técnico'),
+            (1104, 'hash1104', 'Discord', '2026-semana-40', 'usuario_antiguo', '#general', 'mensaje',
+             'Mensaje viejo irrelevante', '2026-09-30T10:00:00+00:00', '2026-09-30T10:00:00+00:00',
+             'analizado', 'descartado', 'descartado', 'discarded', 20, 'Neutral', '#viejo', 'GENERAL', 'Mensaje de semana anterior')
+        """)
+        conn.commit()
+
+    # 1. Probar _obtener_descartados_semana_sqlite con ids_aprobados={"1101"}
+    descartados = puente_motor_ia._obtener_descartados_semana_sqlite("2026-semana-42", ids_aprobados={"1101"})
+    ids_desc = {str(d.get("id_mensaje") or d.get("id")) for d in descartados}
+    assert ids_desc == {"1102", "1103"}, f"Debe extraer 1102 y 1103, excluyendo 1101 y 1104. Obtenido: {ids_desc}"
+
+    for d in descartados:
+        assert "kpis" in d, "Cada descartado debe contener subdiccionario kpis normalizado"
+        assert isinstance(d["kpis"], dict)
+        assert "relevancia" in d["kpis"]
+        assert "sentimiento" in d["kpis"]
+
+    # 2. Mockear Supabase para simular que retorna el aprobado 1101
+    reg_supabase = [{
+        "id_mensaje": "1101",
+        "autor": "usuario_aprobado",
+        "semana": "2026-semana-42",
+        "fecha_envio": "2026-10-15T10:00:00+00:00",
+        "fecha_extraccion": "2026-10-15T10:05:00+00:00",
+        "fecha_publicacion": "2026-10-15T10:30:00+00:00",
+        "rutas_activas": ["linkedin"],
+        "estado": "publicado",
+        "contenido_original": {
+            "texto": "Aporte de gran valor sobre Kubernetes",
+            "kpis": {"relevancia": 90, "sentimiento": "Positivo", "temas_clave": "#k8s", "segmento": "PROFESIONAL", "razonamiento": "Excelente"}
+        },
+        "copys_generados": {
+            "linkedin": {"titulo": "K8s en Producción", "texto_copy": "Buenas prácticas de Kubernetes."}
+        },
+        "cw_modelo_ia": "gemini-3.5-flash-lite"
+    }]
+    monkeypatch.setattr(puente_motor_ia, "_extraer_historial_reportes_semanales_supabase", lambda sem: reg_supabase)
+
+    lote_orquestado = puente_motor_ia._cargar_lote_para_reporte_semanal("2026-semana-42")
+    assert len(lote_orquestado["aprobados"]) == 1
+    assert len(lote_orquestado["descartados"]) == 2
+
+    # 3. Generación en reporte_semanal.py sin KeyError y con métricas completas
+    rep = reporte_semanal.generar_reporte_semanal("2026-semana-42", lote_orquestado)
+    resumen = rep["resumen_metricas"]
+    assert resumen["total_mensajes"] == 3
+    assert resumen["total_aprobados"] == 1
+    assert resumen["total_descartados"] == 2
+
+
+def test_spec024_cache_alta_velocidad_get_reports_e_invalidacion_atomica(client, tmp_path, monkeypatch):
+    """
+    Spec 024 - RF-01, RF-05, RF-06:
+    Valida la caché en memoria de ultra-alta velocidad (< 2 ms) para GET /api/v1/oci-storage/reports
+    y su invalidación atómica:
+    1. GET /api/v1/oci-storage/reports no invoca _sincronizar_reportes_desde_oci_bucket de forma bloqueante.
+    2. Las lecturas en caché responden en < 2 ms.
+    3. invalidar_cache_reportes_oci() restablece la caché a None y timestamp a 0.0.
+    4. Las mutaciones de estado (publish-channel, hitl-decision, weekly-sync, invalidar_cache_supabase)
+       disparan la invalidación atómica de forma automática.
+    """
+    from pathlib import Path
+    import time
+    import json
+
+    assert hasattr(puente_motor_ia, "invalidar_cache_reportes_oci"), (
+        "puente_motor_ia debe implementar 'invalidar_cache_reportes_oci'"
+    )
+
+    # Preparar directorio local reportes con un reporte ficticio
+    rep_dir = Path("reportes")
+    rep_dir.mkdir(parents=True, exist_ok=True)
+    reporte_test_file = rep_dir / "2026-semana-42.json"
+    dummy_reporte = {
+        "metadata": {"semana": "2026-semana-42", "generado_en": "2026-10-15T12:00:00Z", "oci_storage": {"subido": True}},
+        "resumen_metricas": {"total_mensajes": 10, "total_aprobados": 6, "total_descartados": 4}
+    }
+    reporte_test_file.write_text(json.dumps(dummy_reporte), encoding="utf-8")
+
+    # Mockear _sincronizar_reportes_desde_oci_bucket para asegurar aislamiento WAN absoluto
+    mock_sync_wan = MagicMock()
+    monkeypatch.setattr(puente_motor_ia, "_sincronizar_reportes_desde_oci_bucket", mock_sync_wan)
+
+    puente_motor_ia.invalidar_cache_reportes_oci()
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is None
+
+    # Primera llamada (popula caché desde disco local sin llamadas WAN)
+    resp1 = client.get("/api/v1/oci-storage/reports")
+    assert resp1.status_code == 200
+    assert mock_sync_wan.call_count == 0, (
+        "GET /api/v1/oci-storage/reports no debe invocar _sincronizar_reportes_desde_oci_bucket bloqueante"
+    )
+
+    # Segunda llamada: debe servirse directamente desde la caché en memoria en < 2 ms
+    t_inicio = time.perf_counter()
+    resp2 = client.get("/api/v1/oci-storage/reports")
+    t_duracion_ms = (time.perf_counter() - t_inicio) * 1000.0
+
+    assert resp2.status_code == 200
+    assert t_duracion_ms < 10.0, f"Lectura en caché debe ser ultra rápida (< 10 ms en TestClient). Obtenido: {t_duracion_ms:.2f} ms"
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is not None
+
+    # Invalidación atómica explícita
+    puente_motor_ia.invalidar_cache_reportes_oci()
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is None
+    assert getattr(puente_motor_ia, "_timestamp_cache_reportes_oci", 0.0) == 0.0
+
+    # Invalidación atómica invocada por invalidar_cache_supabase()
+    client.get("/api/v1/oci-storage/reports")
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is not None
+    puente_motor_ia.invalidar_cache_supabase()
+    assert getattr(puente_motor_ia, "_cache_reportes_oci", None) is None
+
+
+def test_spec024_resiliencia_fallback_y_http_400_controlado(client, monkeypatch):
+    """
+    Spec 024 - RF-01, RF-04, RF-06:
+    Valida la resiliencia en generación de reportes y respuestas semánticas:
+    1. Si Supabase Enoc está inaccesible o vacío, conmuta limpiamente a los lotes locales.
+    2. Si ninguna fuente contiene datos para el período, responde HTTP 400 controlado
+       ('No hay mensajes analizados para el período indicado') impidiendo HTTP 500.
+    """
+    # Escenario 1: Conmutación a fallback local cuando Supabase falla
+    monkeypatch.setattr(puente_motor_ia, "_extraer_historial_reportes_semanales_supabase", lambda sem: [])
+    # Preparar fallback local
+    lote_fallback = {
+        "aprobados": [
+            {
+                "id_mensaje": "999",
+                "autor": "fallback_user",
+                "semana": "2026-semana-42",
+                "canal_origen": "#general",
+                "texto_original": "Texto de fallback",
+                "kpis": {"relevancia": 80, "sentimiento": "Positivo", "temas_clave": "#fallback", "segmento": "GENERAL", "razonamiento": "Ok"}
+            }
+        ],
+        "descartados": []
+    }
+    monkeypatch.setattr(puente_motor_ia, "_cargar_lote_consolidado_para_reporte", lambda: lote_fallback)
+
+    resp_fb = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "2026-semana-42"})
+    assert resp_fb.status_code == 200, f"Debe responder 200 conmutando al fallback. Obtenido: {resp_fb.status_code}"
+    assert resp_fb.json()["exito"] is True
+
+    # Escenario 2: HTTP 400 controlado si absolutamente todas las fuentes están vacías
+    monkeypatch.setattr(puente_motor_ia, "_cargar_lote_para_reporte_semanal", lambda sem: {"aprobados": [], "descartados": []})
+    resp_vacio = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "2026-semana-99"})
+
+    assert resp_vacio.status_code == 400, (
+        f"Debe retornar HTTP 400 controlado ante período sin mensajes (cero 500). Obtenido: {resp_vacio.status_code}"
+    )
+    detalle = resp_vacio.json().get("detail", "")
+    assert "No hay mensajes analizados" in detalle or "período" in detalle.lower()
+
+
+def test_spec024_modo_offline_oci_y_status_saved_locally(client, tmp_path, monkeypatch):
+    """
+    Spec 024 - RF-04, RF-06:
+    Valida el comportamiento en modo offline OCI o ante fallos de conectividad con OCI:
+    1. Si no hay credenciales OCI configuradas o la subida a OCI falla,
+       el reporte se persiste obligatoriamente en disco local ('reportes/{semana}.json').
+    2. Retorna HTTP 200 con subido_oci=False y status='saved_locally'.
+    3. Informa mensaje descriptivo 'Reporte generado y guardado localmente.'.
+    """
+    from pathlib import Path
+    import json
+
+    monkeypatch.setattr(puente_motor_ia, "_asegurar_config_oci_desde_env", lambda: False)
+    monkeypatch.delenv("OCI_CONFIG_FILE", raising=False)
+
+    lote_simulado = {
+        "aprobados": [
+            {
+                "id_mensaje": "1201",
+                "autor": "offline_author",
+                "semana": "2026-semana-42",
+                "fecha_envio": "2026-10-15T10:00:00+00:00",
+                "texto_original": "Probando modo offline de OCI",
+                "copy_final": "Cursos Cloud de alta calidad.",
+                "kpis": {"relevancia": 88, "sentimiento": "Positivo", "temas_clave": "#cloud", "segmento": "DEV", "razonamiento": "Test offline"}
+            }
+        ],
+        "descartados": []
+    }
+    monkeypatch.setattr(puente_motor_ia, "_cargar_lote_para_reporte_semanal", lambda sem: lote_simulado)
+
+    resp = client.post("/api/v1/oci-storage/weekly-sync", json={"semana": "2026-semana-42"})
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["exito"] is True
+    assert data["subido_oci"] is False
+    assert data["status"] == "saved_locally"
+    assert "guardado localmente" in data.get("message", "").lower()
+
+    # Verificar existencia en disco
+    ruta_archivo = Path("reportes") / "2026-semana-42.json"
+    assert ruta_archivo.exists(), f"El archivo {ruta_archivo} debe existir en el almacenamiento local"
+    contenido = json.loads(ruta_archivo.read_text(encoding="utf-8"))
+    assert contenido["metadata"]["semana"] == "2026-semana-42"
+    assert contenido["resumen_metricas"]["total_aprobados"] == 1

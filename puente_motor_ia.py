@@ -234,6 +234,20 @@ _timestamp_cache_supabase: float = 0.0
 _ultimo_sync_sqlite: float = 0.0
 TTL_CACHE_SUPABASE: float = 300.0  # Ventana de 5 min para acelerar navegación (se invalida de inmediato en mutaciones)
 
+# Spec 024 - RF-01, RF-05: Variables globales de caché de alta velocidad (< 2 ms) para reportes OCI
+_cache_reportes_oci: list[dict] | dict | None = None
+_cache_reportes_oci_bytes: bytes | None = None
+_timestamp_cache_reportes_oci: float = 0.0
+TTL_CACHE_REPORTES_OCI: float = 300.0  # 5 minutos / 300 segundos
+
+
+def invalidar_cache_reportes_oci():
+    """Invalida de forma atómica la caché en memoria de reportes OCI."""
+    global _cache_reportes_oci, _cache_reportes_oci_bytes, _timestamp_cache_reportes_oci
+    _cache_reportes_oci = None
+    _cache_reportes_oci_bytes = None
+    _timestamp_cache_reportes_oci = 0.0
+
 
 def invalidar_cache_supabase():
     """Invalida la caché de Supabase tras mutaciones para forzar actualización inmediata."""
@@ -241,6 +255,7 @@ def invalidar_cache_supabase():
     _timestamp_cache_supabase = 0.0
     _ultimo_sync_sqlite = 0.0
     _cache_datos_supabase = None
+    invalidar_cache_reportes_oci()
 
 
 def obtener_datos_supabase(forzar: bool = False) -> dict | None:
@@ -2136,6 +2151,371 @@ def _sanitizar_item_reporte(item: dict) -> dict:
     return limpio
 
 
+def _deserializar_json_defensivo(valor: Any) -> Any:
+    """
+    Spec 024 - RF-01, RF-03:
+    Deserializa de forma segura un valor que puede ser dict, list, string JSON o None.
+    Si es dict o list, lo retorna directamente.
+    Si es str, intenta json.loads(valor). Si falla o está vacío, retorna {}.
+    Si es None o de cualquier otro tipo, retorna {}.
+    """
+    if isinstance(valor, (dict, list)):
+        return valor
+    if isinstance(valor, str):
+        v = valor.strip()
+        if not v:
+            return {}
+        try:
+            return json.loads(v)
+        except Exception:
+            return {}
+    return {}
+
+
+def _extraer_historial_reportes_semanales_supabase(semana_objetivo: str) -> list[dict]:
+    """
+    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Extrae y deserializa defensivamente los registros de public.historial_reportes_semanales
+    en Supabase Enoc para una semana dada.
+    Usa psycopg.connect con connect_timeout=4.
+    Construye el subdiccionario normalizado 'kpis' con relevancia, sentimiento, temas_clave,
+    segmento y razonamiento. Garantiza que id_mensaje sea siempre str.
+    Ante cualquier fallo o timeout de red, registra logger.warning y retorna [] defensivamente.
+    """
+    url_supabase = os.environ.get("SUPABASE_DB_URL") or resolver_url_base_datos()
+    if not url_supabase:
+        logger.warning("Fallo al consultar historial_reportes_semanales en Supabase Enoc: URL no configurada")
+        return []
+
+    try:
+        import psycopg
+    except ImportError:
+        psycopg = None
+
+    if psycopg is None:
+        logger.warning("Fallo al consultar historial_reportes_semanales en Supabase Enoc: driver psycopg no disponible")
+        return []
+
+    semana_limpia = str(semana_objetivo or "").strip()
+    m = re.search(r"(\d+)$", semana_limpia)
+    if m:
+        num_sem = int(m.group(1))
+        patron_semana = f"%semana%{num_sem:02d}%"
+    else:
+        patron_semana = f"%{semana_limpia}%"
+
+    def _fmt_fecha(f: Any) -> str | None:
+        if f is None:
+            return None
+        if isinstance(f, datetime):
+            return a_utc_iso(f)
+        if hasattr(f, "isoformat"):
+            return f.isoformat()
+        return str(f)
+
+    items = []
+    try:
+        with psycopg.connect(url_supabase, connect_timeout=4) as conn:
+            with conn.cursor() as cur:
+                sql = """
+                SELECT id_mensaje, autor, semana, fecha_envio, fecha_extraccion, fecha_publicacion,
+                       rutas_activas, estado, contenido_original, copys_generados, cw_modelo_ia
+                FROM public.historial_reportes_semanales
+                WHERE semana = %s OR semana ILIKE %s
+                ORDER BY fecha_publicacion ASC, id ASC
+                """
+                cur.execute(sql, (semana_limpia, patron_semana))
+                filas = cur.fetchall() or []
+                for row in filas:
+                    if isinstance(row, dict):
+                        id_msg_val = row.get("id_mensaje") or row.get("id")
+                        autor_val = row.get("autor")
+                        semana_val = row.get("semana")
+                        fecha_envio_val = row.get("fecha_envio")
+                        fecha_extraccion_val = row.get("fecha_extraccion")
+                        fecha_publicacion_val = row.get("fecha_publicacion")
+                        rutas_activas_val = row.get("rutas_activas")
+                        estado_val = row.get("estado")
+                        raw_cont_orig = row.get("contenido_original")
+                        raw_copys_gen = row.get("copys_generados")
+                        cw_modelo_ia_val = row.get("cw_modelo_ia")
+                    elif isinstance(row, (tuple, list)):
+                        if len(row) == 11:
+                            (id_msg_val, autor_val, semana_val, fecha_envio_val, fecha_extraccion_val,
+                             fecha_publicacion_val, rutas_activas_val, estado_val, raw_cont_orig,
+                             raw_copys_gen, cw_modelo_ia_val) = row
+                        elif len(row) >= 12:
+                            (_pk_id, id_msg_val, autor_val, semana_val, fecha_envio_val, fecha_extraccion_val,
+                             fecha_publicacion_val, rutas_activas_val, estado_val, raw_cont_orig,
+                             raw_copys_gen, cw_modelo_ia_val) = row[:12]
+                        else:
+                            continue
+                    else:
+                        continue
+
+                    id_msg_str = str(id_msg_val) if id_msg_val is not None else ""
+                    cont_orig = _deserializar_json_defensivo(raw_cont_orig)
+                    copys_gen = _deserializar_json_defensivo(raw_copys_gen)
+
+                    if isinstance(rutas_activas_val, list):
+                        rutas_limpias = list(rutas_activas_val)
+                    elif isinstance(rutas_activas_val, str):
+                        try:
+                            rutas_parsed = json.loads(rutas_activas_val)
+                            rutas_limpias = list(rutas_parsed) if isinstance(rutas_parsed, list) else [rutas_activas_val]
+                        except Exception:
+                            rutas_limpias = [r.strip() for r in rutas_activas_val.split(",") if r.strip()]
+                    else:
+                        rutas_limpias = []
+
+                    kpis_src = {}
+                    if isinstance(cont_orig, dict):
+                        if isinstance(cont_orig.get("kpis"), dict):
+                            kpis_src = cont_orig["kpis"]
+                        else:
+                            kpis_src = cont_orig
+
+                    try:
+                        rel_val = int(kpis_src.get("relevancia") or 0)
+                    except Exception:
+                        rel_val = 0
+
+                    sent_val = str(kpis_src.get("sentimiento") or "Neutral")
+                    temas_val = kpis_src.get("temas_clave")
+                    if temas_val is None:
+                        temas_val = "N/A"
+                    elif isinstance(temas_val, list):
+                        temas_val = [str(x) for x in temas_val if x is not None]
+                    elif isinstance(temas_val, str):
+                        temas_val = temas_val.strip() or "N/A"
+
+                    seg_val = str(kpis_src.get("segmento") or "General")
+                    raz_val = str(kpis_src.get("razonamiento") or "")
+
+                    kpis_norm = {
+                        "relevancia": rel_val,
+                        "sentimiento": sent_val,
+                        "temas_clave": temas_val,
+                        "segmento": seg_val,
+                        "razonamiento": raz_val,
+                    }
+
+                    if isinstance(cont_orig, dict):
+                        texto_orig = cont_orig.get("texto") or cont_orig.get("texto_original") or ""
+                        canal_orig = cont_orig.get("canal") or "#general"
+                        comunidad_orig = cont_orig.get("comunidad") or "Discord"
+                    elif isinstance(cont_orig, str):
+                        texto_orig = cont_orig
+                        canal_orig = "#general"
+                        comunidad_orig = "Discord"
+                    else:
+                        texto_orig = ""
+                        canal_orig = "#general"
+                        comunidad_orig = "Discord"
+
+                    item = {
+                        "id": id_msg_val,
+                        "id_mensaje": id_msg_str,
+                        "autor": str(autor_val or "Comunidad"),
+                        "semana": str(semana_val or semana_objetivo),
+                        "fecha_envio": _fmt_fecha(fecha_envio_val),
+                        "fecha_extraccion": _fmt_fecha(fecha_extraccion_val),
+                        "fecha_publicacion": _fmt_fecha(fecha_publicacion_val),
+                        "rutas_activas": rutas_limpias,
+                        "estado": str(estado_val or "publicado"),
+                        "contenido_original": cont_orig,
+                        "texto_original": texto_orig,
+                        "canal_origen": canal_orig,
+                        "comunidad": comunidad_orig,
+                        "copys_generados": copys_gen if isinstance(copys_gen, dict) else {},
+                        "cw_modelo_ia": str(cw_modelo_ia_val or "gemini-3.5-flash-lite"),
+                        "kpis": kpis_norm,
+                    }
+                    items.append(item)
+        return items
+    except Exception as e:
+        logger.warning("Fallo al consultar historial_reportes_semanales en Supabase Enoc: %s", e)
+        return []
+
+
+def _formatear_copy_final(copys_generados: dict, texto_original: str = "") -> str:
+    """
+    Spec 024 - RF-02, RF-06:
+    Evalúa la prelación estricta por canal: 1) 'linkedin', 2) 'discord', 3) 'x'.
+    Extrae el texto del copy del canal seleccionado (soportando dict con claves 'texto_copy', 'contenido', 'texto' o string directo).
+    Extrae el 'titulo' si está presente.
+    Si hay título: retorna f"{titulo.strip()}\n\n{texto_copy.strip()}".strip().
+    Si no hay título: retorna texto_copy.strip().
+    Si ningún canal contiene un copy válido: utiliza como respaldo texto_original.strip().
+    Prohíbe categóricamente cualquier texto provisional como 'Pendiente de redacción por Enoc...'.
+    """
+    if not isinstance(copys_generados, dict):
+        orig = str(texto_original or "").strip()
+        if "pendiente de redacción por enoc" in orig.lower() or "pendiente de redaccion por enoc" in orig.lower():
+            return ""
+        return orig
+
+    canales_prelacion = ("linkedin", "discord", "x")
+    for canal in canales_prelacion:
+        if canal not in copys_generados:
+            continue
+        data_canal = copys_generados[canal]
+        if not data_canal:
+            continue
+        titulo = ""
+        texto_copy = ""
+
+        if isinstance(data_canal, dict):
+            titulo = str(data_canal.get("titulo") or "").strip()
+            texto_copy = str(
+                data_canal.get("texto_copy")
+                or data_canal.get("contenido")
+                or data_canal.get("texto")
+                or ""
+            ).strip()
+        elif isinstance(data_canal, str):
+            texto_copy = data_canal.strip()
+
+        if not texto_copy:
+            continue
+        if "pendiente de redacción por enoc" in texto_copy.lower() or "pendiente de redaccion por enoc" in texto_copy.lower():
+            continue
+
+        if titulo and "pendiente de redacción por enoc" not in titulo.lower() and "pendiente de redaccion por enoc" not in titulo.lower():
+            return f"{titulo}\n\n{texto_copy}".strip()
+        return texto_copy
+
+    orig = str(texto_original or "").strip()
+    if "pendiente de redacción por enoc" in orig.lower() or "pendiente de redaccion por enoc" in orig.lower():
+        return ""
+    return orig
+
+
+def _consolidar_aprobados_historial(registros_crudos: list[dict]) -> list[dict]:
+    """
+    Spec 024 - RF-02, RF-06:
+    Agrupa registros por id_mensaje deduplicando publicaciones múltiples:
+    - Agrupa registros por id_mensaje.
+    - Si un mensaje posee múltiples filas por despachos independientes: fusiona rutas_activas
+      (lista única ordenada), combina copys_generados y adopta la fecha_publicacion más reciente.
+    - Inyecta el campo copy_final calculado según la prelación y preserva el diccionario multicanal
+      completo en copys_generados.
+    - Asegura que contenido_original esté presente y que el subdiccionario kpis esté correctamente estructurado.
+    - Sanitiza cada item con _sanitizar_item_reporte.
+    """
+    if not registros_crudos:
+        return []
+
+    grupos_por_id: dict[str, list[dict]] = {}
+    for reg in registros_crudos:
+        if not isinstance(reg, dict):
+            continue
+        id_msg = str(reg.get("id_mensaje") or reg.get("id") or "").strip()
+        if not id_msg:
+            continue
+        if id_msg not in grupos_por_id:
+            grupos_por_id[id_msg] = []
+        grupos_por_id[id_msg].append(reg)
+
+    def _parse_dt(val: Any) -> datetime | None:
+        if not val:
+            return None
+        if isinstance(val, datetime):
+            return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+        try:
+            dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    items_consolidados = []
+
+    for id_msg, filas in grupos_por_id.items():
+        base = dict(filas[0])
+        base["id_mensaje"] = id_msg
+
+        # Consolidar rutas_activas (lista única ordenada)
+        rutas_set = set()
+        for f in filas:
+            r_act = f.get("rutas_activas") or []
+            if isinstance(r_act, list):
+                for r in r_act:
+                    if r and str(r).strip():
+                        rutas_set.add(str(r).strip())
+            elif isinstance(r_act, str):
+                try:
+                    parsed = json.loads(r_act)
+                    if isinstance(parsed, list):
+                        for r in parsed:
+                            if r and str(r).strip():
+                                rutas_set.add(str(r).strip())
+                    else:
+                        rutas_set.add(r_act.strip())
+                except Exception:
+                    for r in r_act.split(","):
+                        if r.strip():
+                            rutas_set.add(r.strip())
+        base["rutas_activas"] = sorted(list(rutas_set))
+
+        # Combinar copys_generados
+        copys_combinados = {}
+        for f in filas:
+            copys = f.get("copys_generados") or {}
+            if isinstance(copys, dict):
+                copys_combinados.update(copys)
+        base["copys_generados"] = copys_combinados
+
+        # Adoptar la fecha_publicacion más reciente
+        fecha_pub_max_str = base.get("fecha_publicacion")
+        dt_pub_max = _parse_dt(fecha_pub_max_str)
+        for f in filas[1:]:
+            f_pub = f.get("fecha_publicacion")
+            dt_f_pub = _parse_dt(f_pub)
+            if dt_f_pub is not None:
+                if dt_pub_max is None or dt_f_pub > dt_pub_max:
+                    dt_pub_max = dt_f_pub
+                    fecha_pub_max_str = f_pub
+            elif f_pub and not fecha_pub_max_str:
+                fecha_pub_max_str = f_pub
+        base["fecha_publicacion"] = fecha_pub_max_str
+
+        # Extraer texto_original
+        texto_orig = base.get("texto_original") or ""
+        if not texto_orig:
+            cont = base.get("contenido_original")
+            if isinstance(cont, dict):
+                texto_orig = cont.get("texto") or cont.get("texto_original") or ""
+            elif isinstance(cont, str):
+                texto_orig = cont
+        base["texto_original"] = texto_orig
+
+        # Inyectar copy_final por prelación
+        copy_final = _formatear_copy_final(copys_combinados, texto_original=texto_orig)
+        base["copy_final"] = copy_final
+
+        # Asegurar subdiccionario kpis antes de sanitizar
+        kpis_base = base.get("kpis")
+        if not isinstance(kpis_base, dict) or not kpis_base:
+            cont = base.get("contenido_original")
+            if isinstance(cont, dict):
+                if isinstance(cont.get("kpis"), dict):
+                    base["kpis"] = dict(cont["kpis"])
+                elif "relevancia" in cont:
+                    base["kpis"] = {
+                        "relevancia": cont.get("relevancia"),
+                        "sentimiento": cont.get("sentimiento"),
+                        "temas_clave": cont.get("temas_clave"),
+                        "segmento": cont.get("segmento"),
+                        "razonamiento": cont.get("razonamiento"),
+                    }
+
+        # Sanitizar cada item con _sanitizar_item_reporte
+        item_sanitizado = _sanitizar_item_reporte(base)
+        items_consolidados.append(item_sanitizado)
+
+    return items_consolidados
+
+
 def _cargar_lote_consolidado_para_reporte() -> dict:
     """Obtiene el lote consolidado de mensajes evaluados desde Supabase, JSON local o SQLite."""
     import json
@@ -2235,6 +2615,13 @@ def _construir_paquete_para_semana(semana_objetivo: str) -> dict:
         fecha_raw = item.get("fecha_envio") or item.get("enviado_en") or item.get("creado_en")
         if fecha_raw:
             try:
+                m_f = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(fecha_raw).strip())
+                if m_f:
+                    from datetime import date as _d_cls
+                    d_obj = _d_cls(int(m_f.group(1)), int(m_f.group(2)), int(m_f.group(3)))
+                    iso = d_obj.isocalendar()
+                    if (iso.year == anio_obj and iso.week == num_obj) or semana_de(d_obj) == num_obj:
+                        return True
                 dt = como_fecha(fecha_raw)
                 iso = dt.isocalendar()
                 if (iso.year == anio_obj and iso.week == num_obj) or semana_de(dt) == num_obj:
@@ -2249,6 +2636,182 @@ def _construir_paquete_para_semana(semana_objetivo: str) -> dict:
     if aprobados_filt or descartados_filt:
         return {"aprobados": aprobados_filt, "descartados": descartados_filt}
     return consolidado
+
+
+def _coincide_semana_registro(reg: dict, semana_objetivo: str) -> bool:
+    """Spec 024: Comprueba si un registro pertenece a la semana objetivo."""
+    import re
+    if not isinstance(reg, dict):
+        return False
+    sem_obj = str(semana_objetivo or "").strip()
+    if not sem_obj:
+        return False
+
+    etiqueta_lower = sem_obj.lower()
+    m = re.fullmatch(r"(\d{4})-semana-(\d{2})", sem_obj)
+    anio_obj = int(m.group(1)) if m else None
+    num_obj = int(m.group(2)) if m else None
+    sufijo_semana = f"semana_{num_obj:02d}" if num_obj is not None else None
+
+    sem_reg = str(reg.get("periodo_referencia") or reg.get("semana") or "").strip().lower()
+
+    if sem_reg and sem_reg not in ("sin dato", "general", "none", "null", ""):
+        if sem_reg == etiqueta_lower:
+            return True
+        if sufijo_semana and sem_reg == sufijo_semana:
+            return True
+
+    fecha_raw = reg.get("enviado_en") or reg.get("creado_en") or reg.get("fecha_envio")
+    if fecha_raw and anio_obj is not None and num_obj is not None:
+        try:
+            m_f = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(fecha_raw).strip())
+            if m_f:
+                from datetime import date as _d_cls
+                d_obj = _d_cls(int(m_f.group(1)), int(m_f.group(2)), int(m_f.group(3)))
+                iso = d_obj.isocalendar()
+                if (iso.year == anio_obj and iso.week == num_obj) or semana_de(d_obj) == num_obj:
+                    return True
+            dt = como_fecha(fecha_raw)
+            iso = dt.isocalendar()
+            if (iso.year == anio_obj and iso.week == num_obj) or semana_de(dt) == num_obj:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def _obtener_descartados_semana_sqlite(semana_objetivo: str, ids_aprobados: set | None = None) -> list[dict]:
+    """
+    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Extrae los registros descartados de la base de datos SQLite local (`communitylab.db`)
+    para la semana objetivo:
+    - Conectar a la base de datos local SQLite (communitylab.db).
+    - Consultar filas de `interacciones` donde `estado_curaduria = 'discarded'`
+      o `(estado_curaduria != 'curated' AND relevancia < 70)`.
+    - Filtrar por la semana objetivo (verificando `periodo_referencia`, `semana` o fecha de envío ISO).
+    - Excluir registros cuyo `id` (convertido a `str`) ya esté presente en `ids_aprobados`.
+    - Construir para cada descarte su estructura canónica con el subdiccionario `kpis` normalizado
+      mediante `_sanitizar_item_reporte`.
+    """
+    ids_aprobados_set = {str(x) for x in (ids_aprobados or set()) if x is not None}
+    descartados = []
+
+    try:
+        _asegurar_esquema_sqlite()
+        with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM interacciones")
+            filas = cursor.fetchall()
+            for r in filas:
+                d = dict(r)
+                id_str = str(d.get("id"))
+                if id_str in ids_aprobados_set:
+                    continue
+
+                st_cur = str(d.get("estado_curaduria") or "").strip().lower()
+                try:
+                    rel = int(d.get("relevancia") or 0)
+                except Exception:
+                    rel = 0
+
+                es_descarte = (st_cur == "discarded") or (st_cur != "curated" and rel < 70)
+                if not es_descarte:
+                    continue
+
+                if not _coincide_semana_registro(d, semana_objetivo):
+                    continue
+
+                item = {
+                    "id_mensaje": id_str,
+                    "id": d.get("id"),
+                    "autor": d.get("autor") or "Usuario",
+                    "canal_origen": d.get("canal") or "#general",
+                    "comunidad": d.get("origen_comunidad") or "Discord",
+                    "semana": d.get("periodo_referencia") or semana_objetivo,
+                    "fecha_envio": d.get("enviado_en") or d.get("creado_en"),
+                    "texto_original": d.get("texto") or "",
+                    "estado": d.get("estado") or "descartado",
+                    "estado_curaduria": d.get("estado_curaduria") or "discarded",
+                    "kpis": {
+                        "relevancia": rel,
+                        "sentimiento": d.get("sentimiento") or "Neutral",
+                        "temas_clave": d.get("temas_clave") or "N/A",
+                        "segmento": d.get("segmento") or "General",
+                        "razonamiento": d.get("razonamiento") or "",
+                    },
+                }
+                descartados.append(_sanitizar_item_reporte(item))
+    except Exception as e:
+        logger.warning(f"Error consultando descartados en SQLite para {semana_objetivo}: {e}")
+        return []
+
+    return descartados
+
+
+def _cargar_lote_para_reporte_semanal(semana_objetivo: str) -> dict:
+    """
+    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Orquesta la carga del lote para el reporte semanal:
+    1. Consulta Supabase Enoc vía _extraer_historial_reportes_semanales_supabase(semana_objetivo).
+    2. Si existen aprobados en Supabase Enoc:
+       - Consolidar con _consolidar_aprobados_historial(crudos).
+       - Extraer ids_aprobados = {str(i.get("id_mensaje") or i.get("id")) for i in aprobados}.
+       - Obtener descartados de SQLite local vía _obtener_descartados_semana_sqlite(semana_objetivo, ids_aprobados).
+       - Retornar {"aprobados": aprobados, "descartados": descartados}.
+    3. Si Supabase Enoc falla o está vacío:
+       - Conmutar de forma transparente al fallback local _cargar_lote_consolidado_para_reporte()
+         filtrando por semana mediante _construir_paquete_para_semana(semana_objetivo).
+    4. Si tras agotar todas las fuentes no hay mensajes para la semana:
+       - Retornar {"aprobados": [], "descartados": []}.
+    """
+    crudos = []
+    try:
+        crudos = _extraer_historial_reportes_semanales_supabase(semana_objetivo)
+    except Exception as e:
+        logger.warning(f"Error consultando Supabase Enoc para semana {semana_objetivo}: {e}")
+        crudos = []
+
+    if crudos:
+        aprobados = _consolidar_aprobados_historial(crudos)
+        if aprobados:
+            ids_aprobados = {
+                str(i.get("id_mensaje") or i.get("id"))
+                for i in aprobados
+                if (i.get("id_mensaje") is not None or i.get("id") is not None)
+            }
+            descartados = _obtener_descartados_semana_sqlite(semana_objetivo, ids_aprobados)
+            return {
+                "aprobados": aprobados,
+                "descartados": descartados,
+            }
+
+    # Fallback transparente local
+    try:
+        paquete_fb = _construir_paquete_para_semana(semana_objetivo)
+        if isinstance(paquete_fb, dict):
+            aprobados_raw = paquete_fb.get("aprobados") or []
+            descartados_raw = paquete_fb.get("descartados") or []
+
+            aprobados_fb = [
+                _sanitizar_item_reporte(i)
+                for i in aprobados_raw
+                if isinstance(i, dict) and _coincide_semana_registro(i, semana_objetivo)
+            ]
+            descartados_fb = [
+                _sanitizar_item_reporte(i)
+                for i in descartados_raw
+                if isinstance(i, dict) and _coincide_semana_registro(i, semana_objetivo)
+            ]
+            if aprobados_fb or descartados_fb:
+                return {
+                    "aprobados": aprobados_fb,
+                    "descartados": descartados_fb,
+                }
+    except Exception as e:
+        logger.warning(f"Error en fallback local de reporte semanal para {semana_objetivo}: {e}")
+
+    return {"aprobados": [], "descartados": []}
 
 
 @app.get("/api/v1/oci-storage/status")
@@ -2299,7 +2862,7 @@ async def oci_weekly_sync_v1(payload: dict = None):
     import json
     import reporte_semanal
 
-    _asegurar_config_oci_desde_env()
+    oci_configurado = bool(_asegurar_config_oci_desde_env())
     p = payload or {}
     semana_nombre = p.get("semana")
     if semana_nombre:
@@ -2315,12 +2878,29 @@ async def oci_weekly_sync_v1(payload: dict = None):
         lunes = FECHA_INICIO + timedelta(days=(semana_num - 1) * 7)
         semana_nombre = f"{lunes.year}-semana-{semana_num:02d}"
 
-    paquete = _construir_paquete_para_semana(semana_nombre)
+    paquete = _cargar_lote_para_reporte_semanal(semana_nombre)
+
+    if not paquete.get("aprobados") and not paquete.get("descartados"):
+        raise HTTPException(
+            status_code=400,
+            detail="No hay mensajes analizados para el período indicado."
+        )
 
     try:
-        reporte = reporte_semanal.generar_reporte_semanal(semana_nombre, paquete)
+        if not oci_configurado:
+            orig_subir = getattr(reporte_semanal, "subir_json_a_oci", None)
+            try:
+                reporte_semanal.subir_json_a_oci = lambda *args, **kwargs: False
+                reporte = reporte_semanal.generar_reporte_semanal(semana_nombre, paquete)
+            finally:
+                if orig_subir is not None:
+                    reporte_semanal.subir_json_a_oci = orig_subir
+        else:
+            reporte = reporte_semanal.generar_reporte_semanal(semana_nombre, paquete)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al generar reporte semanal: {e}")
 
@@ -2328,17 +2908,21 @@ async def oci_weekly_sync_v1(payload: dict = None):
     oci_meta = meta.get("oci_storage", {})
     resumen = reporte.get("resumen_metricas", {})
     semana_res = meta.get("semana") or semana_nombre
-    subido_oci = bool(oci_meta.get("subido", False))
+    subido_oci = bool(oci_meta.get("subido", False)) if oci_configurado else False
+    if not oci_configurado and "oci_storage" in meta:
+        meta["oci_storage"]["subido"] = False
     bucket = oci_meta.get("bucket", os.getenv("OCI_BUCKET_NAME", "communitylab-assets"))
     ruta_oci = oci_meta.get("ruta", f"activos/{semana_res}/paquete-distribucion.json")
 
+    os.makedirs("reportes", exist_ok=True)
     ruta_local = Path("reportes") / f"{semana_res}.json"
-    if ruta_local.exists():
-        try:
-            with open(ruta_local, "w", encoding="utf-8") as rf:
-                json.dump(reporte, rf, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+    try:
+        with open(ruta_local, "w", encoding="utf-8") as rf:
+            json.dump(reporte, rf, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"No se pudo escribir reporte local en {ruta_local}: {e}")
+
+    invalidar_cache_reportes_oci()
 
     return {
         "exito": True,
@@ -2427,14 +3011,24 @@ def _sincronizar_reportes_desde_oci_bucket(rep_dir: Path) -> None:
 @app.get("/api/v1/oci-storage/reports")
 @app.get("/api/v1/oci-storage/reports/")
 async def oci_reports_v1():
-    """Lista el historial de reportes semanales generados en reportes/*.json y sincronizados desde OCI."""
+    """
+    Spec 024 - RF-01, RF-05:
+    Lista el historial de reportes semanales desde memoria (< 2 ms) o disco local 'reportes/*.json'.
+    Erradica llamadas de red bloqueantes WAN durante lecturas GET.
+    """
+    global _cache_reportes_oci, _cache_reportes_oci_bytes, _timestamp_cache_reportes_oci
+    from starlette.responses import Response
     import json
+    ahora = time.time()
+    if _cache_reportes_oci is not None and (ahora - _timestamp_cache_reportes_oci < TTL_CACHE_REPORTES_OCI):
+        if _cache_reportes_oci_bytes is not None:
+            return Response(content=_cache_reportes_oci_bytes, media_type="application/json")
+        return _cache_reportes_oci
+
     import reporte_semanal
 
     rep_dir = Path("reportes")
     rep_dir.mkdir(parents=True, exist_ok=True)
-
-    _sincronizar_reportes_desde_oci_bucket(rep_dir)
 
     def _leer_reportes_disco() -> list[dict]:
         items = []
@@ -2483,10 +3077,14 @@ async def oci_reports_v1():
             except Exception:
                 pass
 
-    return {
+    res = {
         "reports": reports,
         "total": len(reports),
     }
+    _cache_reportes_oci = res
+    _cache_reportes_oci_bytes = json.dumps(res, ensure_ascii=False).encode("utf-8")
+    _timestamp_cache_reportes_oci = time.time()
+    return Response(content=_cache_reportes_oci_bytes, media_type="application/json")
 
 
 # ==============================================================================
@@ -6180,6 +6778,8 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
             )
             despachar_replicacion_historial_reportes(reg_consolidado)
 
+        invalidar_cache_reportes_oci()
+
         return {
             "exito": True,
             "decision": "aprobar",
@@ -6217,6 +6817,9 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
             actualizar_estado_lote(id_msg, "desaprobado")
         except Exception:
             pass
+
+        invalidar_cache_supabase()
+        invalidar_cache_reportes_oci()
 
         return {
             "exito": True,
@@ -6302,6 +6905,7 @@ def api_mototradis_publish_channel(req: MototradisPublishChannelRequest):
             )
             conn.commit()
         invalidar_cache_supabase()
+        invalidar_cache_reportes_oci()
 
         # Spec 023 - RF-01, RF-05: Despachar replicación asíncrona a public.historial_reportes_semanales
         reg_historial = construir_registro_historial_reporte(
