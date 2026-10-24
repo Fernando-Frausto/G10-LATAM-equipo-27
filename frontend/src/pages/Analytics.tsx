@@ -1,8 +1,11 @@
 import {
     AlertTriangle,
     ChevronRight,
+    Compass,
+    Hash,
     Lightbulb,
     MessageSquare,
+    Smile,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -84,11 +87,13 @@ function Analytics() {
                     `${MOTOR_API_URL}/api/community/analytics`,
                     { signal: controller.signal },
                 )
+                if (controller.signal.aborted) return
                 if (!response.ok) {
                     throw new Error(`Analytics HTTP ${response.status}`)
                 }
                 const data =
                     (await response.json()) as MotorAnalyticsResponse
+                if (controller.signal.aborted) return
                 setMotorAnalytics(data)
                 setAnalyticsError(null)
             } catch (error) {
@@ -123,9 +128,11 @@ function Analytics() {
                     `${MOTOR_API_URL}/api/community/messages?limit=500`,
                     { signal: controller.signal },
                 )
+                if (controller.signal.aborted) return
                 if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
                 const data = (await response.json()) as CommunityMessagesResponse
+                if (controller.signal.aborted) return
 
                 const messages = data.messages ?? []
                 const analyzed = messages.filter(
@@ -162,6 +169,7 @@ function Analytics() {
                         (a, b) => b[1] - a[1],
                     )[0] ?? null
 
+                if (controller.signal.aborted) return
                 setMessageStats({
                     total: data.total ?? messages.length,
                     positive: messages.filter(
@@ -184,9 +192,7 @@ function Analytics() {
                 })
             } catch (error) {
                 if (!controller.signal.aborted) {
-                    setAnalyticsError(
-                        error instanceof Error ? error.message : 'Error al consultar mensajes',
-                    )
+                    // Fallo no crítico de consulta secundaria
                 }
             }
         }
@@ -286,32 +292,68 @@ function Analytics() {
     }
 
     const displayEmojis = useMemo(() => {
-        return (motorAnalytics?.emojis ?? []).slice(0, 6)
+        const raw = motorAnalytics?.emojis
+        if (!raw || !Array.isArray(raw) || raw.length === 0) return []
+        return raw
+            .filter((e) => e && typeof e === 'object' && Boolean(e.emoji))
+            .slice(0, 6)
+            .map((e) => ({
+                emoji: String(e.emoji || '💬'),
+                count: Number(e.count) || 0,
+                sentiment: String(e.sentiment || 'neutral'),
+                label: String(e.label || 'Reacción'),
+                description: String(e.description || ''),
+                trend: String(e.trend || '0%'),
+            }))
     }, [motorAnalytics?.emojis])
 
+    const hasValidHashtags = useMemo(() => {
+        const list = motorAnalytics?.hashtags
+        if (!list || !Array.isArray(list) || list.length === 0) return false
+        return list.some((h) => h && Boolean(h.name) && Number(h.mentions) > 0)
+    }, [motorAnalytics?.hashtags])
+
     const hashtagChartData = useMemo(() => {
-        const raw = (motorAnalytics?.hashtags ?? []).slice(0, 8)
+        if (!hasValidHashtags) return []
+        const raw = (motorAnalytics?.hashtags ?? [])
+            .filter((h) => h && Boolean(h.name) && Number(h.mentions) > 0)
+            .slice(0, 8)
         const list = raw.map((h) => ({
             label: h.name.startsWith('#') ? h.name : `#${h.name}`,
             value:
                 hashtagMode === 'count'
-                    ? h.mentions
-                    : Math.abs(h.growth ?? Math.round(h.mentions * 4)),
+                    ? Number(h.mentions) || 0
+                    : Math.abs(h.growth ?? Math.round((Number(h.mentions) || 0) * 4)),
         }))
         list.sort((a, b) => b.value - a.value)
         return list
-    }, [motorAnalytics?.hashtags, hashtagMode])
+    }, [motorAnalytics?.hashtags, hashtagMode, hasValidHashtags])
+
+    const hasValidRadarData = useMemo(() => {
+        const topics = motorAnalytics?.topics
+        if (!topics || !Array.isArray(topics) || topics.length === 0) return false
+        return topics.some(
+            (t) => Boolean(t && t.topic && t.topic.trim()) && Number(t.percentage) > 0,
+        )
+    }, [motorAnalytics?.topics])
 
     const radarTopicsData = useMemo(() => {
-        const raw = (motorAnalytics?.topics ?? []).slice(0, 6)
+        if (!hasValidRadarData) return []
+        const raw = (motorAnalytics?.topics ?? [])
+            .filter((t) => Boolean(t && t.topic && t.topic.trim()) && Number(t.percentage) > 0)
+            .slice(0, 6)
         if (raw.length === 0) return []
-        const maxVal = Math.max(...raw.map((t) => t.percentage), 1)
-        return raw.map((t) => ({
-            name: t.topic.charAt(0).toUpperCase() + t.topic.slice(1).toLowerCase(),
-            relevance: Math.round(Math.min(100, Math.max(25, t.percentage * 2.3))),
-            participation: Math.round((t.percentage / maxVal) * 100),
-        }))
-    }, [motorAnalytics?.topics])
+        const maxVal = Math.max(...raw.map((t) => Number(t.percentage) || 0), 1)
+        return raw.map((t) => {
+            const pct = Number(t.percentage) || 0
+            const cleanName = t.topic.trim()
+            return {
+                name: cleanName.charAt(0).toUpperCase() + cleanName.slice(1).toLowerCase(),
+                relevance: Math.round(Math.min(100, Math.max(0, pct * 2.3))),
+                participation: Math.round((pct / maxVal) * 100),
+            }
+        })
+    }, [motorAnalytics?.topics, hasValidRadarData])
 
     return (
         <section data-view="analytics" aria-labelledby="t-analytics">
@@ -535,8 +577,14 @@ function Analytics() {
                         </div>
                     </div>
                     {displayEmojis.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-center text-xs text-slate-500">
-                            Aún no se han detectado emojis en los mensajes analizados de la comunidad.
+                        <div className="c-empty py-8">
+                            <div className="c-empty__icon">
+                                <Smile size={22} />
+                            </div>
+                            <p className="c-empty__title">Sin reacciones detectadas</p>
+                            <p className="c-empty__text">
+                                Aún no se han detectado emojis en los mensajes analizados de la comunidad.
+                            </p>
                         </div>
                     ) : (
                         <div className="l-grid l-grid--6" id="an-emojis">
@@ -618,54 +666,66 @@ function Analytics() {
                                 </button>
                             </div>
                         </div>
-                        <div className="c-chart">
-                            <ResponsiveContainer width="100%" height={280}>
-                                <BarChart
-                                    data={hashtagChartData}
-                                    layout="vertical"
-                                    margin={{ top: 8, right: 24, left: 16, bottom: 8 }}
-                                >
-                                    <CartesianGrid stroke="#f1f5f9" horizontal={false} />
-                                    <XAxis
-                                        type="number"
-                                        tick={{ fontSize: 11, fill: '#94a3b8' }}
-                                        axisLine={false}
-                                        tickLine={false}
-                                    />
-                                    <YAxis
-                                        type="category"
-                                        dataKey="label"
-                                        tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
-                                        axisLine={false}
-                                        tickLine={false}
-                                        width={145}
-                                    />
-                                    <Tooltip
-                                        contentStyle={{
-                                            backgroundColor: '#0f172a',
-                                            border: 'none',
-                                            borderRadius: '8px',
-                                            color: '#ffffff',
-                                            fontSize: '12px',
-                                        }}
-                                        itemStyle={{ color: '#ffffff' }}
-                                        formatter={(val) => [
-                                            hashtagMode === 'count'
-                                                ? `${val} usos`
-                                                : `+${val}%`,
-                                            hashtagMode === 'count'
-                                                ? 'Volumen'
-                                                : 'Crecimiento',
-                                        ]}
-                                    />
-                                    <Bar
-                                        dataKey="value"
-                                        fill="#ff7400"
-                                        radius={[0, 4, 4, 0]}
-                                    />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
+                        {!hasValidHashtags || hashtagChartData.length === 0 ? (
+                            <div className="c-empty py-8 min-h-[280px] justify-center">
+                                <div className="c-empty__icon">
+                                    <Hash size={22} />
+                                </div>
+                                <p className="c-empty__title">Sin hashtags registrados</p>
+                                <p className="c-empty__text">
+                                    No hay menciones registradas para generar el ranking de hashtags en este período.
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="c-chart">
+                                <ResponsiveContainer width="100%" height={280}>
+                                    <BarChart
+                                        data={hashtagChartData}
+                                        layout="vertical"
+                                        margin={{ top: 8, right: 24, left: 16, bottom: 8 }}
+                                    >
+                                        <CartesianGrid stroke="#f1f5f9" horizontal={false} />
+                                        <XAxis
+                                            type="number"
+                                            tick={{ fontSize: 11, fill: '#94a3b8' }}
+                                            axisLine={false}
+                                            tickLine={false}
+                                        />
+                                        <YAxis
+                                            type="category"
+                                            dataKey="label"
+                                            tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
+                                            axisLine={false}
+                                            tickLine={false}
+                                            width={145}
+                                        />
+                                        <Tooltip
+                                            contentStyle={{
+                                                backgroundColor: '#0f172a',
+                                                border: 'none',
+                                                borderRadius: '8px',
+                                                color: '#ffffff',
+                                                fontSize: '12px',
+                                            }}
+                                            itemStyle={{ color: '#ffffff' }}
+                                            formatter={(val) => [
+                                                hashtagMode === 'count'
+                                                    ? `${val} usos`
+                                                    : `+${val}%`,
+                                                hashtagMode === 'count'
+                                                    ? 'Volumen'
+                                                    : 'Crecimiento',
+                                            ]}
+                                        />
+                                        <Bar
+                                            dataKey="value"
+                                            fill="#ff7400"
+                                            radius={[0, 4, 4, 0]}
+                                        />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        )}
                     </article>
 
                     {/* Temas clave detectados en la comunidad */}
@@ -680,104 +740,120 @@ function Analytics() {
                                 </p>
                             </div>
                         </div>
-                        <div className="c-chart">
-                            <ResponsiveContainer width="100%" height={250}>
-                                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarTopicsData}>
-                                    <PolarGrid stroke="#e2e8f0" />
-                                    <PolarAngleAxis
-                                        dataKey="name"
-                                        tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
-                                    />
-                                    <PolarRadiusAxis
-                                        angle={30}
-                                        domain={[0, 100]}
-                                        tick={{ fontSize: 9, fill: '#94a3b8' }}
-                                        axisLine={false}
-                                    />
-                                    <Tooltip
-                                        contentStyle={{
-                                            backgroundColor: '#0f172a',
-                                            border: 'none',
-                                            borderRadius: '8px',
-                                            color: '#ffffff',
-                                            fontSize: '12px',
-                                        }}
-                                        itemStyle={{ color: '#ffffff' }}
-                                        formatter={(val, name) => [`${val}%`, name]}
-                                    />
-                                    {showRelevance && (
-                                        <Radar
-                                            name="Relevancia"
-                                            dataKey="relevance"
-                                            stroke="#ff7400"
-                                            fill="#ff7400"
-                                            fillOpacity={0.25}
+                        {!hasValidRadarData || radarTopicsData.length === 0 ? (
+                            <div className="c-empty py-8 min-h-[250px] justify-center">
+                                <div className="c-empty__icon">
+                                    <Compass size={22} />
+                                </div>
+                                <p className="c-empty__title">
+                                    No hay temas suficientes para generar el radar semántico en este período
+                                </p>
+                                <p className="c-empty__text">
+                                    No hay datos suficientes para generar el radar semántico en este período.
+                                </p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="c-chart">
+                                    <ResponsiveContainer width="100%" height={250}>
+                                        <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarTopicsData}>
+                                            <PolarGrid stroke="#e2e8f0" />
+                                            <PolarAngleAxis
+                                                dataKey="name"
+                                                tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
+                                            />
+                                            <PolarRadiusAxis
+                                                angle={30}
+                                                domain={[0, 100]}
+                                                tick={{ fontSize: 9, fill: '#94a3b8' }}
+                                                axisLine={false}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{
+                                                    backgroundColor: '#0f172a',
+                                                    border: 'none',
+                                                    borderRadius: '8px',
+                                                    color: '#ffffff',
+                                                    fontSize: '12px',
+                                                }}
+                                                itemStyle={{ color: '#ffffff' }}
+                                                formatter={(val, name) => [`${val}%`, name]}
+                                            />
+                                            {showRelevance && (
+                                                <Radar
+                                                    name="Relevancia"
+                                                    dataKey="relevance"
+                                                    stroke="#ff7400"
+                                                    fill="#ff7400"
+                                                    fillOpacity={0.25}
+                                                />
+                                            )}
+                                            {showParticipation && (
+                                                <Radar
+                                                    name="Participación"
+                                                    dataKey="participation"
+                                                    stroke="#6366f1"
+                                                    fill="#6366f1"
+                                                    fillOpacity={0.2}
+                                                />
+                                            )}
+                                        </RadarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div
+                                    id="lg-an-topics"
+                                    className="c-legend"
+                                    style={{ justifyContent: 'center', marginTop: 'var(--space-4)' }}
+                                >
+                                    <button
+                                        type="button"
+                                        className={`c-legend__item cursor-pointer transition ${
+                                            !showRelevance ? 'is-off opacity-40 line-through' : ''
+                                        }`}
+                                        onClick={() => setShowRelevance((prev) => !prev)}
+                                        title={
+                                            showRelevance
+                                                ? 'Ocultar serie de Relevancia'
+                                                : 'Mostrar serie de Relevancia'
+                                        }
+                                    >
+                                        <span
+                                            className="c-legend__swatch"
+                                            style={{ background: '#ff7400' }}
                                         />
-                                    )}
-                                    {showParticipation && (
-                                        <Radar
-                                            name="Participación"
-                                            dataKey="participation"
-                                            stroke="#6366f1"
-                                            fill="#6366f1"
-                                            fillOpacity={0.2}
+                                        <span className="font-semibold text-slate-700">Relevancia</span>
+                                        {!showRelevance && (
+                                            <span className="text-[10px] font-normal text-slate-400">
+                                                (oculta)
+                                            </span>
+                                        )}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`c-legend__item cursor-pointer transition ${
+                                            !showParticipation ? 'is-off opacity-40 line-through' : ''
+                                        }`}
+                                        onClick={() => setShowParticipation((prev) => !prev)}
+                                        title={
+                                            showParticipation
+                                                ? 'Ocultar serie de Participación'
+                                                : 'Mostrar serie de Participación'
+                                        }
+                                    >
+                                        <span
+                                            className="c-legend__swatch"
+                                            style={{ background: '#6366f1' }}
                                         />
-                                    )}
-                                </RadarChart>
-                            </ResponsiveContainer>
-                        </div>
-                        <div
-                            id="lg-an-topics"
-                            className="c-legend"
-                            style={{ justifyContent: 'center', marginTop: 'var(--space-4)' }}
-                        >
-                            <button
-                                type="button"
-                                className={`c-legend__item cursor-pointer transition ${
-                                    !showRelevance ? 'is-off opacity-40 line-through' : ''
-                                }`}
-                                onClick={() => setShowRelevance((prev) => !prev)}
-                                title={
-                                    showRelevance
-                                        ? 'Ocultar serie de Relevancia'
-                                        : 'Mostrar serie de Relevancia'
-                                }
-                            >
-                                <span
-                                    className="c-legend__swatch"
-                                    style={{ background: '#ff7400' }}
-                                />
-                                <span className="font-semibold text-slate-700">Relevancia</span>
-                                {!showRelevance && (
-                                    <span className="text-[10px] font-normal text-slate-400">
-                                        (oculta)
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                type="button"
-                                className={`c-legend__item cursor-pointer transition ${
-                                    !showParticipation ? 'is-off opacity-40 line-through' : ''
-                                }`}
-                                onClick={() => setShowParticipation((prev) => !prev)}
-                                title={
-                                    showParticipation
-                                        ? 'Ocultar serie de Participación'
-                                        : 'Mostrar serie de Participación'
-                                }
-                            >
-                                <span
-                                    className="c-legend__swatch"
-                                    style={{ background: '#6366f1' }}
-                                />
-                                <span className="font-semibold text-slate-700">Participación</span>
-                                {!showParticipation && (
-                                    <span className="text-[10px] font-normal text-slate-400">
-                                        (oculta)
-                                    </span>
-                                )}
-                            </button>
-                        </div>
+                                        <span className="font-semibold text-slate-700">Participación</span>
+                                        {!showParticipation && (
+                                            <span className="text-[10px] font-normal text-slate-400">
+                                                (oculta)
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </article>
                 </div>
             </div>

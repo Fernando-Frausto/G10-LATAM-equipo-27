@@ -284,16 +284,6 @@ function ContentStudio() {
   }, [])
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setWorkspaceModalChannel(null)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  useEffect(() => {
     const controller = new AbortController()
 
     const loadWorkflowMessages = async () => {
@@ -600,9 +590,15 @@ function ContentStudio() {
         errMsg.includes('1015') ||
         errMsg.toLowerCase().includes('rate limit') ||
         errMsg.toLowerCase().includes('too many requests')
+      const is409 =
+        errMsg.includes('409') ||
+        errMsg.toLowerCase().includes('en curso') ||
+        errMsg.toLowerCase().includes('sincronización en curso')
       setAnnouncementPublishError(
         isRateLimit
           ? '⚠️ Discord ha limitado temporalmente el envío por límite de peticiones de Cloudflare (Error 1015 / 429). Tu borrador se mantiene intacto. Intenta en unos minutos o realiza la publicación desde tu entorno local.'
+          : is409
+          ? '⏳ Sincronización en curso: Hay una sincronización de Discord en progreso en este momento. La acción continuará normalmente en unos instantes.'
           : errMsg
       )
       setShowConfirmModal(false)
@@ -642,6 +638,28 @@ function ContentStudio() {
   const [complaintDestinationError, setComplaintDestinationError] =
     useState('')
   const complaintDestinationRequestRef = useRef(0)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isPublishingAnnouncement || complaintPublishingRef.current) {
+          return
+        }
+        if (showConfirmModal) {
+          setShowConfirmModal(false)
+        } else if (activeComplaint !== null) {
+          complaintRequestRef.current += 1
+          activeComplaintRef.current = null
+          setComplaintGenerating(false)
+          setActiveComplaint(null)
+        } else if (workspaceModalChannel !== null) {
+          setWorkspaceModalChannel(null)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showConfirmModal, activeComplaint, workspaceModalChannel, isPublishingAnnouncement])
 
   useEffect(() => {
     const interaccionId = activeComplaint
@@ -1525,7 +1543,15 @@ function ContentStudio() {
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Error al publicar canal'
-      setPipelineActionError(`Error al publicar en ${canal.toUpperCase()}: ${msg}`)
+      const is409 =
+        msg.includes('409') ||
+        msg.toLowerCase().includes('en curso') ||
+        msg.toLowerCase().includes('sincronización en curso')
+      setPipelineActionError(
+        is409
+          ? `⏳ Sincronización en curso: Se está ejecutando una sincronización con Discord en paralelo. Por favor reintenta en unos instantes.`
+          : `Error al publicar en ${canal.toUpperCase()}: ${msg}`
+      )
     } finally {
       setChannelPublishing((prev) => ({ ...prev, [canal]: false }))
     }
@@ -2521,8 +2547,25 @@ function ContentStudio() {
       )}
 
       {pipelineActionError && (
-        <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
-          <AlertTriangle size={16} className="shrink-0 text-rose-600" />
+        <div
+          className={`mt-4 flex items-center gap-2 rounded-xl border p-3 text-xs font-semibold ${
+            pipelineActionError.includes('en curso') ||
+            pipelineActionError.includes('409') ||
+            pipelineActionError.includes('⏳')
+              ? 'border-amber-200 bg-amber-50 text-amber-800'
+              : 'border-rose-200 bg-rose-50 text-rose-800'
+          }`}
+        >
+          <AlertTriangle
+            size={16}
+            className={`shrink-0 ${
+              pipelineActionError.includes('en curso') ||
+              pipelineActionError.includes('409') ||
+              pipelineActionError.includes('⏳')
+                ? 'text-amber-600'
+                : 'text-rose-600'
+            }`}
+          />
           <span>{pipelineActionError}</span>
         </div>
       )}
@@ -2689,13 +2732,37 @@ function ContentStudio() {
         {announcementPublishError && (
           <div
             role="alert"
-            className="mt-4 flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"
+            className={`mt-4 flex items-center justify-between rounded-xl border p-4 text-sm ${
+              announcementPublishError.includes('en curso') ||
+              announcementPublishError.includes('409') ||
+              announcementPublishError.includes('⏳')
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-rose-200 bg-rose-50 text-rose-800'
+            }`}
           >
-            <span>{announcementPublishError}</span>
+            <div className="flex items-center gap-2">
+              <AlertTriangle
+                size={18}
+                className={`shrink-0 ${
+                  announcementPublishError.includes('en curso') ||
+                  announcementPublishError.includes('409') ||
+                  announcementPublishError.includes('⏳')
+                    ? 'text-amber-600'
+                    : 'text-rose-600'
+                }`}
+              />
+              <span>{announcementPublishError}</span>
+            </div>
             <button
               type="button"
               onClick={() => setAnnouncementPublishError('')}
-              className="text-xs font-semibold text-rose-700 hover:underline"
+              className={`text-xs font-semibold hover:underline ${
+                announcementPublishError.includes('en curso') ||
+                announcementPublishError.includes('409') ||
+                announcementPublishError.includes('⏳')
+                  ? 'text-amber-700'
+                  : 'text-rose-700'
+              }`}
             >
               Cerrar
             </button>
@@ -3348,8 +3415,25 @@ function ContentStudio() {
               )}
 
               {pipelineActionError && (
-                <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
-                  <AlertTriangle size={16} className="shrink-0 text-rose-600" />
+                <div
+                  className={`mt-4 flex items-center gap-2 rounded-xl border p-3 text-xs font-semibold ${
+                    pipelineActionError.includes('en curso') ||
+                    pipelineActionError.includes('409') ||
+                    pipelineActionError.includes('⏳')
+                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                      : 'border-rose-200 bg-rose-50 text-rose-800'
+                  }`}
+                >
+                  <AlertTriangle
+                    size={16}
+                    className={`shrink-0 ${
+                      pipelineActionError.includes('en curso') ||
+                      pipelineActionError.includes('409') ||
+                      pipelineActionError.includes('⏳')
+                        ? 'text-amber-600'
+                        : 'text-rose-600'
+                    }`}
+                  />
                   <span>{pipelineActionError}</span>
                 </div>
               )}
@@ -3643,18 +3727,23 @@ function ContentStudio() {
         aria-modal="true"
         aria-labelledby="modal-workspace-title"
         onClick={(e) => {
-          if (e.target === e.currentTarget) setWorkspaceModalChannel(null)
+          if (
+            e.target === e.currentTarget &&
+            !isPublishingAnnouncement &&
+            !complaintPublishingRef.current
+          ) {
+            setWorkspaceModalChannel(null)
+          }
         }}
       >
         <div
-          className="c-modal__dialog w-full flex flex-col bg-white overflow-hidden shadow-2xl"
+          className="c-modal__dialog w-full max-h-[90vh] flex flex-col bg-white overflow-hidden shadow-2xl"
           style={{
             maxWidth: workspaceModalChannel === 'all' ? '88rem' : '44rem',
-            maxHeight: '92vh',
           }}
         >
           {/* Cabecera del Modal */}
-          <div className="c-modal__head flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3.5">
+          <div className="c-modal__head shrink-0 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3.5">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-orange-600 font-bold">
                 {workspaceModalChannel === 'all' ? (
@@ -3707,7 +3796,7 @@ function ContentStudio() {
           </div>
 
           {/* Cuerpo del Modal */}
-          <div className="c-modal__body p-4 sm:p-5 overflow-y-auto max-h-[calc(92vh-130px)] space-y-4">
+          <div className="c-modal__body p-4 sm:p-5 overflow-y-auto max-h-[70vh] md:max-h-[75vh] space-y-4">
             {workspaceModalChannel === 'all' && (
               <>
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -3739,7 +3828,7 @@ function ContentStudio() {
           </div>
 
           {/* Pie del Modal */}
-          <div className="c-modal__foot flex items-center justify-between border-t border-slate-200 bg-slate-50/70 px-5 py-3">
+          <div className="c-modal__foot shrink-0 flex items-center justify-between border-t border-slate-200 bg-slate-50/70 px-5 py-3">
             <span className="text-[11px] text-slate-500">
               Presiona <kbd className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">Esc</kbd> o haz clic fuera para cerrar
             </span>
@@ -3864,10 +3953,12 @@ function ContentStudio() {
       {/* Ventana de respuesta a quejas */}
       {activeComplaint !== null && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 sm:p-4"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !complaintPublishingRef.current) {
+          className="c-modal is-open fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="complaint-dialog-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !complaintPublishingRef.current && !isPublishingAnnouncement) {
               complaintRequestRef.current += 1
               activeComplaintRef.current = null
               setComplaintGenerating(false)
@@ -3875,27 +3966,26 @@ function ContentStudio() {
             }
           }}
         >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="complaint-dialog-title"
-            className="max-h-[90dvh] overflow-y-auto overscroll-contain w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl"
+          <div
+            className="c-modal__dialog w-full max-w-2xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden"
           >
-            <div className="flex items-start justify-between gap-4">
+            {/* Cabecera Fija */}
+            <div className="c-modal__head shrink-0 flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4 bg-white">
               <div>
                 <h3
                   id="complaint-dialog-title"
-                  className="text-xl font-bold text-slate-900"
+                  className="text-lg font-bold text-slate-900"
                 >
                   Preparar respuesta
                 </h3>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-0.5 text-xs text-slate-500">
                   Revisa y redacta una respuesta antes de enviarla a Discord.
                 </p>
               </div>
 
               <button
                 type="button"
+                disabled={complaintPublishing}
                 onClick={() => {
                   if (complaintPublishingRef.current) return
                   complaintRequestRef.current += 1
@@ -3904,234 +3994,258 @@ function ContentStudio() {
                   setActiveComplaint(null)
                 }}
                 aria-label="Cerrar ventana"
-                className="rounded-lg px-3 py-1 text-slate-500 hover:bg-slate-100"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition disabled:cursor-not-allowed"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 
-            <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
-              <p className="text-xs font-semibold uppercase text-indigo-600">
-                Mensaje seleccionado
-              </p>
-              <p className="mt-2 text-sm text-slate-700">
-                {complaints.find((item) => item.id === activeComplaint)?.texto
-                  || 'No se encontró el mensaje seleccionado.'}
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                Autor: {complaints.find((item) => item.id === activeComplaint)?.autor || 'Desconocido'}
-                {' · '}
-                Canal: {complaints.find((item) => item.id === activeComplaint)?.canal || 'Discord'}
-              </p>
-            </div>
+            {/* Cuerpo desplazable */}
+            <div className="c-modal__body max-h-[70vh] md:max-h-[75vh] overflow-y-auto p-6 space-y-4">
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+                <p className="text-xs font-semibold uppercase text-indigo-600">
+                  Mensaje seleccionado
+                </p>
+                <p className="mt-2 text-sm text-slate-700">
+                  {complaints.find((item) => item.id === activeComplaint)?.texto
+                    || 'No se encontró el mensaje seleccionado.'}
+                </p>
+                <p className="mt-2 text-xs text-slate-500">
+                  Autor: {complaints.find((item) => item.id === activeComplaint)?.autor || 'Desconocido'}
+                  {' · '}
+                  Canal: {complaints.find((item) => item.id === activeComplaint)?.canal || 'Discord'}
+                </p>
+              </div>
 
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <label
-                  htmlFor="complaint-ai-provider"
-                  className="text-xs font-semibold text-slate-600"
-                >
-                  Modelo IA:
-                </label>
-                <select
-                  id="complaint-ai-provider"
-                  value={complaintAiProvider}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label
+                    htmlFor="complaint-ai-provider"
+                    className="text-xs font-semibold text-slate-600"
+                  >
+                    Modelo IA:
+                  </label>
+                  <select
+                    id="complaint-ai-provider"
+                    value={complaintAiProvider}
+                    disabled={complaintGenerating || complaintPublishing}
+                    onChange={(event) => setComplaintAiProvider(event.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                  >
+                    {AI_PROVIDERS.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {provider}
+                      </option>
+                    ))}
+                  </select>
+
+                  <span className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                    <Cpu size={12} />
+                    🤖 Modelo IA activo: {complaintAiProvider}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
                   disabled={complaintGenerating || complaintPublishing}
-                  onChange={(event) => setComplaintAiProvider(event.target.value)}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                >
-                  {AI_PROVIDERS.map((provider) => (
-                    <option key={provider} value={provider}>
-                      {provider}
-                    </option>
-                  ))}
-                </select>
+                  onClick={async () => {
+                    if (activeComplaint === null) return
 
-                <span className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                  <Cpu size={12} />
-                  🤖 Modelo IA activo: {complaintAiProvider}
-                </span>
-              </div>
+                    const interactionId = activeComplaint
+                    const requestId = ++complaintRequestRef.current
+                    activeComplaintRef.current = interactionId
 
-              <button
-                type="button"
-                disabled={complaintGenerating || complaintPublishing}
-                onClick={async () => {
-                  if (activeComplaint === null) return
+                    setComplaintGenerating(true)
+                    setComplaintGenerationError('')
 
-                  const interactionId = activeComplaint
-                  const requestId = ++complaintRequestRef.current
-                  activeComplaintRef.current = interactionId
-
-                  setComplaintGenerating(true)
-                  setComplaintGenerationError('')
-
-                  try {
-                    const data = await generateComplaintResponse(
-                      interactionId,
-                      complaintAiProvider,
-                    )
-
-                    if (
-                      typeof data.respuesta !== 'string' ||
-                      !data.respuesta.trim()
-                    ) {
-                      throw new Error('El servidor no devolvió una respuesta válida.')
-                    }
-
-                    if (
-                      complaintRequestRef.current === requestId &&
-                      activeComplaintRef.current === interactionId
-                    ) {
-                      setComplaintResponse(data.respuesta)
-                    }
-                  } catch (error) {
-                    if (complaintRequestRef.current === requestId) {
-                      setComplaintGenerationError(
-                        error instanceof Error
-                          ? error.message
-                          : 'No se pudo generar la respuesta.'
+                    try {
+                      const data = await generateComplaintResponse(
+                        interactionId,
+                        complaintAiProvider,
                       )
+
+                      if (
+                        typeof data.respuesta !== 'string' ||
+                        !data.respuesta.trim()
+                      ) {
+                        throw new Error('El servidor no devolvió una respuesta válida.')
+                      }
+
+                      if (
+                        complaintRequestRef.current === requestId &&
+                        activeComplaintRef.current === interactionId
+                      ) {
+                        setComplaintResponse(data.respuesta)
+                      }
+                    } catch (error) {
+                      if (complaintRequestRef.current === requestId) {
+                        setComplaintGenerationError(
+                          error instanceof Error
+                            ? error.message
+                            : 'No se pudo generar la respuesta.'
+                        )
+                      }
+                    } finally {
+                      if (complaintRequestRef.current === requestId) {
+                        setComplaintGenerating(false)
+                      }
                     }
-                  } finally {
-                    if (complaintRequestRef.current === requestId) {
-                      setComplaintGenerating(false)
-                    }
-                  }
-                }}
-                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
-              >
-                <Sparkles size={16} className={complaintGenerating ? 'animate-pulse' : ''} />
-                {complaintGenerating ? 'Generando respuesta...' : 'Generar con IA'}
-              </button>
-            </div>
+                  }}
+                  className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-200"
+                >
+                  <Sparkles size={16} className={complaintGenerating ? 'animate-pulse' : ''} />
+                  {complaintGenerating ? 'Generando respuesta...' : 'Generar con IA'}
+                </button>
+              </div>
 
-            {complaintGenerationError && (
-              <p
-                role="alert"
-                className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-              >
-                No se pudo generar la respuesta: {complaintGenerationError}
-              </p>
-            )}
-
-            <label
-              htmlFor="complaint-response"
-              className="mt-5 block text-sm font-semibold text-slate-700"
-            >
-              Respuesta editable
-            </label>
-
-            <textarea
-              id="complaint-response"
-              value={complaintResponse}
-              disabled={complaintPublishing || Boolean(complaintPublishSuccess)}
-              onChange={(event) => setComplaintResponse(event.target.value)}
-              placeholder="Escribe aquí tu respuesta a la queja..."
-              rows={7}
-              className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-4 text-sm leading-6 text-slate-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
-            />
-
-            <p className="mt-2 text-xs text-slate-500">
-              La respuesta no se enviará hasta que confirmes su publicación.
-            </p>
-
-            {complaintResponse.trim() && (
-              <div className="mt-5 rounded-xl border border-orange-200 bg-orange-50 p-4">
-                <p className="text-sm font-semibold text-orange-800">
-                  Vista previa de publicación en Discord
+              {complaintGenerationError && (
+                <p
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                >
+                  No se pudo generar la respuesta: {complaintGenerationError}
                 </p>
+              )}
 
-                {complaintDestinationLoading && (
-                  <p className="mt-3 text-sm text-indigo-700">
-                    Verificando el destino con el backend...
-                  </p>
-                )}
-
-                {complaintDestinationError && (
-                  <p className="mt-3 text-sm text-red-700" role="alert">
-                    {complaintDestinationError}
-                  </p>
-                )}
-
-                {complaintDestination?.ready &&
-                complaintDestination.interaccion_id === activeComplaint ? (
-                  <div className="mt-3 space-y-2 rounded-lg border border-green-200 bg-white p-3">
-                    <p className="text-sm font-semibold text-green-800">
-                      Destino verificado por el backend
-                    </p>
-                    <p className="text-xs text-slate-700">
-                      Canal: <strong>#{complaintDestination.channel_name}</strong>
-                    </p>
-                    <p className="break-all text-xs text-slate-600">
-                      ID del canal: {complaintDestination.channel_id}
-                    </p>
-                    <p className="text-xs text-slate-700">
-                      Autor original: {complaintDestination.author}
-                    </p>
-                    <p className="text-xs font-semibold text-slate-700">
-                      Mensaje original:
-                    </p>
-                    <p className="whitespace-pre-wrap break-words text-sm text-slate-700">
-                      {complaintDestination.original_content || '(Sin contenido de texto)'}
-                    </p>
-                  </div>
-                ) : complaintDestination && !complaintDestination.ready ? (
-                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" role="alert">
-                    <p className="font-semibold">Destino de Discord no disponible</p>
-                    <p className="mt-1">
-                      {complaintDestination.detail || 'El bot de Discord no está listo o las credenciales no están configuradas.'}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="mt-3 text-xs text-amber-800">
-                    Canal indicado en la lista: <strong>
-                      {complaints.find((item) => item.id === activeComplaint)?.canal || 'No identificado'}
-                    </strong>. Destino pendiente de verificación.
-                  </p>
-                )}
-
-                <p className="mt-1 text-xs text-slate-600">
-                  Interacción: <strong>{activeComplaint}</strong>
-                </p>
-
-                <p className="mt-3 text-xs font-semibold text-slate-700">
-                  Texto que se enviaría:
-                </p>
-
-                <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-orange-100 bg-white p-3 text-sm text-slate-700">
-                  {complaintResponse.trim()}
-                </p>
-
-                <p className="mt-3 text-xs text-orange-800">
-                  Vista previa únicamente. No se enviará ningún mensaje
-                  hasta completar la validación del destino y confirmar
-                  expresamente la publicación.
+              <div>
+                <label
+                  htmlFor="complaint-response"
+                  className="block text-sm font-semibold text-slate-700"
+                >
+                  Respuesta editable
+                </label>
+                <textarea
+                  id="complaint-response"
+                  value={complaintResponse}
+                  disabled={complaintPublishing || Boolean(complaintPublishSuccess)}
+                  onChange={(event) => setComplaintResponse(event.target.value)}
+                  placeholder="Escribe aquí tu respuesta a la queja..."
+                  rows={7}
+                  className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-4 text-sm leading-6 text-slate-700 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  La respuesta no se enviará hasta que confirmes su publicación.
                 </p>
               </div>
-            )}
 
-            <div className="mt-4 space-y-2" aria-live="polite">
-              {complaintPublishing && (
-                <p className="text-sm text-indigo-600">
-                  Procesando publicación...
-                </p>
+              {complaintResponse.trim() && (
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+                  <p className="text-sm font-semibold text-orange-800">
+                    Vista previa de publicación en Discord
+                  </p>
+
+                  {complaintDestinationLoading && (
+                    <p className="mt-3 text-sm text-indigo-700">
+                      Verificando el destino con el backend...
+                    </p>
+                  )}
+
+                  {complaintDestinationError && (
+                    <p className="mt-3 text-sm text-red-700" role="alert">
+                      {complaintDestinationError}
+                    </p>
+                  )}
+
+                  {complaintDestination?.ready &&
+                  complaintDestination.interaccion_id === activeComplaint ? (
+                    <div className="mt-3 space-y-2 rounded-lg border border-green-200 bg-white p-3">
+                      <p className="text-sm font-semibold text-green-800">
+                        Destino verificado por el backend
+                      </p>
+                      <p className="text-xs text-slate-700">
+                        Canal: <strong>#{complaintDestination.channel_name}</strong>
+                      </p>
+                      <p className="break-all text-xs text-slate-600">
+                        ID del canal: {complaintDestination.channel_id}
+                      </p>
+                      <p className="text-xs text-slate-700">
+                        Autor original: {complaintDestination.author}
+                      </p>
+                      <p className="text-xs font-semibold text-slate-700">
+                        Mensaje original:
+                      </p>
+                      <p className="whitespace-pre-wrap break-words text-sm text-slate-700">
+                        {complaintDestination.original_content || '(Sin contenido de texto)'}
+                      </p>
+                    </div>
+                  ) : complaintDestination && !complaintDestination.ready ? (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" role="alert">
+                      <p className="font-semibold">Destino de Discord no disponible</p>
+                      <p className="mt-1">
+                        {complaintDestination.detail || 'El bot de Discord no está listo o las credenciales no están configuradas.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-amber-800">
+                      Canal indicado en la lista: <strong>
+                        {complaints.find((item) => item.id === activeComplaint)?.canal || 'No identificado'}
+                      </strong>. Destino pendiente de verificación.
+                    </p>
+                  )}
+
+                  <p className="mt-1 text-xs text-slate-600">
+                    Interacción: <strong>{activeComplaint}</strong>
+                  </p>
+
+                  <p className="mt-3 text-xs font-semibold text-slate-700">
+                    Texto que se enviaría:
+                  </p>
+
+                  <p className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-orange-100 bg-white p-3 text-sm text-slate-700">
+                    {complaintResponse.trim()}
+                  </p>
+
+                  <p className="mt-3 text-xs text-orange-800">
+                    Vista previa únicamente. No se enviará ningún mensaje
+                    hasta completar la validación del destino y confirmar
+                    expresamente la publicación.
+                  </p>
+                </div>
               )}
-              {complaintPublishError && (
-                <p className="text-sm text-red-600" role="alert">
-                  {complaintPublishError}
-                </p>
-              )}
-              {complaintPublishSuccess && (
-                <p className="text-sm text-green-700">
-                  {complaintPublishSuccess}
-                </p>
-              )}
+
+              <div className="space-y-2" aria-live="polite">
+                {complaintPublishing && (
+                  <p className="text-sm text-indigo-600">
+                    Procesando publicación...
+                  </p>
+                )}
+                {complaintPublishError && (
+                  <div
+                    role="alert"
+                    className={`flex items-center gap-2 rounded-lg border p-2.5 text-xs ${
+                      complaintPublishError.includes('en curso') ||
+                      complaintPublishError.includes('409') ||
+                      complaintPublishError.includes('⏳')
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-red-200 bg-red-50 text-red-700'
+                    }`}
+                  >
+                    <AlertTriangle
+                      size={14}
+                      className={`shrink-0 ${
+                        complaintPublishError.includes('en curso') ||
+                        complaintPublishError.includes('409') ||
+                        complaintPublishError.includes('⏳')
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                      }`}
+                    />
+                    <span>{complaintPublishError}</span>
+                  </div>
+                )}
+                {complaintPublishSuccess && (
+                  <p className="text-sm text-green-700">
+                    {complaintPublishSuccess}
+                  </p>
+                )}
+              </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
+            {/* Pie Fijo */}
+            <div className="c-modal__foot shrink-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50/70 px-6 py-3.5">
               <button
                 type="button"
+                disabled={complaintPublishing}
                 onClick={() => {
                   if (complaintPublishingRef.current) return
                   complaintRequestRef.current += 1
@@ -4139,7 +4253,7 @@ function ContentStudio() {
                   setComplaintGenerating(false)
                   setActiveComplaint(null)
                 }}
-                className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed"
               >
                 Cancelar
               </button>
@@ -4215,9 +4329,15 @@ function ContentStudio() {
                       errMsg.includes('1015') ||
                       errMsg.toLowerCase().includes('rate limit') ||
                       errMsg.toLowerCase().includes('too many requests')
+                    const is409 =
+                      errMsg.includes('409') ||
+                      errMsg.toLowerCase().includes('en curso') ||
+                      errMsg.toLowerCase().includes('sincronización en curso')
                     setComplaintPublishError(
                       isRateLimit
                         ? '⚠️ Discord ha limitado temporalmente el envío por límite de peticiones de Cloudflare (Error 1015 / 429). Tu respuesta se conserva en el editor. Intenta nuevamente en unos minutos o realiza el despacho desde local.'
+                        : is409
+                        ? '⏳ Sincronización en curso: Hay una sincronización con Discord en progreso. Espera unos momentos antes de reintentar el despacho.'
                         : `${errMsg} Verifica Discord y Auditoría antes de volver a intentarlo.`
                     )
                   } finally {
@@ -4225,39 +4345,40 @@ function ContentStudio() {
                     setComplaintPublishing(false)
                   }
                 }}
-                className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+                className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
               >
-                <Send size={16} />
+                <Send size={14} />
                 {complaintPublishing ? 'Publicando...' : 'Enviar respuesta a Discord'}
               </button>
             </div>
-          </section>
+          </div>
         </div>
       )}
 
       {/* Modal de confirmación para publicación de Anuncio Oficial */}
       {showConfirmModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+          className="c-modal is-open fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-announcement-title"
-          onMouseDown={(event) => {
+          onClick={(event) => {
             if (event.target === event.currentTarget && !isPublishingAnnouncement) {
               setShowConfirmModal(false)
             }
           }}
         >
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
+          <div className="c-modal__dialog w-full max-w-lg max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden">
+            {/* Cabecera Fija */}
+            <div className="c-modal__head shrink-0 flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-3.5 bg-white">
               <div>
                 <h3
                   id="confirm-announcement-title"
-                  className="text-lg font-bold text-slate-900"
+                  className="text-base font-bold text-slate-900"
                 >
                   Confirmar publicación de anuncio en Discord
                 </h3>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-slate-500">
                   El comunicado se despachará al canal oficial{' '}
                   <strong className="text-indigo-600">
                     {selectedTargetChannelName}
@@ -4271,32 +4392,36 @@ function ContentStudio() {
                 disabled={isPublishingAnnouncement}
                 onClick={() => setShowConfirmModal(false)}
                 aria-label="Cerrar modal"
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition disabled:cursor-not-allowed"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 
-            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase text-slate-500">
-                <span>Vista previa del mensaje</span>
-                <span>{finalAnnouncement.length} caracteres</span>
+            {/* Cuerpo desplazable */}
+            <div className="c-modal__body max-h-[70vh] md:max-h-[75vh] overflow-y-auto p-5 space-y-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                <div className="flex items-center justify-between text-[11px] font-semibold uppercase text-slate-500">
+                  <span>Vista previa del mensaje</span>
+                  <span>{finalAnnouncement.length} caracteres</span>
+                </div>
+                <p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 font-mono text-xs leading-relaxed text-slate-800">
+                  {finalAnnouncement.trim()}
+                </p>
               </div>
-              <p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 font-mono text-xs leading-relaxed text-slate-800">
-                {finalAnnouncement.trim()}
+
+              <p className="text-[11px] font-medium text-amber-700">
+                ⚠️ Esta acción es irreversible: el anuncio será visible inmediatamente para los miembros de la comunidad y quedará registrado en la auditoría.
               </p>
             </div>
 
-            <p className="mt-3 text-[11px] font-medium text-amber-700">
-              ⚠️ Esta acción es irreversible: el anuncio será visible inmediatamente para los miembros de la comunidad y quedará registrado en la auditoría.
-            </p>
-
-            <div className="mt-6 flex justify-end gap-3">
+            {/* Pie Fijo */}
+            <div className="c-modal__foot shrink-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50/70 px-5 py-3">
               <button
                 type="button"
                 disabled={isPublishingAnnouncement}
                 onClick={() => setShowConfirmModal(false)}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed"
               >
                 Cancelar
               </button>
@@ -4304,7 +4429,7 @@ function ContentStudio() {
                 type="button"
                 disabled={isPublishingAnnouncement}
                 onClick={handleConfirmPublish}
-                className="flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
+                className="flex items-center gap-2 rounded-lg bg-orange-500 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-orange-200"
               >
                 {isPublishingAnnouncement ? (
                   <RotateCcw size={14} className="animate-spin" />

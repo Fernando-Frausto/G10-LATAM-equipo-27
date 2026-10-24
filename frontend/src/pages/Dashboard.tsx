@@ -103,7 +103,7 @@ function Dashboard() {
   const rawGradId = useId()
   const msgAreaGradId = `msg-act-grad-${rawGradId.replace(/[^a-zA-Z0-9_-]/g, '')}`
 
-  const loadDashboard = async (isRefresh = false) => {
+  const loadDashboard = async (isRefresh = false, abortSignal?: AbortSignal) => {
     if (isRefresh) setRefreshing(true)
 
     try {
@@ -115,17 +115,19 @@ function Dashboard() {
         'http://127.0.0.1:8002'
       ).replace(/\/$/, '')
 
-      const [dashboardResponse, analyticsResponse, messagesResponse] = await Promise.all([
+      // 1. Carga primaria desacoplada: Dashboard y Analytics responden de inmediato (<2ms)
+      const [dashboardResponse, analyticsResponse] = await Promise.all([
         fetch(`${motorUrl}/api/community/dashboard`, {
           cache: 'no-store',
+          signal: abortSignal,
         }),
         fetch(`${motorUrl}/api/community/analytics`, {
           cache: 'no-store',
+          signal: abortSignal,
         }),
-        fetch(`${motorUrl}/api/community/messages?limit=500`, {
-          cache: 'no-store',
-        }).catch(() => null),
       ])
+
+      if (abortSignal?.aborted) return
 
       if (!dashboardResponse.ok || !analyticsResponse.ok) {
         throw new Error('No fue posible actualizar los datos del Motor IA')
@@ -134,28 +136,48 @@ function Dashboard() {
       const data: DashboardData = await dashboardResponse.json()
       const analyticsData: AnalyticsPayload = await analyticsResponse.json()
 
-      if (messagesResponse && messagesResponse.ok) {
-        const msgJson: CommunityMessagesPayload = await messagesResponse.json()
-        setMessagesList(msgJson?.messages ?? [])
-      }
+      if (abortSignal?.aborted) return
 
+      // Derivación inmediata de los 6 KPI Cards y visualización principal
       setDashboardData(data)
       setAnalyticsPayload(analyticsData)
       setAnalyticsVersion((version) => version + 1)
+      setLoading(false)
+      setRefreshing(false)
+
+      // 2. Consulta secundaria desacoplada a /api/community/messages
+      // No bloquea el renderizado principal de los 6 KPIs ni el gráfico de evolución
+      void fetch(`${motorUrl}/api/community/messages?limit=500`, {
+        cache: 'no-store',
+        signal: abortSignal,
+      })
+        .then(async (messagesResponse) => {
+          if (messagesResponse && messagesResponse.ok && !abortSignal?.aborted) {
+            const msgJson: CommunityMessagesPayload = await messagesResponse.json()
+            if (!abortSignal?.aborted) {
+              setMessagesList(msgJson?.messages ?? [])
+            }
+          }
+        })
+        .catch(() => {
+          // Degrada silenciosamente sin alterar ni trabar la vista
+        })
     } catch (err) {
+      if (abortSignal?.aborted) return
       setError(
         err instanceof Error
           ? err.message
           : 'Error desconocido al cargar el dashboard'
       )
-    } finally {
       setLoading(false)
       setRefreshing(false)
     }
   }
 
   useEffect(() => {
-    void loadDashboard()
+    const controller = new AbortController()
+    void loadDashboard(false, controller.signal)
+    return () => controller.abort()
   }, [])
 
   const { activitySeries, fallbackPositivePct, fallbackTopicsCount } = useMemo(() => {

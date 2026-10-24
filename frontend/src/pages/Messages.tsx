@@ -2,6 +2,7 @@ import {
     AlertCircle,
     AlertTriangle,
     Bot,
+    ChevronLeft,
     ChevronRight,
     Clock3,
     Copy,
@@ -19,7 +20,7 @@ import {
     X,
 } from 'lucide-react'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import KpiCard from '../components/KpiCard'
 import { updateMessageCuration } from '../api/messageCuration'
@@ -122,6 +123,8 @@ function Messages() {
     const [classificationFilter, setClassificationFilter] = useState('all')
     const [timeFilter, setTimeFilter] = useState('all')
     const [curationFilter, setCurationFilter] = useState('all')
+    const [pageSize, setPageSize] = useState<number>(50)
+    const [currentPage, setCurrentPage] = useState<number>(1)
     const [aiModels, setAiModels] = useState<AiModel[]>(DEFAULT_AI_MODELS)
     const [selectedAiBrain, setSelectedAiBrain] = useState<string>('Groq (Llama 3.3)')
     const [dateFrom, setDateFrom] = useState<string>('')
@@ -141,10 +144,26 @@ function Messages() {
     const [curationError, setCurationError] = useState<string | null>(null)
     const [apiConnected, setApiConnected] = useState(false)
 
+    // Reinicio reactivo a la primera página ante cualquier alteración de filtros o tamaño de página
+    useEffect(() => {
+        setCurrentPage(1)
+    }, [
+        searchTerm,
+        channelFilter,
+        sentimentFilter,
+        topicFilter,
+        classificationFilter,
+        timeFilter,
+        curationFilter,
+        dateFrom,
+        dateTo,
+        pageSize,
+    ])
+
     const loadMessages = async () => {
         try {
             const response = await fetch(
-                `${API_BASE_URL}/api/community/messages?limite=500`
+                `${API_BASE_URL}/api/community/messages?limite=0`
             )
 
             if (!response.ok) {
@@ -341,17 +360,25 @@ function Messages() {
         [messageItems]
     )
 
-    const questionMessages = messageItems.filter((message) =>
-        message.message.trim().endsWith('?')
-    ).length
+    const questionMessages = useMemo(
+        () =>
+            messageItems.filter((message) =>
+                message.message.trim().endsWith('?')
+            ).length,
+        [messageItems]
+    )
 
-    const highlightedMessages = messageItems.filter(
-        (message) => message.highlight
-    ).length
+    const highlightedMessages = useMemo(
+        () =>
+            messageItems.filter(
+                (message) => message.highlight
+            ).length,
+        [messageItems]
+    )
 
 
 
-    const matchesTimeFilter = (date: Date) => {
+    const matchesTimeFilter = useCallback((date: Date) => {
         // 1. Rango específico seleccionado por el usuario en 'Desde' y 'Hasta'
         if (dateFrom) {
             const fromTimestamp = new Date(`${dateFrom}T00:00:00`).getTime()
@@ -379,95 +406,145 @@ function Messages() {
         if (timeFilter === 'month') return hours <= 24 * 30
 
         return true
-    }
+    }, [dateFrom, dateTo, timeFilter])
 
-    const filteredMessages = messageItems.filter((message) => {
-        // Evitar que las respuestas del bot reingresen al flujo editorial.
-        if (message.author.toLowerCase().includes('cloudedtech community bot')) {
-            return false
-        }
+    const filteredMessages = useMemo(() => {
+        return messageItems.filter((message) => {
+            // Evitar que las respuestas del bot reingresen al flujo editorial.
+            if (message.author.toLowerCase().includes('cloudedtech community bot')) {
+                return false
+            }
 
-        const isMsgPublished =
-            Boolean(message.isPublished) ||
-            message.workflowStage === 'publicado' ||
-            (Array.isArray(message.publishedPlatforms) && message.publishedPlatforms.length > 0)
-        const currentCuration = curationStatus[message.id] ?? 'pending'
+            const isMsgPublished =
+                Boolean(message.isPublished) ||
+                message.workflowStage === 'publicado' ||
+                (Array.isArray(message.publishedPlatforms) && message.publishedPlatforms.length > 0)
+            const currentCuration = curationStatus[message.id] ?? 'pending'
 
-        // Precedencia humana (HITL):
-        // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
-        // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado explícitamente
-        // Y NUNCA si el mensaje ya fue publicado
-        const isDiscarded =
-            !isMsgPublished &&
-            (currentCuration === 'discarded' ||
-                (message.isAnalyzed &&
-                    message.relevance < 70 &&
-                    currentCuration !== 'curated'))
+            // Precedencia humana (HITL):
+            // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
+            // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado explícitamente
+            // Y NUNCA si el mensaje ya fue publicado
+            const isDiscarded =
+                !isMsgPublished &&
+                (currentCuration === 'discarded' ||
+                    (message.isAnalyzed &&
+                        message.relevance < 70 &&
+                        currentCuration !== 'curated'))
 
-        // Solo se considera proceso completo si efectivamente fue publicado en >= 1 red social
-        const isCompleted = !isDiscarded && isMsgPublished
+            // Solo se considera proceso completo si efectivamente fue publicado en >= 1 red social
+            const isCompleted = !isDiscarded && isMsgPublished
 
-        const isPendingEval =
-            !isDiscarded &&
-            !isCompleted &&
-            (!message.isAnalyzed ||
-                (message.relevance === 0 &&
-                    (message.workflowStage === 'ingesta' ||
-                        message.workflowStage === 'en_ingesta')))
+            const isPendingEval =
+                !isDiscarded &&
+                !isCompleted &&
+                (!message.isAnalyzed ||
+                    (message.relevance === 0 &&
+                        (message.workflowStage === 'ingesta' ||
+                            message.workflowStage === 'en_ingesta')))
 
-        const isPendingCopy = !isDiscarded && !isCompleted && !isPendingEval
+            const isPendingCopy = !isDiscarded && !isCompleted && !isPendingEval
 
-        // Filtro unificado por Estado del mensaje
-        if (curationFilter === 'descartados') {
-            if (!isDiscarded) return false
-        } else if (curationFilter === 'completos') {
-            if (!isCompleted) return false
-        } else if (curationFilter === 'pending_copy') {
-            if (!isPendingCopy) return false
-        } else if (curationFilter === 'pending_eval') {
-            if (!isPendingEval) return false
-        }
-        // Cuando curationFilter === 'all', pasan todos los mensajes
+            // Filtro unificado por Estado del mensaje
+            if (curationFilter === 'descartados') {
+                if (!isDiscarded) return false
+            } else if (curationFilter === 'completos') {
+                if (!isCompleted) return false
+            } else if (curationFilter === 'pending_copy') {
+                if (!isPendingCopy) return false
+            } else if (curationFilter === 'pending_eval') {
+                if (!isPendingEval) return false
+            }
+            // Cuando curationFilter === 'all', pasan todos los mensajes
 
-        const search = searchTerm.trim().toLowerCase()
+            const search = searchTerm.trim().toLowerCase()
 
-        const matchesSearch =
-            !search ||
-            message.author.toLowerCase().includes(search) ||
-            message.message.toLowerCase().includes(search) ||
-            message.topic.toLowerCase().includes(search) ||
-            message.channel.toLowerCase().includes(search) ||
-            message.keywords.some((keyword) =>
-                keyword.toLowerCase().includes(search)
+            const matchesSearch =
+                !search ||
+                message.author.toLowerCase().includes(search) ||
+                message.message.toLowerCase().includes(search) ||
+                message.topic.toLowerCase().includes(search) ||
+                message.channel.toLowerCase().includes(search) ||
+                message.keywords.some((keyword) =>
+                    keyword.toLowerCase().includes(search)
+                )
+
+            const matchesChannel =
+                channelFilter === 'all' ||
+                message.channel === channelFilter ||
+                (message.channel || '').replace(/^#/, '').toLowerCase() ===
+                    channelFilter.replace(/^#/, '').toLowerCase()
+
+            const matchesSentiment =
+                sentimentFilter === 'all' ||
+                message.sentiment === sentimentFilter
+
+            const matchesTopic =
+                topicFilter === 'all' ||
+                message.topic === topicFilter
+
+            const matchesClassification =
+                classificationFilter === 'all' ||
+                message.classification === classificationFilter
+
+            return (
+                matchesSearch &&
+                matchesChannel &&
+                matchesSentiment &&
+                matchesTopic &&
+                matchesClassification &&
+                matchesTimeFilter(message.rawDate)
             )
+        })
+    }, [
+        messageItems,
+        curationStatus,
+        curationFilter,
+        searchTerm,
+        channelFilter,
+        sentimentFilter,
+        topicFilter,
+        classificationFilter,
+        matchesTimeFilter,
+    ])
 
-        const matchesChannel =
-            channelFilter === 'all' ||
-            message.channel === channelFilter ||
-            (message.channel || '').replace(/^#/, '').toLowerCase() ===
-                channelFilter.replace(/^#/, '').toLowerCase()
+    const totalPages = Math.max(1, Math.ceil(filteredMessages.length / pageSize))
 
-        const matchesSentiment =
-            sentimentFilter === 'all' ||
-            message.sentiment === sentimentFilter
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages)
+        }
+    }, [currentPage, totalPages])
 
-        const matchesTopic =
-            topicFilter === 'all' ||
-            message.topic === topicFilter
+    useEffect(() => {
+        const listEl = document.getElementById('msg-list')
+        if (listEl) {
+            listEl.scrollTop = 0
+        }
+    }, [currentPage])
 
-        const matchesClassification =
-            classificationFilter === 'all' ||
-            message.classification === classificationFilter
+    const paginatedMessages = useMemo(
+        () => filteredMessages.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+        [filteredMessages, currentPage, pageSize]
+    )
 
-        return (
-            matchesSearch &&
-            matchesChannel &&
-            matchesSentiment &&
-            matchesTopic &&
-            matchesClassification &&
-            matchesTimeFilter(message.rawDate)
-        )
-    })
+    const startIndex = filteredMessages.length === 0 ? 0 : (currentPage - 1) * pageSize + 1
+    const endIndex = Math.min(currentPage * pageSize, filteredMessages.length)
+
+    const getPageNumbers = () => {
+        if (totalPages <= 7) {
+            return Array.from({ length: totalPages }, (_, i) => i + 1)
+        }
+        const pages: (number | string)[] = []
+        if (currentPage <= 4) {
+            pages.push(1, 2, 3, 4, 5, '...', totalPages)
+        } else if (currentPage >= totalPages - 3) {
+            pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages)
+        } else {
+            pages.push(1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages)
+        }
+        return pages
+    }
 
     const markCuration = async (
         message: MessageItem,
@@ -766,6 +843,7 @@ function Messages() {
         setCurationFilter('all')
         setDateFrom('')
         setDateTo('')
+        setCurrentPage(1)
         setBatchEvalMessage(null)
         setSyncFeedbackMessage(null)
     }
@@ -1410,7 +1488,7 @@ function Messages() {
                         </div>
                     )}
 
-                    {filteredMessages.map((message) => {
+                    {paginatedMessages.map((message) => {
                         const isMsgPublished =
                             Boolean(message.isPublished) ||
                             message.workflowStage === 'publicado' ||
@@ -1684,6 +1762,110 @@ function Messages() {
                         )
                     })}
                 </div>
+
+                {/* Barra de controles de paginación canónica CloudEdTech */}
+                <footer className="flex flex-col gap-3 border-t border-slate-200/90 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                        <span className="tabular-nums font-medium">
+                            Mostrando{' '}
+                            <strong className="font-semibold text-slate-900">
+                                {startIndex}–{endIndex}
+                            </strong>{' '}
+                            de{' '}
+                            <strong className="font-semibold text-slate-900">
+                                {filteredMessages.length.toLocaleString('es-CO')}
+                            </strong>{' '}
+                            mensajes
+                        </span>
+
+                        <span className="hidden h-4 w-px bg-slate-300 sm:inline-block" aria-hidden="true" />
+
+                        <div className="flex items-center gap-2">
+                            <label htmlFor="msg-page-size" className="text-slate-500 font-medium">
+                                Por página:
+                            </label>
+                            <select
+                                id="msg-page-size"
+                                aria-label="Mensajes por página"
+                                value={pageSize}
+                                onChange={(e) => setPageSize(Number(e.target.value))}
+                                className="c-select py-1 pl-2.5 pr-7 text-xs font-semibold rounded-lg border-slate-200 bg-white"
+                                style={{ width: 'auto', height: '2rem' }}
+                            >
+                                <option value={25}>25</option>
+                                <option value={50}>50</option>
+                                <option value={100}>100</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
+                        <span className="text-xs font-medium text-slate-500 tabular-nums">
+                            Página <strong className="font-semibold text-slate-900">{currentPage}</strong> de{' '}
+                            <strong className="font-semibold text-slate-900">{totalPages}</strong>
+                        </span>
+
+                        <nav aria-label="Navegación de páginas" className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                disabled={currentPage <= 1}
+                                aria-label="Página anterior"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                style={{ padding: '0.35rem 0.65rem' }}
+                            >
+                                <ChevronLeft size={14} />
+                                <span className="hidden sm:inline">Anterior</span>
+                            </button>
+
+                            {/* Botones numéricos de salto de página */}
+                            <div className="hidden items-center gap-1 md:flex">
+                                {getPageNumbers().map((item, idx) => {
+                                    if (item === '...') {
+                                        return (
+                                            <span
+                                                key={`ellipsis-${idx}`}
+                                                className="px-1.5 text-xs text-slate-400 select-none"
+                                            >
+                                                …
+                                            </span>
+                                        )
+                                    }
+                                    const pageNum = Number(item)
+                                    const isActive = pageNum === currentPage
+                                    return (
+                                        <button
+                                            key={pageNum}
+                                            type="button"
+                                            onClick={() => setCurrentPage(pageNum)}
+                                            aria-label={`Ir a la página ${pageNum}`}
+                                            aria-current={isActive ? 'page' : undefined}
+                                            className={`c-btn c-btn--sm min-w-[2rem] px-2 text-xs font-semibold tabular-nums ${
+                                                isActive
+                                                    ? 'c-btn--primary font-bold shadow-xs'
+                                                    : 'c-btn--secondary'
+                                            }`}
+                                        >
+                                            {pageNum}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                disabled={currentPage >= totalPages}
+                                aria-label="Página siguiente"
+                                className="c-btn c-btn--secondary c-btn--sm"
+                                style={{ padding: '0.35rem 0.65rem' }}
+                            >
+                                <span className="hidden sm:inline">Siguiente</span>
+                                <ChevronRight size={14} />
+                            </button>
+                        </nav>
+                    </div>
+                </footer>
             </article>
 
             {/* Nota integración */}

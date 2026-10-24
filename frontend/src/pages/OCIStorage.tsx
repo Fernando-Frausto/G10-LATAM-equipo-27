@@ -137,6 +137,20 @@ function OCIStorage() {
         loadReports();
     }, [loadReports]);
 
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                if (jsonModalReport) {
+                    setJsonModalReport(null);
+                } else if (inspectionModalReport) {
+                    setInspectionModalReport(null);
+                }
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [jsonModalReport, inspectionModalReport]);
+
     const isServiceConnected =
         ociStatus?.status === "connected" || ociStatus?.status === "ready";
     const isOciOnline = Boolean(ociStatus?.oci_configured);
@@ -251,7 +265,7 @@ function OCIStorage() {
             } else {
                 setFeedbackBanner({
                     type: "offline",
-                    message: `Modo Local / Offline: Sin conexión activa a OCI en este entorno. Reporte generado y respaldado en reportes/${semanaRes}.json.`,
+                    message: `Persistencia local completada satisfactoriamente: Reporte empaquetado y guardado en reportes/${semanaRes}.json (Modo offline / OCI no configurado).`,
                 });
             }
 
@@ -471,27 +485,25 @@ function OCIStorage() {
                     </article>
                 </div>
 
-                {/* Banner de feedback si ocurre alguna sincronización o error */}
+                {/* Banner de feedback si ocurre alguna sincronización o persistencia local */}
                 {feedbackBanner && (
                     <div
                         className={`flex items-start gap-3 rounded-xl border p-4 text-sm ${
                             feedbackBanner.type === "success"
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                                 : feedbackBanner.type === "offline"
-                                  ? "border-amber-200 bg-amber-50 text-amber-800"
+                                  ? "border-sky-200 bg-sky-50 text-sky-800"
                                   : "border-red-200 bg-red-50 text-red-800"
                         }`}
                     >
                         {feedbackBanner.type === "success" ? (
                             <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" />
+                        ) : feedbackBanner.type === "offline" ? (
+                            <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-sky-600" />
                         ) : (
                             <AlertTriangle
                                 size={18}
-                                className={`mt-0.5 shrink-0 ${
-                                    feedbackBanner.type === "offline"
-                                        ? "text-amber-600"
-                                        : "text-red-600"
-                                }`}
+                                className="mt-0.5 shrink-0 text-red-600"
                             />
                         )}
                         <div className="flex-1 font-medium">{feedbackBanner.message}</div>
@@ -682,9 +694,12 @@ function OCIStorage() {
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="inspection-modal-title"
+                    onClick={(e) => {
+                        if (e.target === e.currentTarget) setInspectionModalReport(null);
+                    }}
                 >
-                    <div className="c-modal__dialog max-w-2xl">
-                        <div className="c-modal__head">
+                    <div className="c-modal__dialog max-w-2xl max-h-[90vh] flex flex-col">
+                        <div className="c-modal__head shrink-0">
                             <div className="flex items-center gap-2">
                                 <FileText size={18} className="text-orange-500" />
                                 <h2 className="t-card" id="inspection-modal-title">
@@ -701,7 +716,7 @@ function OCIStorage() {
                             </button>
                         </div>
 
-                        <div className="c-modal__body space-y-4">
+                        <div className="c-modal__body max-h-[70vh] md:max-h-[75vh] overflow-y-auto space-y-4">
                             {/* Estado y Ruta OCI */}
                             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3 text-xs border border-slate-200/80">
                                 <div className="flex items-center gap-2">
@@ -808,7 +823,7 @@ function OCIStorage() {
                             </div>
                         </div>
 
-                        <div className="c-modal__foot">
+                        <div className="c-modal__foot shrink-0">
                             <button
                                 type="button"
                                 className="c-btn c-btn--secondary c-btn--sm"
@@ -848,9 +863,12 @@ function OCIStorage() {
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="json-modal-title"
+                    onClick={(e) => {
+                        if (e.target === e.currentTarget) setJsonModalReport(null);
+                    }}
                 >
-                    <div className="c-modal__dialog max-w-3xl">
-                        <div className="c-modal__head">
+                    <div className="c-modal__dialog max-w-3xl max-h-[90vh] flex flex-col">
+                        <div className="c-modal__head shrink-0">
                             <h2 className="t-card" id="json-modal-title">
                                 reporte_{jsonModalReport.semana}.json ({formatBytes(jsonModalReport.tamano_bytes)})
                             </h2>
@@ -864,13 +882,13 @@ function OCIStorage() {
                             </button>
                         </div>
 
-                        <div className="c-modal__body">
-                            <pre className="c-code max-h-[60vh] overflow-auto text-xs">
+                        <div className="c-modal__body max-h-[70vh] md:max-h-[75vh] overflow-y-auto">
+                            <pre className="c-code text-xs">
                                 {JSON.stringify(jsonModalReport.reporte, null, 2)}
                             </pre>
                         </div>
 
-                        <div className="c-modal__foot">
+                        <div className="c-modal__foot shrink-0">
                             <button
                                 type="button"
                                 className="c-btn c-btn--secondary c-btn--sm"

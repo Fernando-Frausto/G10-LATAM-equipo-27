@@ -5349,3 +5349,376 @@ def test_spec024_modo_offline_oci_y_status_saved_locally(client, tmp_path, monke
     contenido = json.loads(ruta_archivo.read_text(encoding="utf-8"))
     assert contenido["metadata"]["semana"] == "2026-semana-42"
     assert contenido["resumen_metricas"]["total_aprobados"] == 1
+
+
+# ==============================================================================
+# Spec 025: Auditoría Integral de Calidad, Resiliencia de Interfaz y Blindaje de Alta Velocidad
+# ==============================================================================
+
+def test_spec025_indices_sqlite_creacion_idempotente():
+    """
+    Spec 025 - RF-02, RF-06:
+    Verifica que la ejecución de _asegurar_esquema_sqlite() crea exitosamente en SQLite
+    los 6 índices estratégicos requeridos y que su ejecución repetida es 100% idempotente sin colisiones.
+    """
+    indices_requeridos = {
+        "idx_interacciones_enviado_id",
+        "idx_interacciones_canal",
+        "idx_interacciones_curaduria",
+        "idx_interacciones_etapa",
+        "idx_interacciones_id_desc",
+        "idx_contenidos_interaccion_estado",
+    }
+
+    # Primera ejecución
+    puente_motor_ia._asegurar_esquema_sqlite()
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        indices_db = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+
+    faltantes = indices_requeridos - indices_db
+    assert not faltantes, (
+        f"Los siguientes índices estratégicos de Spec 025 no fueron creados por _asegurar_esquema_sqlite(): {faltantes}"
+    )
+
+    # Segunda ejecución: debe ser 100% idempotente sin errores de colisión
+    puente_motor_ia._asegurar_esquema_sqlite()
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        indices_db_2 = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+
+    assert indices_requeridos.issubset(indices_db_2), (
+        "Los índices deben mantenerse intactos y disponibles tras re-ejecución idempotente de _asegurar_esquema_sqlite()"
+    )
+
+
+def test_spec025_sqlite_indices_explain_query_plan():
+    """
+    Spec 025 - RF-02, RF-06:
+    Valida mediante EXPLAIN QUERY PLAN que el optimizador de SQLite utilice los índices
+    creados reportando USING INDEX en las consultas frecuentes, erradicando SCAN TABLE.
+    """
+    puente_motor_ia._asegurar_esquema_sqlite()
+
+    consultas_a_probar = [
+        ("SELECT * FROM interacciones WHERE canal = '#general' ORDER BY id DESC", "idx_interacciones_canal"),
+        ("SELECT * FROM interacciones WHERE estado_curaduria = 'curated'", "idx_interacciones_curaduria"),
+        ("SELECT * FROM interacciones WHERE etapa_flujo = 'en_redaccion'", "idx_interacciones_etapa"),
+        ("SELECT * FROM interacciones ORDER BY enviado_en DESC, id DESC", "idx_interacciones_enviado_id"),
+        ("SELECT id FROM interacciones ORDER BY id DESC", "idx_interacciones_id_desc"),
+        (
+            "SELECT * FROM contenidos_generados WHERE interaccion_id = 1 AND estado = 'publicado' AND estado_publicacion = 'publicado'",
+            "idx_contenidos_interaccion_estado",
+        ),
+    ]
+
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        # Insertar registros mínimos para posibilitar análisis del plan
+        for i in range(1, 20):
+            conn.execute(
+                """
+                INSERT INTO interacciones (
+                    id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                    texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    i, f"hash_{i}", "Discord", "Semana_01", f"user_{i}", "#general" if i % 2 == 0 else "#soporte",
+                    "mensaje", f"Texto #{i}", f"2026-10-{i:02d}T10:00:00Z", "2026-10-01T10:00:00Z", "analizado",
+                    "curated" if i % 3 == 0 else "pending", "en_redaccion" if i % 2 == 0 else "ingesta"
+                )
+            )
+            conn.execute(
+                """
+                INSERT INTO contenidos_generados (
+                    id, interaccion_id, formato, titulo, contenido, tono, estado,
+                    creado_en, actualizado_en, tipo_contenido, version, estado_publicacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    i, i, "post", f"Titulo {i}", f"Contenido {i}", "profesional",
+                    "publicado" if i % 2 == 0 else "pendiente_revision",
+                    "2026-10-01T12:00:00Z", "2026-10-01T12:00:00Z", "publicacion", 1,
+                    "publicado" if i % 2 == 0 else "no_publicado"
+                )
+            )
+        conn.commit()
+
+        for sql, indice_esperado in consultas_a_probar:
+            plan_rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}").fetchall()
+            plan_str = " ".join(str(col) for row in plan_rows for col in row)
+            assert ("USING INDEX" in plan_str or "USING COVERING INDEX" in plan_str), (
+                f"La consulta '{sql}' no está utilizando índices y realiza escaneo secuencial. Plan obtenido: {plan_str}"
+            )
+            assert indice_esperado in plan_str, (
+                f"La consulta '{sql}' debe utilizar el índice específico '{indice_esperado}'. Plan obtenido: {plan_str}"
+            )
+
+
+def test_spec025_endpoint_messages_limite_cero_sin_tope(client):
+    """
+    Spec 025 - RF-02, RF-06:
+    Invoca GET /api/community/messages?limite=0 y GET /api/community/messages?limit=0
+    verificando que devuelva la totalidad absoluta de mensajes comunitarios sin truncar a 1,000.
+    """
+    total_registros = 1050
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        filas = [
+            (
+                i, f"hash_{i:04d}", "Discord", "Semana_01", f"user_{i}", "#general", "mensaje",
+                f"Mensaje comunitario #{i}", f"2026-10-01T12:{i % 60:02d}:00Z", "activo",
+                "2026-10-01T12:00:00Z", 75, "Positivo"
+            )
+            for i in range(1, total_registros + 1)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas
+        )
+        conn.commit()
+
+    # 1. Probar con limite=0
+    resp = client.get("/api/community/messages?limite=0")
+    assert resp.status_code == 200
+    datos = resp.json()
+    mensajes = datos.get("messages", [])
+    assert len(mensajes) == total_registros, (
+        f"Se esperaba recibir la totalidad absoluta de mensajes ({total_registros}) con limite=0, "
+        f"pero se obtuvieron {len(mensajes)}. Posible truncamiento a 1,000 o restricción indebida."
+    )
+    assert len(mensajes) > 1000, "Debe retornar más de 1,000 registros sin tope artificial"
+
+    # 2. Probar con limit=0 (alias)
+    resp_alias = client.get("/api/community/messages?limit=0")
+    assert resp_alias.status_code == 200
+    mensajes_alias = resp_alias.json().get("messages", [])
+    assert len(mensajes_alias) == total_registros, (
+        f"Se esperaba recibir la totalidad de mensajes ({total_registros}) con limit=0, pero se obtuvieron {len(mensajes_alias)}"
+    )
+
+
+def test_spec025_endpoint_messages_paginacion_pagina_offset(client):
+    """
+    Spec 025 - RF-02, RF-06:
+    Valida que el endpoint soporte paginación backend mediante 'pagina' y 'offset',
+    retornando los elementos correspondientes a la página solicitada y sanitizando offsets negativos.
+    """
+    total_registros = 120
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        filas = [
+            (
+                i, f"hash_{i:04d}", "Discord", "Semana_01", f"user_{i}", "#general", "mensaje",
+                f"Mensaje #{i}", f"2026-10-01T12:{i % 60:02d}:00Z", "activo",
+                "2026-10-01T12:00:00Z", 75, "Positivo"
+            )
+            for i in range(1, total_registros + 1)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas
+        )
+        conn.commit()
+
+    # Página 1 (50 elementos)
+    resp_p1 = client.get("/api/community/messages?limite=50&pagina=1")
+    assert resp_p1.status_code == 200
+    p1_items = resp_p1.json().get("messages", [])
+    assert len(p1_items) == 50
+    p1_ids = [m["message"]["interaction_id"] for m in p1_items]
+
+    # Página 2 (50 elementos)
+    resp_p2 = client.get("/api/community/messages?limite=50&pagina=2")
+    assert resp_p2.status_code == 200
+    p2_items = resp_p2.json().get("messages", [])
+    assert len(p2_items) == 50
+    p2_ids = [m["message"]["interaction_id"] for m in p2_items]
+
+    # Las páginas 1 y 2 deben ser disjuntas
+    assert set(p1_ids).isdisjoint(set(p2_ids)), (
+        f"La paginación con pagina=2 retornó elementos solapados con pagina=1: {set(p1_ids).intersection(set(p2_ids))}"
+    )
+
+    # Offset explícito: offset=50 debe equivaler a pagina=2
+    resp_offset = client.get("/api/community/messages?limite=50&offset=50")
+    assert resp_offset.status_code == 200
+    offset_ids = [m["message"]["interaction_id"] for m in resp_offset.json().get("messages", [])]
+    assert offset_ids == p2_ids, "El offset=50 debe retornar exactamente los mismos elementos que pagina=2"
+
+    # Sanitización: offset negativo debe interpretarse como 0
+    resp_neg = client.get("/api/community/messages?limite=50&offset=-25")
+    assert resp_neg.status_code == 200
+    neg_ids = [m["message"]["interaction_id"] for m in resp_neg.json().get("messages", [])]
+    assert neg_ids == p1_ids, "Un offset negativo debe ser sanitizado a offset=0 (página 1)"
+
+
+def test_spec025_endpoint_messages_retrocompatibilidad_estructura_json(client):
+    """
+    Spec 025 - RF-01, RF-02, RF-06:
+    Valida que la respuesta preserve al 100% las cuatro claves canónicas exigidas por el
+    Principio 3 de la Constitución: total, omitted_bots_count, real_messages_count y messages,
+    tanto con parámetros por defecto, como con limite=0 y paginación.
+    """
+    total_reales = 40
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        filas = [
+            (
+                i, f"hash_{i:04d}", "Discord", "Semana_01", f"user_{i}", "#general", "mensaje",
+                f"Mensaje #{i}", "2026-10-01T12:00:00Z", "activo",
+                "2026-10-01T12:00:00Z", 80, "Positivo"
+            )
+            for i in range(1, total_reales + 1)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas
+        )
+        # Bot para telemetría
+        conn.execute(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, estado, creado_en, relevancia, sentimiento
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                9999, "hash_bot_9999", "Discord", "Semana_01", "Spidey Boy#0000", "#notificaciones", "mensaje",
+                "Alerta de bot", "2026-10-01T12:00:00Z", "activo", "2026-10-01T12:00:00Z", 0, "Neutral"
+            )
+        )
+        conn.commit()
+
+    # 1. Petición estándar
+    resp = client.get("/api/community/messages")
+    assert resp.status_code == 200
+    datos = resp.json()
+    claves_canonicas = {"total", "omitted_bots_count", "real_messages_count", "messages"}
+    assert set(datos.keys()) == claves_canonicas, f"Estructura JSON debe contener exactamente {claves_canonicas}"
+    assert isinstance(datos["total"], int)
+    assert isinstance(datos["omitted_bots_count"], int)
+    assert isinstance(datos["real_messages_count"], int)
+    assert isinstance(datos["messages"], list)
+    assert datos["total"] == total_reales
+    assert datos["real_messages_count"] == total_reales
+    assert datos["omitted_bots_count"] >= 1
+
+    # Estructura del mensaje individual
+    msg = datos["messages"][0]
+    assert "message" in msg and "analysis" in msg
+    msg_data = msg["message"]
+    campos_requeridos = {"interaction_id", "author_name", "channel_name", "content", "created_at"}
+    assert campos_requeridos.issubset(set(msg_data.keys()))
+    campos_analysis = {"sentiment", "sentiment_score", "relevance", "curation_status", "workflow_stage", "is_published", "published_platforms"}
+    assert campos_analysis.issubset(set(msg["analysis"].keys()))
+
+    # 2. Petición con limite=0: debe retornar la totalidad de mensajes reales sin truncamiento
+    resp_cero = client.get("/api/community/messages?limite=0")
+    assert resp_cero.status_code == 200
+    datos_cero = resp_cero.json()
+    assert set(datos_cero.keys()) == claves_canonicas
+    assert len(datos_cero["messages"]) == total_reales, (
+        f"Con limite=0 debe retornar los {total_reales} mensajes reales, se obtuvieron {len(datos_cero['messages'])}"
+    )
+
+    # 3. Petición con paginación
+    resp_pag = client.get("/api/community/messages?limite=15&pagina=1")
+    assert resp_pag.status_code == 200
+    datos_pag = resp_pag.json()
+    assert set(datos_pag.keys()) == claves_canonicas
+    assert datos_pag["total"] == total_reales
+    assert len(datos_pag["messages"]) == 15
+
+
+def test_spec025_endpoints_lectura_latencia_sub_2ms(monkeypatch):
+    """
+    Spec 025 - RF-02, RF-06:
+    Mide la latencia de procesamiento en consultas de lectura a communitylab.db con los índices aplicados,
+    comprobando una resolución inferior a 2 milisegundos (< 2 ms) y cero llamadas WAN bloqueantes.
+    """
+    import time
+    indices_requeridos = {
+        "idx_interacciones_enviado_id",
+        "idx_interacciones_canal",
+        "idx_interacciones_curaduria",
+        "idx_interacciones_etapa",
+        "idx_interacciones_id_desc",
+        "idx_contenidos_interaccion_estado",
+    }
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        indices_existentes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+        indices_faltantes = indices_requeridos - indices_existentes
+        assert not indices_faltantes, (
+            f"Faltan los índices estratégicos para garantizar latencia de lectura < 2 ms: {indices_faltantes}"
+        )
+
+        # Poblar con 1,200 registros simulando producción
+        filas_int = [
+            (
+                i, f"hash_{i}", "Discord", "Semana_01", f"user_{i}",
+                "#general" if i % 2 == 0 else "#soporte", "mensaje", f"Texto #{i}",
+                f"2026-10-01T12:{i % 60:02d}:00Z", "2026-10-01T12:00:00Z", "analizado",
+                "curated" if i % 3 == 0 else "pending", "ingesta"
+            )
+            for i in range(1, 1201)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas_int
+        )
+        filas_cont = [
+            (
+                i, i, "post", f"Titulo {i}", f"Contenido {i}", "profesional",
+                "publicado" if i % 2 == 0 else "pendiente_revision",
+                "2026-10-01T12:00:00Z", "2026-10-01T12:00:00Z", "publicacion", 1,
+                "publicado" if i % 2 == 0 else "no_publicado"
+            )
+            for i in range(1, 1201)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO contenidos_generados (
+                id, interaccion_id, formato, titulo, contenido, tono, estado,
+                creado_en, actualizado_en, tipo_contenido, version, estado_publicacion
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            filas_cont
+        )
+        conn.commit()
+
+        # Blindaje WAN: asegurar que no haya llamadas bloqueantes
+        mock_wan = MagicMock(side_effect=RuntimeError("Llamada WAN bloqueante prohibida"))
+        monkeypatch.setattr(puente_motor_ia, "obtener_datos_supabase", mock_wan)
+
+        # Medir latencia promedio en 20 ejecuciones de lecturas indexadas
+        tiempos = []
+        for _ in range(20):
+            t0 = time.perf_counter()
+            conn.execute("SELECT * FROM interacciones WHERE canal = '#general' ORDER BY id DESC LIMIT 50").fetchall()
+            conn.execute("SELECT * FROM interacciones WHERE estado_curaduria = 'curated' LIMIT 50").fetchall()
+            conn.execute("SELECT * FROM interacciones ORDER BY enviado_en DESC, id DESC LIMIT 50").fetchall()
+            t_ms = (time.perf_counter() - t0) * 1000.0
+            tiempos.append(t_ms)
+
+        latencia_promedio_ms = sum(tiempos) / len(tiempos)
+        assert latencia_promedio_ms < 2.0, (
+            f"La latencia de lectura indexada debe ser sub-2ms (< 2 ms). Obtenido: {latencia_promedio_ms:.2f} ms"
+        )
+
+

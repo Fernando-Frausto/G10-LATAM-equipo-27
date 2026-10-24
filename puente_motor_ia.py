@@ -395,6 +395,14 @@ def _asegurar_esquema_sqlite():
                 if "duplicate column name" not in str(exc_col).lower():
                     logger.debug(f"Aviso asegurando columna sync_supabase en contenidos_generados: {exc_col}")
 
+        # Spec 025 - RF-02, RF-06: 6 Índices estratégicos para blindaje de alta velocidad en SQLite
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interacciones_enviado_id ON interacciones(enviado_en DESC, id DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interacciones_canal ON interacciones(canal, id DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interacciones_curaduria ON interacciones(estado_curaduria)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interacciones_etapa ON interacciones(etapa_flujo)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interacciones_id_desc ON interacciones(id DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_contenidos_interaccion_estado ON contenidos_generados(interaccion_id, estado, estado_publicacion)")
+
         conn.commit()
 
 
@@ -4745,16 +4753,45 @@ def _obtener_telemetria_bots_omitidos_discord() -> int:
 
 @app.get("/api/community/messages")
 @app.get("/api/community/messages/")
-def consultar_mensajes_comunidad_enriquecido(limite: int = 500, limit: int | None = None):
+def consultar_mensajes_comunidad_enriquecido(
+    limite: int = 500,
+    limit: int | None = None,
+    offset: int = 0,
+    pagina: int = 1,
+):
     """
-    Spec 016 - RF-003, RF-007:
-    Consulta mensajes de la comunidad enriquecidos con trazabilidad multicanal (is_published, published_platforms)
-    y sincronización de etapa_flujo / estado_curaduria para mensajes con copys publicados.
+    Spec 016 - RF-003, RF-007 / Spec 025 - RF-02, RF-06:
+    Consulta mensajes de la comunidad enriquecidos con trazabilidad multicanal (is_published, published_platforms),
+    soporte de paginación con offset/pagina y supresión del tope rígido de 1,000 ante limite=0.
     """
     import json
-    max_limite = limit if limit is not None else limite
-    max_limite = max(1, min(max_limite, 1000))
-    registros = motor_bd.listar_interacciones(limite=max_limite)
+    limite_solicitado = limit if limit is not None else limite
+    try:
+        limite_solicitado = int(limite_solicitado)
+    except (ValueError, TypeError):
+        limite_solicitado = 500
+
+    try:
+        offset = int(offset)
+    except (ValueError, TypeError):
+        offset = 0
+
+    try:
+        pagina = int(pagina)
+    except (ValueError, TypeError):
+        pagina = 1
+
+    if pagina > 1 and offset == 0 and limite_solicitado > 0:
+        offset = (pagina - 1) * limite_solicitado
+
+    offset = max(0, offset)
+
+    if limite_solicitado == 0:
+        registros_todos = motor_bd.listar_interacciones(limite=None)
+        registros = registros_todos[offset:] if offset > 0 else registros_todos
+    else:
+        registros_todos = motor_bd.listar_interacciones(limite=None)
+        registros = registros_todos[offset : offset + limite_solicitado]
 
     def palabras_clave(valor):
         if not valor:
