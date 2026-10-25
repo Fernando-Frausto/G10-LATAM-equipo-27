@@ -189,7 +189,7 @@ def mock_supabase_datos():
             "fecha_extraccion": "2026-10-01T14:05:00+00:00",
             "modelo_ia": "Groq",
             "texto_original": "La plataforma está fallando al hacer login",
-            "relevancia": 60,
+            "relevancia": 25,
             "sentimiento": "Negativo",
             "temas_clave": "#plataforma #error #soporte",
             "segmento": "ESTUDIANTE",
@@ -5147,7 +5147,7 @@ def test_spec024_complemento_descartados_desde_sqlite(tmp_path, monkeypatch):
              'analizado', 'descartado', 'descartado', 'discarded', 30, 'Negativo', '#spam', 'SPAM', 'Publicidad no deseada'),
             (1103, 'hash1103', 'Discord', '2026-semana-42', 'usuario_casual', '#general', 'mensaje',
              'Hola a todos buenos días', '2026-10-15T12:00:00+00:00', '2026-10-15T12:00:00+00:00',
-             'analizado', 'pendiente', 'ingesta', 'pending', 45, 'Neutral', '#saludo', 'GENERAL', 'Saludo sin contenido técnico'),
+             'analizado', 'pendiente', 'ingesta', 'pending', 25, 'Neutral', '#saludo', 'GENERAL', 'Saludo sin contenido técnico'),
             (1104, 'hash1104', 'Discord', '2026-semana-40', 'usuario_antiguo', '#general', 'mensaje',
              'Mensaje viejo irrelevante', '2026-09-30T10:00:00+00:00', '2026-09-30T10:00:00+00:00',
              'analizado', 'descartado', 'descartado', 'discarded', 20, 'Neutral', '#viejo', 'GENERAL', 'Mensaje de semana anterior')
@@ -5722,3 +5722,973 @@ def test_spec025_endpoints_lectura_latencia_sub_2ms(monkeypatch):
         )
 
 
+# ==============================================================================
+# Spec 026: Corrección Integral de Hallazgos QA (Enoc) Pre-Demo Day
+# ==============================================================================
+
+def test_spec026_rf01_curaduria_manual_persistencia_exclusion_y_replica_async(client, monkeypatch):
+    """
+    Spec 026 - RF-01, RNF-02:
+    Valida la persistencia de descarte y restauración manual en Ingesta:
+    1. Descartar manualmente ('discarded') persiste en SQLite inmediatamente.
+    2. _obtener_ids_evaluados_dual() excluye los mensajes con estado_curaduria = 'discarded'.
+    3. La decisión manual sobrevive a resincronizaciones posteriores con _sincronizar_supabase_a_sqlite().
+    4. Restaurar un mensaje NO analizado lo devuelve a 'pending' (etapa_flujo = 'ingesta').
+    5. Restaurar un mensaje YA analizado lo devuelve a 'curated'.
+    6. La mutación delega la réplica hacia public.lotes_ia_kpis en segundo plano (asyncio.create_task)
+       ignorando silenciosamente 0 rows affected y respondiendo en < 5 ms sin bloqueo WAN.
+    """
+    import time
+
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo, relevancia
+            ) VALUES
+            (2601, 'hash_2601', 'Discord', 'Semana_01', 'user_no_eval', '#general', 'mensaje',
+             'Mensaje irrelevante sin evaluar', '2026-10-25T10:00:00Z', '2026-10-25T10:00:00Z',
+             'pendiente', 'pending', 'ingesta', NULL),
+            (2602, 'hash_2602', 'Discord', 'Semana_01', 'user_ya_eval', '#notificaciones', 'mensaje',
+             'Anuncio importante ya evaluado', '2026-10-25T10:05:00Z', '2026-10-25T10:05:00Z',
+             'analizado', 'curated', 'en_analisis', 65)
+            """
+        )
+        conn.commit()
+
+    # Simular conexión lenta a Supabase (300 ms) y 0 rows affected para verificar ejecución no bloqueante (< 5 ms)
+    ejecuciones_sql_bg = []
+
+    class SlowZeroRowCursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        def execute(self, sql, params=None):
+            ejecuciones_sql_bg.append((sql, params))
+
+    class SlowConn:
+        def __enter__(self):
+            time.sleep(0.25)
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        def cursor(self, *args, **kwargs):
+            return SlowZeroRowCursor()
+
+        def commit(self):
+            pass
+
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://mock:5432/db")
+    monkeypatch.setattr("psycopg2.connect", lambda *a, **kw: SlowConn())
+
+    # 1. Descartar manualmente el mensaje 2601 (no analizado) y medir latencia de actualización en el puente
+    tareas_creadas = []
+    orig_create_task = puente_motor_ia.asyncio.create_task
+
+    def spy_create_task(coro, *args, **kwargs):
+        t = orig_create_task(coro, *args, **kwargs)
+        tareas_creadas.append(t)
+        return t
+
+    monkeypatch.setattr(puente_motor_ia.asyncio, "create_task", spy_create_task)
+
+    async def _medir_curation_async():
+        t0 = time.perf_counter()
+        res = await puente_motor_ia.curation_v1(2601, {"status": "discarded"})
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        return res, dt_ms
+
+    import asyncio
+    res_curation, latencia_ms = asyncio.run(_medir_curation_async())
+    assert res_curation["curation_status"] == "discarded"
+    assert latencia_ms < 5.0, f"curation_v1 debe ejecutarse en < 5 ms sin bloquear en WAN, tardó {latencia_ms:.2f} ms"
+    assert len(tareas_creadas) >= 1, "Debe despachar tarea asíncrona con asyncio.create_task"
+
+    # Verificar persistencia en SQLite
+    inter_2601 = puente_motor_ia.obtener_interaccion_puente(2601)
+    assert inter_2601["estado_curaduria"] == "discarded"
+
+    # 2. _obtener_ids_evaluados_dual() debe incluir 2601 (excluido de pendientes de evaluar por lote)
+    monkeypatch.setattr(puente_motor_ia, "_obtener_ids_evaluados_supabase", lambda: set())
+    ids_excluidos = puente_motor_ia._obtener_ids_evaluados_dual()
+    assert 2601 in ids_excluidos, "El mensaje descartado manualmente (2601) debe ser excluido en _obtener_ids_evaluados_dual()"
+    assert 2602 in ids_excluidos
+
+    # 3. Sobrevive a _sincronizar_supabase_a_sqlite() aunque en Supabase aún no tenga KPI
+    datos_sb_mock = {
+        "interacciones": [
+            {
+                "id": 2601,
+                "hash": "hash_2601",
+                "origen_comunidad": "Discord",
+                "periodo_referencia": "Semana_01",
+                "autor": "user_no_eval",
+                "canal": "#general",
+                "tipo": "mensaje",
+                "texto": "Mensaje irrelevante sin evaluar",
+                "enviado_en": "2026-10-25T10:00:00Z",
+                "creado_en": "2026-10-25T10:00:00Z",
+            },
+            {
+                "id": 2602,
+                "hash": "hash_2602",
+                "origen_comunidad": "Discord",
+                "periodo_referencia": "Semana_01",
+                "autor": "user_ya_eval",
+                "canal": "#notificaciones",
+                "tipo": "mensaje",
+                "texto": "Anuncio importante ya evaluado",
+                "enviado_en": "2026-10-25T10:05:00Z",
+                "creado_en": "2026-10-25T10:05:00Z",
+            },
+        ],
+        "kpis": [
+            {
+                "id": 92602,
+                "id_mensaje": 2602,
+                "autor": "user_ya_eval",
+                "canal": "#notificaciones",
+                "comunidad": "Discord",
+                "semana": "Semana_01",
+                "texto_original": "Anuncio importante ya evaluado",
+                "relevancia": 65,
+                "sentimiento": "Positivo",
+                "temas_clave": "#anuncio",
+                "segmento": "ESTUDIANTE",
+                "razonamiento": "Anuncio oficial",
+                "decision_ia": "descartado",
+                "estado_revision": "rechazado",
+            }
+        ],
+    }
+    puente_motor_ia._sincronizar_supabase_a_sqlite(datos_sb_mock)
+    assert puente_motor_ia.obtener_interaccion_puente(2601)["estado_curaduria"] == "discarded"
+
+    # 4. Restaurar 2601 (no analizado) -> debe quedar en 'pending' y etapa_flujo = 'ingesta'
+    resp_rest_2601 = client.patch("/api/v1/content-workflow/messages/2601/curation", json={"status": "pending"})
+    assert resp_rest_2601.status_code == 200
+    assert resp_rest_2601.json()["curation_status"] == "pending"
+    inter_2601_rest = puente_motor_ia.obtener_interaccion_puente(2601)
+    assert inter_2601_rest["estado_curaduria"] == "pending"
+    assert inter_2601_rest["etapa_flujo"] == "ingesta"
+    assert 2601 not in puente_motor_ia._obtener_ids_evaluados_dual()
+
+    # 5. Descartar 2602 (ya analizado) y luego restaurarlo -> al estar analizado debe restaurarse a 'curated'
+    resp_disc_2602 = client.patch("/api/v1/content-workflow/messages/2602/curation", json={"status": "discarded"})
+    assert resp_disc_2602.status_code == 200
+    assert puente_motor_ia.obtener_interaccion_puente(2602)["estado_curaduria"] == "discarded"
+
+    # Sobrevive a resincronización como 'discarded'
+    puente_motor_ia._sincronizar_supabase_a_sqlite(datos_sb_mock)
+    assert puente_motor_ia.obtener_interaccion_puente(2602)["estado_curaduria"] == "discarded"
+
+    # Restaurar 2602 enviando 'pending' -> backend debe restituirlo a 'curated' porque ya está analizado
+    resp_rest_2602 = client.patch("/api/v1/content-workflow/messages/2602/curation", json={"status": "pending"})
+    assert resp_rest_2602.status_code == 200
+    assert resp_rest_2602.json()["curation_status"] == "curated"
+    assert puente_motor_ia.obtener_interaccion_puente(2602)["estado_curaduria"] == "curated"
+
+
+def test_spec026_rf06_umbral_relevancia_35_prioridades_y_filtro_spam_p4(client, monkeypatch):
+    """
+    Spec 026 - RF-06:
+    Valida la alineación del umbral de relevancia con las 4 Prioridades del Orquestador (35%-69%):
+    1. _es_spam_prioridad_4 detecta relevancia <= 10, texto < 3 chars, 'select' y 'credenciales'.
+    2. Mensajes con relevancia >= 35 (incluyendo anuncios de #notificaciones con 60% y 68%) quedan
+       como 'curated' en _sincronizar_supabase_a_sqlite, evaluate_batch_v1 y evaluate_single_message_v1.
+    3. Mensajes con relevancia < 35 o que activan _es_spam_prioridad_4 quedan como 'discarded'.
+    4. _cargar_lote_consolidado_para_reporte y _obtener_descartados_semana_sqlite usan el umbral < 35 / Prioridad 4.
+    """
+    assert hasattr(puente_motor_ia, "_es_spam_prioridad_4"), "Debe existir _es_spam_prioridad_4 en puente_motor_ia"
+
+    # 1. Validación unitaria de _es_spam_prioridad_4
+    assert puente_motor_ia._es_spam_prioridad_4(10, "Mensaje válido pero relevancia 10", "") is True
+    assert puente_motor_ia._es_spam_prioridad_4(5, "Ruido", "") is True
+    assert puente_motor_ia._es_spam_prioridad_4(60, "ok", "") is True
+    assert puente_motor_ia._es_spam_prioridad_4(65, "SELECT * FROM usuarios", "Intento SQL") is True
+    assert puente_motor_ia._es_spam_prioridad_4(55, "Solicitud sospechosa", "Pide credenciales de acceso") is True
+    assert puente_motor_ia._es_spam_prioridad_4(60, "Anuncio de nueva sesión en vivo en #notificaciones", "Aviso oficial") is False
+    assert puente_motor_ia._es_spam_prioridad_4(68, "Recordatorio de entrega del challenge en #notificaciones", "Aviso") is False
+    assert puente_motor_ia._es_spam_prioridad_4(35, "Consulta sobre calendario de mentorías", "Duda válida") is False
+
+    # 2. _sincronizar_supabase_a_sqlite con anuncios de 60% y 68%, baja relevancia (20%) y spam P4 (50% con 'select')
+    datos_sb = {
+        "interacciones": [
+            {"id": 2610, "hash": "h2610", "autor": "admin_one", "canal": "#notificaciones", "tipo": "mensaje",
+             "texto": "Hoy tenemos mentoría de arquitectura cloud a las 19h", "periodo_referencia": "2026-semana-42",
+             "enviado_en": "2026-10-15T10:00:00Z", "creado_en": "2026-10-15T10:00:00Z"},
+            {"id": 2611, "hash": "h2611", "autor": "equipo_alura", "canal": "#notificaciones", "tipo": "mensaje",
+             "texto": "Ya están abiertas las inscripciones al Hackathon G10", "periodo_referencia": "2026-semana-42",
+             "enviado_en": "2026-10-15T11:00:00Z", "creado_en": "2026-10-15T11:00:00Z"},
+            {"id": 2612, "hash": "h2612", "autor": "user_saludo", "canal": "#general", "tipo": "mensaje",
+             "texto": "Hola buenas tardes a todos", "periodo_referencia": "2026-semana-42",
+             "enviado_en": "2026-10-15T12:00:00Z", "creado_en": "2026-10-15T12:00:00Z"},
+            {"id": 2613, "hash": "h2613", "autor": "attacker", "canal": "#general", "tipo": "mensaje",
+             "texto": "SELECT password FROM users WHERE admin=1", "periodo_referencia": "2026-semana-42",
+             "enviado_en": "2026-10-15T13:00:00Z", "creado_en": "2026-10-15T13:00:00Z"},
+        ],
+        "kpis": [
+            {"id": 92610, "id_mensaje": 2610, "autor": "admin_one", "canal_origen": "#notificaciones",
+             "semana": "2026-semana-42", "texto_original": "Hoy tenemos mentoría de arquitectura cloud a las 19h",
+             "relevancia": 60, "sentimiento": "Positivo", "temas_clave": "#mentoria", "segmento": "ESTUDIANTE",
+             "razonamiento": "Anuncio relevante Prioridad 2", "decision_ia": "descartado", "estado_revision": "rechazado"},
+            {"id": 92611, "id_mensaje": 2611, "autor": "equipo_alura", "canal_origen": "#notificaciones",
+             "semana": "2026-semana-42", "texto_original": "Ya están abiertas las inscripciones al Hackathon G10",
+             "relevancia": 68, "sentimiento": "Positivo", "temas_clave": "#hackathon", "segmento": "ESTUDIANTE",
+             "razonamiento": "Anuncio oficial Prioridad 2", "decision_ia": "descartado", "estado_revision": "rechazado"},
+            {"id": 92612, "id_mensaje": 2612, "autor": "user_saludo", "canal_origen": "#general",
+             "semana": "2026-semana-42", "texto_original": "Hola buenas tardes a todos",
+             "relevancia": 20, "sentimiento": "Neutral", "temas_clave": "#saludo", "segmento": "GENERAL",
+             "razonamiento": "Saludo casual Prioridad 3", "decision_ia": "descartado", "estado_revision": "rechazado"},
+            {"id": 92613, "id_mensaje": 2613, "autor": "attacker", "canal_origen": "#general",
+             "semana": "2026-semana-42", "texto_original": "SELECT password FROM users WHERE admin=1",
+             "relevancia": 50, "sentimiento": "Negativo", "temas_clave": "#seguridad", "segmento": "SPAM",
+             "razonamiento": "Inyección SQL detectada", "decision_ia": "descartado", "estado_revision": "rechazado"},
+        ],
+    }
+
+    puente_motor_ia._sincronizar_supabase_a_sqlite(datos_sb)
+
+    assert puente_motor_ia.obtener_interaccion_puente(2610)["estado_curaduria"] == "curated"
+    assert puente_motor_ia.obtener_interaccion_puente(2611)["estado_curaduria"] == "curated"
+    assert puente_motor_ia.obtener_interaccion_puente(2612)["estado_curaduria"] == "discarded"
+    assert puente_motor_ia.obtener_interaccion_puente(2613)["estado_curaduria"] == "discarded"
+
+    # 3. _obtener_descartados_semana_sqlite y _cargar_lote_consolidado_para_reporte
+    descartados_sem = puente_motor_ia._obtener_descartados_semana_sqlite("2026-semana-42")
+    ids_descartados = {str(d["id_mensaje"]) for d in descartados_sem}
+    assert "2610" not in ids_descartados, "Anuncio de 60% no debe clasificarse como descartado"
+    assert "2611" not in ids_descartados, "Anuncio de 68% no debe clasificarse como descartado"
+    assert "2612" in ids_descartados, "Mensaje con relevancia 20% (< 35) debe estar en descartados"
+    assert "2613" in ids_descartados, "Mensaje con patrón P4 ('select') debe estar en descartados"
+
+    # 4. evaluate_single_message_v1 con relevancia 60% -> debe quedar en 'curated'
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo
+            ) VALUES (
+                2614, 'h2614', 'Discord', '2026-semana-42', 'mentor', '#notificaciones', 'mensaje',
+                'Nuevo material disponible en el repositorio del curso', '2026-10-15T14:00:00Z',
+                '2026-10-15T14:00:00Z', 'pendiente', 'pending', 'ingesta'
+            )
+            """
+        )
+        conn.commit()
+
+    mock_eval_60 = {
+        "exito": True,
+        "total_evaluados": 1,
+        "exitosos": 1,
+        "fallidos": 0,
+        "guardados_supabase": 1,
+        "errores": [],
+        "aprobados": [],
+        "descartados": [{
+            "id_mensaje": 2614,
+            "canal_origen": "#notificaciones",
+            "texto_original": "Nuevo material disponible en el repositorio del curso",
+            "estado_revision": "rechazado",
+            "kpis": {
+                "relevancia": 60,
+                "sentimiento": "Positivo",
+                "temas_clave": "#material",
+                "segmento": "ESTUDIANTE",
+                "razonamiento": "Aviso útil de Prioridad 2",
+            },
+        }],
+        "resultados": {"aprobados": [], "descartados": []},
+    }
+
+    with patch("evaluador_lotes.evaluar_lote", return_value=mock_eval_60), \
+         patch.object(puente_motor_ia, "_sincronizar_supabase_a_sqlite", return_value=1):
+        resp_single = client.post("/api/v1/ai/evaluate-message", json={
+            "interaction_id": 2614,
+            "proveedor": "Groq (Llama 3.3)",
+        })
+        assert resp_single.status_code == 200
+        data_single = resp_single.json()
+        assert data_single["relevancia"] == 60
+        assert data_single["estado_curaduria"] == "curated"
+        assert puente_motor_ia.obtener_interaccion_puente(2614)["estado_curaduria"] == "curated"
+
+
+def test_spec026_rf02_paridad_id_canonico_vinculacion_dual_kpis_y_sin_duplicados(client, monkeypatch):
+    """
+    Spec 026 - RF-02:
+    Valida que:
+    1. Un mensaje insertado en SQLite con un ID local temporal (ej. 5) se reconcilia atómicamente
+       con el ID canónico asignado por public.interacciones de Supabase (ej. 200) usando su hash.
+    2. _sincronizar_supabase_a_sqlite() empareja KPIs tanto por id_mensaje como por hash / (autor, texto_original)
+       y no sintetiza filas duplicadas cuando el KPI tenía el ID local previo.
+    3. Al evaluar con evaluate_single_message_v1 o evaluate_batch_v1, el mensaje pasa a 'analizado'
+       desde el primer clic sin que _sincronizar_supabase_a_sqlite() lo regrese a 'pendiente' aunque
+       obtener_datos_supabase() aún no incluya el KPI recién calculado.
+    4. Se previene la duplicación de filas en public.lotes_ia_kpis para el mismo mensaje.
+    """
+    import limpieza
+
+    autor_msg = "enoc_qa_tester"
+    canal_msg = "#general"
+    texto_msg = "Excelente sesión técnica sobre arquitectura de agentes LangGraph en producción"
+    origen_msg = "Discord_Grupo_ONE_G10"
+    hash_canonico = limpieza.calcular_hash(origen_msg, canal_msg, autor_msg, texto_msg)
+
+    # 1. Insertar mensaje en SQLite con ID local temporal = 5
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo
+            ) VALUES (?, ?, ?, 'Semana_01', ?, ?, 'mensaje', ?, '2026-10-25T12:00:00Z', '2026-10-25T12:00:00Z',
+                      'pendiente', 'pending', 'ingesta')
+            """,
+            (5, hash_canonico, origen_msg, autor_msg, canal_msg, texto_msg),
+        )
+        conn.commit()
+
+    # 2. Simular que en Supabase public.interacciones tiene el ID canónico 200 (con el mismo hash),
+    #    mientras que lotes_ia_kpis tiene un registro con id_mensaje=5 (ID temporal previo) para el mismo (autor, texto_original)
+    datos_sb_desfasados = {
+        "interacciones": [
+            {
+                "id": 200,
+                "hash": hash_canonico,
+                "origen_comunidad": origen_msg,
+                "periodo_referencia": "Semana_01",
+                "autor": autor_msg,
+                "canal": canal_msg,
+                "tipo": "mensaje",
+                "texto": texto_msg,
+                "enviado_en": "2026-10-25T12:00:00Z",
+                "creado_en": "2026-10-25T12:00:00Z",
+            }
+        ],
+        "kpis": [
+            {
+                "id": 901,
+                "id_mensaje": 5,  # ID local antiguo
+                "autor": autor_msg,
+                "canal_origen": canal_msg,
+                "comunidad": origen_msg,
+                "semana": "Semana_01",
+                "texto_original": texto_msg,
+                "relevancia": 82,
+                "sentimiento": "Positivo",
+                "temas_clave": "#langgraph, #agentes",
+                "segmento": "PROFESIONAL",
+                "razonamiento": "Aporte técnico de alto valor",
+                "decision_ia": "aprobado",
+                "estado_revision": "pendiente",
+                "analizado_en": "2026-10-25T12:01:00Z",
+            }
+        ],
+    }
+
+    puente_motor_ia._sincronizar_supabase_a_sqlite(datos_sb_desfasados)
+
+    # Verificar que en SQLite sólo exista el ID canónico 200 (sin fila fantasma 5) y esté 'analizado' con relevancia 82
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.row_factory = sqlite3.Row
+        filas = conn.execute("SELECT * FROM interacciones").fetchall()
+        ids_sqlite = [r["id"] for r in filas]
+        assert 200 in ids_sqlite, "El ID canónico 200 debe existir en SQLite"
+        assert 5 not in ids_sqlite, "El ID temporal 5 debe haberse reconciliado/eliminado sin dejar duplicado"
+        fila_200 = next(dict(r) for r in filas if r["id"] == 200)
+        assert fila_200["estado"] == "analizado", "Debe haberse emparejado el KPI por hash/(autor, texto_original)"
+        assert fila_200["relevancia"] == 82
+        assert fila_200["estado_curaduria"] == "curated"
+
+    # 3. Ahora insertar un segundo mensaje nuevo (ID local = 6, pero canónico en Supabase = 201) aún NO evaluado
+    texto_msg_2 = "Nuevo mensaje recién sincronizado desde Discord para evaluar a la primera"
+    hash_canonico_2 = limpieza.calcular_hash(origen_msg, canal_msg, autor_msg, texto_msg_2)
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo
+            ) VALUES (?, ?, ?, 'Semana_01', ?, ?, 'mensaje', ?, '2026-10-25T12:05:00Z', '2026-10-25T12:05:00Z',
+                      'pendiente', 'pending', 'ingesta')
+            """,
+            (6, hash_canonico_2, origen_msg, autor_msg, canal_msg, texto_msg_2),
+        )
+        conn.commit()
+
+    # Simular que obtener_datos_supabase devuelve el mensaje con ID canónico 201 pero SIN el KPI todavía en 'kpis'
+    # (caso real de lectura inmediatamente posterior a evaluar antes de que la réplica/lectura devuelva el KPI)
+    datos_sb_sin_kpi_nuevo = {
+        "interacciones": [
+            {
+                "id": 201,
+                "hash": hash_canonico_2,
+                "origen_comunidad": origen_msg,
+                "periodo_referencia": "Semana_01",
+                "autor": autor_msg,
+                "canal": canal_msg,
+                "tipo": "mensaje",
+                "texto": texto_msg_2,
+                "enviado_en": "2026-10-25T12:05:00Z",
+                "creado_en": "2026-10-25T12:05:00Z",
+            }
+        ],
+        "kpis": [],
+    }
+
+    llamadas_guardar_lote = []
+
+    def mock_evaluar_lote(mensajes, **kwargs):
+        id_enviado = mensajes[0]["id"]
+        paquete = {
+            "aprobados": [{
+                "id_mensaje": id_enviado,
+                "autor": autor_msg,
+                "canal_origen": canal_msg,
+                "texto_original": texto_msg_2,
+                "estado_revision": "pendiente",
+                "kpis": {
+                    "relevancia": 76,
+                    "sentimiento": "Positivo",
+                    "temas_clave": "#discord",
+                    "segmento": "ESTUDIANTE",
+                    "razonamiento": "Mensaje relevante evaluado al primer clic",
+                },
+            }],
+            "descartados": [],
+        }
+        llamadas_guardar_lote.append(id_enviado)
+        return {
+            "exito": True,
+            "total_evaluados": 1,
+            "exitosos": 1,
+            "fallidos": 0,
+            "guardados_supabase": 1,
+            "errores": [],
+            "aprobados": paquete["aprobados"],
+            "descartados": [],
+            "resultados": paquete,
+        }
+
+    with patch.object(puente_motor_ia, "obtener_datos_supabase", return_value=datos_sb_sin_kpi_nuevo), \
+         patch("evaluador_lotes.evaluar_lote", side_effect=mock_evaluar_lote), \
+         patch.object(puente_motor_ia._base_datos_raiz, "guardar_lote_ia_supabase", side_effect=lambda p: llamadas_guardar_lote.append("extra_save") or 1):
+        # Evaluar pasando el ID local 6 (debe reconciliar con 201 y quedar analizado al primer clic sin doble guardado)
+        resp_eval = client.post("/api/v1/ai/evaluate-message", json={
+            "interaction_id": 6,
+            "proveedor": "Groq (Llama 3.3)",
+        })
+        assert resp_eval.status_code == 200
+        body_eval = resp_eval.json()
+        assert body_eval["estado"] == "analizado"
+        assert body_eval["relevancia"] == 76
+        assert body_eval["estado_curaduria"] == "curated"
+        # No debe haber ejecutado un segundo guardado duplicado si evaluar_lote ya guardó
+        assert "extra_save" not in llamadas_guardar_lote
+
+        # Y en SQLite el mensaje (con ID canónico 201) debe permanecer 'analizado' (nunca regresar a 'pendiente')
+        interaccion_post = puente_motor_ia.obtener_interaccion_puente(body_eval["interaction_id"])
+        assert interaccion_post is not None
+        assert interaccion_post["estado"] == "analizado", "El mensaje no debe regresar a 'pendiente' tras _sincronizar_supabase_a_sqlite()"
+        assert interaccion_post["relevancia"] == 76
+        assert interaccion_post["estado_curaduria"] == "curated"
+
+
+def test_spec026_rf05_deduplicacion_bots_omitidos_en_resincronizacion(monkeypatch):
+    """
+    Spec 026 - RF-05:
+    Valida que _sincronizar_discord_api_rest deduplica los mensajes de bots/webhooks
+    mediante _ids_bots_omitidos_vistos:
+    1. En la primera sincronización con 2 bots nuevos (bot_9001 y bot_9002), incrementa el contador en +2.
+    2. En la segunda sincronización con los mismos 2 bots, incrementa +0 (no infla artificialmente el contador).
+    3. En una tercera sincronización con 1 bot repetido (bot_9001) y 1 bot nuevo (bot_9003), incrementa sólo +1.
+    """
+    import asyncio
+
+    assert hasattr(puente_motor_ia, "_ids_bots_omitidos_vistos"), "Debe existir el set _ids_bots_omitidos_vistos en puente_motor_ia"
+    monkeypatch.setattr(puente_motor_ia, "_ids_bots_omitidos_vistos", set())
+    monkeypatch.setattr(puente_motor_ia, "_cache_bots_omitidos_discord", 173)
+
+    lote_canal_1 = [
+        {"id": "bot_9001", "content": "Aviso automático 1", "author": {"id": "b1", "username": "Spidey Bot", "bot": True}},
+        {"id": "bot_9002", "content": "Webhook alert", "author": {"id": "b2", "username": "GitHub"}, "webhook_id": "wh_1"},
+        {"id": "hum_1001", "content": "Hola equipo, tengo una consulta sobre SQL", "author": {"id": "u1", "username": "carlos_dev", "bot": False}},
+    ]
+
+    class FakeResp:
+        def __init__(self, data):
+            self._data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._data
+
+    class FakeSession:
+        def __init__(self, lotes_por_llamada):
+            self.lotes = lotes_por_llamada
+            self.calls = 0
+
+        def get(self, url, headers=None, timeout=None):
+            idx = self.calls
+            self.calls += 1
+            # Sólo el primer canal devuelve los mensajes de prueba; los otros 3 canales devuelven []
+            if idx % 4 == 0:
+                return FakeResp(self.lotes[min(idx // 4, len(self.lotes) - 1)])
+            return FakeResp([])
+
+    lote_canal_3 = [
+        {"id": "bot_9001", "content": "Aviso automático 1", "author": {"id": "b1", "username": "Spidey Bot", "bot": True}},
+        {"id": "bot_9003", "content": "Nuevo bot aviso 3", "author": {"id": "b3", "username": "DeployBot", "bot": True}},
+        {"id": "hum_1001", "content": "Hola equipo, tengo una consulta sobre SQL", "author": {"id": "u1", "username": "carlos_dev", "bot": False}},
+    ]
+
+    sesion_mock = FakeSession([lote_canal_1, lote_canal_1, lote_canal_3])
+    monkeypatch.setattr(puente_motor_ia, "_obtener_discord_http_session", lambda: sesion_mock)
+    monkeypatch.setattr(puente_motor_ia._base_datos_raiz, "guardar_interaccion", lambda **kw: True)
+
+    # 1ª sincronización: 2 bots nuevos -> _cache_bots_omitidos_discord pasa de 173 a 175
+    res1 = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest("fake_token", limite_por_canal=10))
+    assert res1["exito"] is True
+    assert res1.get("bots_omitidos") == 2
+    assert puente_motor_ia._cache_bots_omitidos_discord == 175
+
+    # 2ª sincronización con exactamente los mismos mensajes: 0 bots nuevos -> permanece en 175
+    res2 = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest("fake_token", limite_por_canal=10))
+    assert res2["exito"] is True
+    assert res2.get("bots_omitidos") == 0
+    assert puente_motor_ia._cache_bots_omitidos_discord == 175
+
+    # 3ª sincronización con 1 bot repetido y 1 bot nuevo (bot_9003): +1 bot nuevo -> pasa a 176
+    res3 = asyncio.run(puente_motor_ia._sincronizar_discord_api_rest("fake_token", limite_por_canal=10))
+    assert res3["exito"] is True
+    assert res3.get("bots_omitidos") == 1
+    assert puente_motor_ia._cache_bots_omitidos_discord == 176
+
+
+def test_spec026_rf04_estructura_json_completa_historial_reportes_semanales(client, monkeypatch):
+    """
+    Spec 026 - RF-04, RNF-03:
+    Valida que construir_registro_historial_reporte, api_mototradis_hitl_decision y api_mototradis_publish_channel
+    generen la estructura JSON completa esperada por el motor LangGraph (src/schemas.py y src/nodes.py):
+    1. En contenido_original: el objeto completo json_precurado con los 13 campos canónicos
+       (id_mensaje, autor, canal_origen, comunidad, semana, texto_original, relevancia int 0-100,
+       sentimiento, temas_clave list[str], segmento, razonamiento, decision_ia, estado_revision),
+       enriqueciendo automáticamente desde SQLite local y manteniendo alias 'texto' y 'canal'.
+    2. En copys_generados: indexado por canal ('discord', 'linkedin', 'x', 'reclamos') con
+       status='exito', resumen_comunidad y activos_distribucion_generados completos conforme a src/schemas.py,
+       preservando además titulo, texto_copy y plataforma en la raíz del canal para retrocompatibilidad con Spec 024.
+    """
+    assert hasattr(puente_motor_ia, "_normalizar_copy_canal_completo"), (
+        "Debe existir la función auxiliar _normalizar_copy_canal_completo en puente_motor_ia"
+    )
+
+    # Insertar interacción analizada en SQLite para verificar enriquecimiento automático
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute(
+            """
+            INSERT INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo,
+                relevancia, sentimiento, temas_clave, segmento, razonamiento
+            ) VALUES (
+                2640, 'h2640', 'Discord_Grupo_ONE_G10', 'Semana_03', 'enoc_dev', '#faq', 'mensaje',
+                '¿Cómo desplegar microservicios con Docker y LangGraph en producción?',
+                '2026-10-20T15:00:00Z', '2026-10-20T15:05:00Z', 'analizado', 'curated', 'en_redaccion',
+                88, 'Positivo', '#docker, #langgraph, #cloud', 'PROFESIONAL', 'Consulta técnica de alto valor'
+            )
+            """
+        )
+        conn.commit()
+
+    # 1. Prueba directa de construir_registro_historial_reporte con 4 canales (linkedin, x, discord, reclamos)
+    copys_input = {
+        "linkedin": {"titulo": "Arquitectura con LangGraph", "texto_copy": "Guía profesional de microservicios con @enoc_dev."},
+        "x": {"titulo": "LangGraph + Docker", "texto_copy": "Despliega agentes en producción hoy con @enoc_dev."},
+        "discord": {"canal_seleccionado": "#faq", "titulo": "Guía FAQ Docker", "texto_copy": "Hola @enoc_dev, revisa esta guía de despliegue."},
+        "reclamos": {"titulo": "Soporte PQRS", "texto_copy": "Hola @enoc_dev, te contactamos por interno para ayudarte."},
+    }
+    reg = puente_motor_ia.construir_registro_historial_reporte(
+        id_mensaje=2640,
+        rutas_activas=["linkedin", "x", "discord", "reclamos"],
+        copys_dict=copys_input,
+        interaccion={"autor": "enoc_dev", "texto": "¿Cómo desplegar microservicios con Docker y LangGraph en producción?", "canal": "#faq"},
+    )
+
+    cont_orig = reg["contenido_original"]
+    # Validar las 13 llaves canónicas de json_precurado + alias de retrocompatibilidad
+    for llave in (
+        "id_mensaje", "autor", "canal_origen", "canal", "comunidad", "semana",
+        "texto_original", "texto", "relevancia", "sentimiento", "temas_clave",
+        "segmento", "razonamiento", "decision_ia", "estado_revision"
+    ):
+        assert llave in cont_orig, f"Falta la llave '{llave}' en contenido_original"
+
+    assert cont_orig["id_mensaje"] == 2640
+    assert cont_orig["autor"] == "enoc_dev"
+    assert cont_orig["canal_origen"] == "#faq"
+    assert cont_orig["comunidad"] == "Discord_Grupo_ONE_G10"
+    assert cont_orig["semana"] == "Semana_03"
+    assert cont_orig["relevancia"] == 88 and isinstance(cont_orig["relevancia"], int)
+    assert cont_orig["sentimiento"] == "Positivo"
+    assert isinstance(cont_orig["temas_clave"], list) and "#docker" in cont_orig["temas_clave"]
+    assert cont_orig["segmento"] == "PROFESIONAL"
+    assert cont_orig["razonamiento"] == "Consulta técnica de alto valor"
+    assert cont_orig["decision_ia"] == "PUBLICAR"
+    assert cont_orig["estado_revision"] == "aprobado"
+
+    copys_gen = reg["copys_generados"]
+    for ch in ("linkedin", "x", "discord", "reclamos"):
+        assert ch in copys_gen
+        ch_obj = copys_gen[ch]
+        assert ch_obj.get("status") == "exito"
+        assert "resumen_comunidad" in ch_obj
+        res_com = ch_obj["resumen_comunidad"]
+        assert res_com["total_interacciones_procesadas"] == 1
+        assert res_com["sentimiento_predominante"] == "Positivo"
+        assert isinstance(res_com["temas_principales"], list)
+        assert "programa" in res_com
+        assert "activos_distribucion_generados" in ch_obj
+        # Retrocompatibilidad Spec 024 en la raíz del canal
+        assert ch_obj.get("titulo") == copys_input[ch]["titulo"]
+        assert ch_obj.get("texto_copy") == copys_input[ch]["texto_copy"]
+        assert ch_obj.get("plataforma") == ch
+
+    # Validar activos específicos por esquema de src/schemas.py
+    act_lk = copys_gen["linkedin"]["activos_distribucion_generados"]
+    assert act_lk["post_linkedin"]["titulo"] == "Arquitectura con LangGraph"
+    assert act_lk["post_linkedin"]["texto_copy"] == "Guía profesional de microservicios con @enoc_dev."
+    assert "destaque_newsletter_semanal" in act_lk
+    assert "sugerencia_contenido_faq" in act_lk
+    assert "temporalidad_producto_creado" in act_lk
+
+    act_x = copys_gen["x"]["activos_distribucion_generados"]
+    assert act_x["post_postx"]["titulo"] == "LangGraph + Docker"
+    assert act_x["post_postx"]["texto_copy"] == "Despliega agentes en producción hoy con @enoc_dev."
+    assert "temporalidad_producto_creado" in act_x
+
+    act_disc = copys_gen["discord"]["activos_distribucion_generados"]
+    assert act_disc["canal_seleccionado"] == "#faq"
+    assert act_disc["post_discord_faq"] is not None
+    assert act_disc["post_discord_faq"]["titulo"] == "Guía FAQ Docker"
+    assert "temporalidad_producto_creado" in act_disc
+
+    act_pqrs = copys_gen["reclamos"]["activos_distribucion_generados"]
+    assert act_pqrs["post_discord_pqrs"]["titulo"] == "Soporte PQRS"
+    assert "temporalidad_producto_creado" in act_pqrs
+
+    # Validar retrocompatibilidad con _formatear_copy_final de Spec 024
+    copy_final_oci = puente_motor_ia._formatear_copy_final(copys_gen, texto_original=cont_orig["texto_original"])
+    assert "Arquitectura con LangGraph" in copy_final_oci
+
+    # 2. Prueba extremo a extremo vía publish-channel y hitl-decision
+    despachados = []
+    monkeypatch.setattr(puente_motor_ia, "despachar_replicacion_historial_reportes", lambda r: despachados.append(r))
+    monkeypatch.setattr(
+        puente_motor_ia,
+        "despachar_discord_con_cascada",
+        lambda *a, **kw: {"ok": True, "detalle": "OK", "estado_canal": "enviado", "message_id": "m_2640"},
+    )
+
+    resp_pub = client.post("/api/v1/mototradis/publish-channel", json={
+        "id_mensaje": 2640,
+        "canal": "discord",
+        "canal_seleccionado": "#faq",
+        "titulo": "Respuesta FAQ Oficial",
+        "texto_copy": "Aquí tienes los pasos para desplegar con Docker y LangGraph.",
+    })
+    assert resp_pub.status_code == 200
+    assert len(despachados) == 1
+    reg_pub = despachados[0]
+    assert reg_pub["contenido_original"]["relevancia"] == 88
+    assert reg_pub["contenido_original"]["segmento"] == "PROFESIONAL"
+    assert reg_pub["copys_generados"]["discord"]["activos_distribucion_generados"]["post_discord_faq"]["titulo"] == "Respuesta FAQ Oficial"
+
+
+def test_spec026_rf07_evaluacion_no_bloqueante_y_gemma_resiliente_con_fallback():
+    """
+    Spec 026 - RF-07 (T1.7):
+    Valida que:
+    1. Exista _CadenaGemmaResiliente en puente_motor_ia con GEMMA_EVAL_TIMEOUT_SECONDS = 20.0,
+       temperature=0.1 y max_output_tokens=800.
+    2. Ante bloqueo (> timeout) o errores transitorios 500 INTERNAL / 503 UNAVAILABLE en el modelo primario,
+       aplique reintentos acotados y conmute automáticamente a la cascada de fallback
+       (gemma-4-26b-a4b-it -> cerebro_ia_gemini_flash -> cerebro_ia Groq), retornando siempre un FormatoSalida válido.
+    3. Incluso si evaluador_lotes ejecuta importlib.reload(cerebro_ia_gemma_4), la cadena siga protegida
+       con _CadenaGemmaResiliente.
+    4. evaluate_batch_v1 y evaluate_single_message_v1 deleguen evaluar_lote mediante asyncio.to_thread
+       sin bloquear el event loop de FastAPI.
+    """
+    import importlib
+    import inspect
+    import time
+
+    assert hasattr(puente_motor_ia, "GEMMA_EVAL_TIMEOUT_SECONDS"), "Debe definir GEMMA_EVAL_TIMEOUT_SECONDS = 20.0"
+    assert puente_motor_ia.GEMMA_EVAL_TIMEOUT_SECONDS == 20.0
+    assert hasattr(puente_motor_ia, "_CadenaGemmaResiliente"), "Debe existir la clase _CadenaGemmaResiliente en puente_motor_ia"
+    assert isinstance(puente_motor_ia.cerebro_ia_gemma_4.cadena, puente_motor_ia._CadenaGemmaResiliente)
+    assert puente_motor_ia.cerebro_ia_gemma_4.cadena.temperature == 0.1
+    assert puente_motor_ia.cerebro_ia_gemma_4.cadena.max_output_tokens == 800
+
+    # Caso A: Bloqueo de cadena primaria (> timeout) -> corta con TimeoutError y conmuta al fallback
+    class _CadenaColgada:
+        def invoke(self, inp, *a, **kw):
+            time.sleep(1.2)
+            raise RuntimeError("No debería llegar aquí si el timeout corta antes")
+
+    class _CadenaFallbackRapida:
+        def __init__(self):
+            self.llamadas = 0
+
+        def invoke(self, inp, *a, **kw):
+            self.llamadas += 1
+            return {
+                "relevancia": 78,
+                "sentimiento": "Positivo",
+                "temas_clave": "#gemma #fallback",
+                "segmento": "ESTUDIANTE",
+                "razonamiento": "Resuelto por fallback automático tras timeout de Gemma 4 31B",
+            }
+
+    fb_rapido = _CadenaFallbackRapida()
+    cadena_test_timeout = puente_motor_ia._CadenaGemmaResiliente(
+        cadena_primaria=_CadenaColgada(),
+        cadenas_fallback=[fb_rapido],
+        timeout_seconds=0.1,
+        max_retries=1,
+    )
+    t0 = time.perf_counter()
+    salida_timeout = cadena_test_timeout.invoke({"texto": "Consulta sobre agentes con Gemma 4", "canal": "#general"})
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.9, f"El timeout por mensaje no cortó a tiempo ({elapsed:.2f}s)"
+    assert fb_rapido.llamadas == 1
+    assert getattr(salida_timeout, "relevancia", None) == 78
+    assert getattr(salida_timeout, "sentimiento", None) == "Positivo"
+
+    # Caso B: Error 503 UNAVAILABLE / 500 INTERNAL en cadena primaria -> reintenta y usa fallback
+    intentos_primaria = {"n": 0}
+
+    class _Cadena503:
+        def invoke(self, inp, *a, **kw):
+            intentos_primaria["n"] += 1
+            raise RuntimeError("503 UNAVAILABLE: The model is overloaded. Please try again later.")
+
+    fb_503 = _CadenaFallbackRapida()
+    cadena_test_503 = puente_motor_ia._CadenaGemmaResiliente(
+        cadena_primaria=_Cadena503(),
+        cadenas_fallback=[fb_503],
+        timeout_seconds=1.0,
+        max_retries=2,
+    )
+    salida_503 = cadena_test_503.invoke({"texto": "Prueba de resiliencia ante 503", "canal": "#faq"})
+    assert intentos_primaria["n"] >= 2, "Debe haber reintentado ante 503 UNAVAILABLE antes de conmutar al fallback"
+    assert fb_503.llamadas == 1
+    assert getattr(salida_503, "relevancia", None) == 78
+
+    # Caso C: Supervivencia ante importlib.reload(modulo_cerebro) que ejecuta evaluador_lotes.evaluar_lote
+    mod_gemma_root = importlib.import_module("cerebro_ia_gemma_4")
+    mod_reloaded = importlib.reload(mod_gemma_root)
+    assert isinstance(mod_reloaded.cadena, puente_motor_ia._CadenaGemmaResiliente), (
+        "Tras importlib.reload(cerebro_ia_gemma_4), mod.cadena debe seguir envuelta en _CadenaGemmaResiliente"
+    )
+
+    # Caso D: Verificar delegación no bloqueante (asyncio.to_thread) en evaluate_batch_v1 y evaluate_single_message_v1
+    src_batch = inspect.getsource(puente_motor_ia.evaluate_batch_v1)
+    src_single = inspect.getsource(puente_motor_ia.evaluate_single_message_v1)
+    assert "asyncio.to_thread" in src_batch and "evaluar_lote" in src_batch, (
+        "evaluate_batch_v1 debe ejecutar evaluar_lote en asyncio.to_thread para no bloquear el event loop"
+    )
+    assert "asyncio.to_thread" in src_single and "evaluar_lote" in src_single, (
+        "evaluate_single_message_v1 debe ejecutar evaluar_lote en asyncio.to_thread para no bloquear el event loop"
+    )
+
+
+def test_spec026_rf03_claridad_visual_matriz_multillm_y_umbral_frontend():
+    """
+    Spec 026 - RF-03, RF-06 (T1.3):
+    Valida que:
+    1. MODELOS_UTILIZADOS_CATALOGO y resolver_modelo_canal en puente_motor_ia expongan la Matriz Multi-LLM
+       con sus fallbacks automáticos (Qwen 3.8 27B, GPT-OSS 120B, Gemini 3.5/3.1 Flash Lite, Gemini 3.6 Flash).
+    2. ContentStudio.tsx muestre en la cabecera de la Mesa de Trabajo Multicanal la Matriz Multi-LLM con
+       fallbacks automáticos, renombre el selector manual a 'IA Regeneración Individual:' y filtre la bandeja
+       de entrada con relevance >= 35 (habilitando Prioridad 1 >= 70% y Prioridad 2 35-69%).
+    3. Messages.tsx utilice el umbral < 35 para clasificar mensajes descartados y mueva mensajes con
+       relevancia >= 35 a 'Pendientes de Copy'.
+    """
+    catalogo = puente_motor_ia.MODELOS_UTILIZADOS_CATALOGO
+    assert "qwen/qwen3.8-27b" in catalogo["orquestador"].lower()
+    assert "fallback" in catalogo["orquestador"].lower()
+    assert "gemini-3.5-flash-lite" in catalogo["linkedin"].lower()
+    assert "fallback" in catalogo["linkedin"].lower()
+    assert "gemini-3.5-flash-lite" in catalogo["x"].lower()
+    assert "fallback" in catalogo["x"].lower()
+    assert "openai/gpt-oss-120b" in catalogo["discord"].lower()
+    assert "fallback" in catalogo["discord"].lower()
+    assert "qwen/qwen3.8-27b" in catalogo["pqrs"].lower()
+    assert "gemma-4-31b-it" in catalogo["masivo"].lower()
+
+    ruta_raiz = os.path.dirname(os.path.dirname(__file__))
+    ruta_studio = os.path.join(ruta_raiz, "frontend", "src", "pages", "ContentStudio.tsx")
+    ruta_messages = os.path.join(ruta_raiz, "frontend", "src", "pages", "Messages.tsx")
+
+    with open(ruta_studio, "r", encoding="utf-8") as f:
+        codigo_studio = f.read()
+    with open(ruta_messages, "r", encoding="utf-8") as f:
+        codigo_messages = f.read()
+
+    # Validaciones en ContentStudio.tsx
+    assert "item.analysis.relevance >= 35" in codigo_studio, (
+        "ContentStudio.tsx debe admitir mensajes curados con relevance >= 35 en la bandeja de entrada"
+    )
+    assert "item.analysis.relevance >= 70" not in codigo_studio, (
+        "ContentStudio.tsx no debe bloquear mensajes de Prioridad 2 (35-69%) con el filtro antiguo >= 70"
+    )
+    assert "IA Regeneración Individual:" in codigo_studio, (
+        "El selector manual debe renombrarse a 'IA Regeneración Individual:' para no confundirse con el fallback automático"
+    )
+    assert "Qwen 3.8 27B" in codigo_studio and "GPT-OSS 120B" in codigo_studio and "Gemini 3.5 Flash Lite" in codigo_studio, (
+        "ContentStudio.tsx debe mostrar explícitamente la Matriz Multi-LLM con fallbacks automáticos"
+    )
+
+    # Validaciones en Messages.tsx
+    assert "message.relevance < 35" in codigo_messages and "msg.relevance < 35" in codigo_messages, (
+        "Messages.tsx debe clasificar como descartados por relevancia sólo cuando relevance < 35"
+    )
+    assert "message.relevance < 70" not in codigo_messages and "msg.relevance < 70" not in codigo_messages, (
+        "Messages.tsx no debe clasificar como descartados los mensajes con relevancia 35-69%"
+    )
+    assert "res.relevancia >= 35" in codigo_messages, (
+        "handleEvaluateSingleMessage en Messages.tsx debe mover a 'Pendientes de Copy' cuando res.relevancia >= 35"
+    )
+
+
+
+
+def test_spec026_rf08_sanitizacion_alura_y_menciones_links_manuales_linkedin_x(client, monkeypatch):
+    """
+    Valida que:
+    1. En los mensajes de LinkedIn y X se reemplace automáticamente cualquier mención a 'Alura' / 'Alura Latam'
+       por 'CloudEDTech' (tanto en el insumo como en el borrador/post publicado).
+    2. Cuando se publique manualmente por canal (publish-channel) o se inserten menciones manuales:
+       - LinkedIn incluya el bloque de Más Información con los 3 links:
+         https://lnkd.in/gX2m2Rhq, https://lnkd.in/gvbqJiF4, https://lnkd.in/gU7h7xyG
+       - X incluya únicamente los 2 links de No Country y GitHub:
+         https://lnkd.in/gvbqJiF4, https://lnkd.in/gU7h7xyG
+         preservando los links íntegros dentro del límite estricto de 280 caracteres.
+       - Si los links ya fueron agregados en el editor manual, no se dupliquen (idempotencia).
+    3. ContentStudio.tsx exponga los botones y helpers de inserción manual de links y sanitización de 'Alura'.
+    """
+    assert hasattr(puente_motor_ia, "_sanitizar_marca_texto_red"), (
+        "puente_motor_ia debe definir _sanitizar_marca_texto_red para erradicar menciones a Alura"
+    )
+    assert hasattr(puente_motor_ia, "_anexar_links_manuales_red"), (
+        "puente_motor_ia debe definir _anexar_links_manuales_red para inyectar los links en publicación manual"
+    )
+
+    # 1. Prueba unitaria de sanitización de "Alura"
+    texto_con_alura = "¡Gracias a Alura Latam y al curso de Alura por esta ruta! #Alura #AluraLatam"
+    limpio = puente_motor_ia._sanitizar_marca_texto_red(texto_con_alura)
+    assert "alura" not in limpio.lower(), f"No debe quedar mención a Alura: {limpio}"
+    assert "CloudEDTech" in limpio
+
+    # 2. Prueba unitaria de inyección idempotente de links manuales en LinkedIn
+    lk_con_links = puente_motor_ia._anexar_links_manuales_red(
+        "linkedin",
+        "Gran avance en Alura Latam con @dev_user",
+        "Logré desplegar mi proyecto gracias a Alura.",
+    )
+    assert "alura" not in lk_con_links["titulo"].lower()
+    assert "alura" not in lk_con_links["texto_copy"].lower()
+    assert "https://lnkd.in/gX2m2Rhq" in lk_con_links["texto_copy"]
+    assert "https://lnkd.in/gvbqJiF4" in lk_con_links["texto_copy"]
+    assert "https://lnkd.in/gU7h7xyG" in lk_con_links["texto_copy"]
+
+    # Idempotencia en LinkedIn (segunda llamada no duplica links)
+    lk_idempotente = puente_motor_ia._anexar_links_manuales_red(
+        "linkedin",
+        lk_con_links["titulo"],
+        lk_con_links["texto_copy"],
+    )
+    assert lk_idempotente["texto_copy"].count("https://lnkd.in/gX2m2Rhq") == 1
+    assert lk_idempotente["texto_copy"].count("https://lnkd.in/gvbqJiF4") == 1
+    assert lk_idempotente["texto_copy"].count("https://lnkd.in/gU7h7xyG") == 1
+
+    # 3. Prueba unitaria de inyección de los 2 links en X con respeto estricto de 280 caracteres
+    x_largo = puente_motor_ia._anexar_links_manuales_red(
+        "x",
+        "Hito en Alura",
+        "A" * 240 + " en Alura Latam",
+    )
+    tweet_combinado = f"{x_largo['titulo']}\n\n{x_largo['texto_copy']}".strip()
+    assert "alura" not in tweet_combinado.lower()
+    assert "https://lnkd.in/gvbqJiF4" in x_largo["texto_copy"]
+    assert "https://lnkd.in/gU7h7xyG" in x_largo["texto_copy"]
+    assert "https://lnkd.in/gX2m2Rhq" not in x_largo["texto_copy"], (
+        "En X solo deben colocarse los 2 links de No Country y GitHub (gvbqJiF4 y gU7h7xyG)"
+    )
+    assert len(tweet_combinado) <= 280, f"El tweet combinado con links no debe exceder 280 chars: {len(tweet_combinado)}"
+
+    # 4. Prueba extremo a extremo en endpoint de publicación manual (publish-channel)
+    monkeypatch.setattr(puente_motor_ia, "despachar_replicacion_historial_reportes", lambda r: None)
+    captura_lk = {}
+    captura_x = {}
+
+    def fake_lk(titulo, texto_copy):
+        captura_lk["titulo"] = titulo
+        captura_lk["texto_copy"] = texto_copy
+        return {"ok": True, "detalle": "OK LK", "url": "https://www.linkedin.com/feed/update/urn:li:share:1", "urn": "urn:li:share:1", "estado_canal": "enviado"}
+
+    def fake_x(titulo, texto_copy):
+        captura_x["titulo"] = titulo
+        captura_x["texto_copy"] = texto_copy
+        return {"ok": True, "detalle": "OK X", "url": "https://x.com/CloudEdTech_1/status/1", "tweet_id": "1", "estado_canal": "enviado"}
+
+    monkeypatch.setattr(puente_motor_ia, "despachar_linkedin_resiliente", fake_lk)
+    monkeypatch.setattr(puente_motor_ia, "despachar_x_resiliente", fake_x)
+
+    resp_lk = client.post("/api/v1/mototradis/publish-channel", json={
+        "id_mensaje": 2640,
+        "canal": "linkedin",
+        "titulo": "Éxito en Alura",
+        "texto_copy": "Gran aprendizaje en los cursos de Alura Latam.",
+    })
+    assert resp_lk.status_code == 200
+    assert "alura" not in captura_lk["titulo"].lower()
+    assert "alura" not in captura_lk["texto_copy"].lower()
+    assert "https://lnkd.in/gX2m2Rhq" in captura_lk["texto_copy"]
+    assert "https://lnkd.in/gvbqJiF4" in captura_lk["texto_copy"]
+    assert "https://lnkd.in/gU7h7xyG" in captura_lk["texto_copy"]
+
+    resp_x = client.post("/api/v1/mototradis/publish-channel", json={
+        "id_mensaje": 2640,
+        "canal": "x",
+        "titulo": "Avance en Alura",
+        "texto_copy": "Terminé mi proyecto en Alura con Python.",
+    })
+    assert resp_x.status_code == 200
+    assert "alura" not in captura_x["titulo"].lower()
+    assert "alura" not in captura_x["texto_copy"].lower()
+    assert "https://lnkd.in/gvbqJiF4" in captura_x["texto_copy"]
+    assert "https://lnkd.in/gU7h7xyG" in captura_x["texto_copy"]
+    assert "https://lnkd.in/gX2m2Rhq" not in captura_x["texto_copy"]
+
+    # 5. Verificación en ContentStudio.tsx
+    ruta_raiz = os.path.dirname(os.path.dirname(__file__))
+    ruta_studio = os.path.join(ruta_raiz, "frontend", "src", "pages", "ContentStudio.tsx")
+    with open(ruta_studio, "r", encoding="utf-8") as f:
+        codigo_studio = f.read()
+
+    assert "https://lnkd.in/gX2m2Rhq" in codigo_studio
+    assert "https://lnkd.in/gvbqJiF4" in codigo_studio
+    assert "https://lnkd.in/gU7h7xyG" in codigo_studio

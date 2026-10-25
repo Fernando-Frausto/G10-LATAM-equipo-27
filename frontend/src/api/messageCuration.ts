@@ -26,7 +26,8 @@ export async function updateMessageCuration(
 
     if (
         result.id !== interactionId ||
-        result.curation_status !== status ||
+        (result.curation_status !== status &&
+            !(status === 'pending' && result.curation_status === 'curated')) ||
         result.updated !== true
     ) {
         throw new Error('El servidor no confirmó la curaduría')

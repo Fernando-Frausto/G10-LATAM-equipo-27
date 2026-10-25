@@ -59,6 +59,93 @@ const AI_PROVIDERS = [
   'Google Gemini Flash Lite',
 ] as const
 
+const LINKEDIN_MANUAL_LINKS = [
+  'https://lnkd.in/gX2m2Rhq',
+  'https://lnkd.in/gvbqJiF4',
+  'https://lnkd.in/gU7h7xyG',
+] as const
+
+const LINKEDIN_MANUAL_LINKS_BLOCK =
+  'Más Información:\nhttps://lnkd.in/gX2m2Rhq\nhttps://lnkd.in/gvbqJiF4\nhttps://lnkd.in/gU7h7xyG'
+
+const X_MANUAL_LINKS = [
+  'https://lnkd.in/gvbqJiF4',
+  'https://lnkd.in/gU7h7xyG',
+] as const
+
+const X_MANUAL_LINKS_BLOCK =
+  'https://lnkd.in/gvbqJiF4\nhttps://lnkd.in/gU7h7xyG'
+
+const sanitizeBrandText = (text: string): string => {
+  if (!text) return ''
+  return text
+    .replace(/#AluraLatam\b/gi, '#CloudEDTech')
+    .replace(/#Alura\b/gi, '#CloudEDTech')
+    .replace(/\bAlura\s+Latam\b/gi, 'CloudEDTech')
+    .replace(/\bAlura\b/gi, 'CloudEDTech')
+}
+
+const hasAllChannelLinks = (format: 'linkedin' | 'x', text: string): boolean => {
+  const required = format === 'linkedin' ? LINKEDIN_MANUAL_LINKS : X_MANUAL_LINKS
+  return required.every((lnk) => text.includes(lnk))
+}
+
+const applyManualChannelLinks = (
+  format: 'linkedin' | 'x',
+  title: string,
+  content: string
+): { title: string; content: string } => {
+  const cleanTitle = sanitizeBrandText(title).trim()
+  let cleanContent = sanitizeBrandText(content).trim()
+
+  if (format === 'linkedin') {
+    const missing = LINKEDIN_MANUAL_LINKS.filter(
+      (lnk) => !cleanContent.includes(lnk) && !cleanTitle.includes(lnk)
+    )
+    if (missing.length > 0) {
+      if (
+        missing.length === LINKEDIN_MANUAL_LINKS.length &&
+        !cleanContent.toLowerCase().includes('más información') &&
+        !cleanContent.toLowerCase().includes('mas informacion')
+      ) {
+        cleanContent = cleanContent
+          ? `${cleanContent}\n\n${LINKEDIN_MANUAL_LINKS_BLOCK}`
+          : LINKEDIN_MANUAL_LINKS_BLOCK
+      } else {
+        cleanContent = `${cleanContent}\n${missing.join('\n')}`.trim()
+      }
+    }
+    return { title: cleanTitle, content: cleanContent }
+  }
+
+  let baseBody = cleanContent
+  for (const lnk of X_MANUAL_LINKS) {
+    baseBody = baseBody.split(lnk).join('')
+  }
+  baseBody = baseBody.replace(/\n{3,}/g, '\n\n').trim()
+
+  const linksSuffix = baseBody || cleanTitle ? `\n\n${X_MANUAL_LINKS_BLOCK}` : X_MANUAL_LINKS_BLOCK
+  const titlePrefix = cleanTitle ? `${cleanTitle}\n\n` : ''
+  const maxBodyChars = Math.max(0, 280 - [...titlePrefix].length - [...linksSuffix].length)
+
+  if ([...baseBody].length > maxBodyChars) {
+    const chars = [...baseBody]
+    if (maxBodyChars > 3) {
+      const sliced = chars.slice(0, maxBodyChars - 3).join('')
+      const lastSpace = sliced.lastIndexOf(' ')
+      baseBody =
+        lastSpace > Math.max(10, Math.floor((maxBodyChars - 3) / 2))
+          ? `${sliced.slice(0, lastSpace).replace(/[,;.:\s]+$/, '')}...`
+          : `${sliced.replace(/[,;.:\s]+$/, '')}...`
+    } else {
+      baseBody = chars.slice(0, maxBodyChars).join('')
+    }
+  }
+
+  const finalX = baseBody ? `${baseBody}\n\n${X_MANUAL_LINKS_BLOCK}` : X_MANUAL_LINKS_BLOCK
+  return { title: cleanTitle, content: finalX }
+}
+
 type DiscordAttachment = {
   id: string
   filename: string
@@ -326,7 +413,7 @@ function ContentStudio() {
         let messages = data.messages
           .filter(
             (item) =>
-              (item.analysis.relevance >= 70 || item.analysis.curation_status === 'curated') &&
+              (item.analysis.relevance >= 35 || item.analysis.curation_status === 'curated') &&
               item.analysis.curation_status !== 'discarded' &&
               !item.analysis.is_published &&
               (!item.analysis.published_platforms || item.analysis.published_platforms.length === 0),
@@ -1196,15 +1283,15 @@ function ContentStudio() {
     }
   }, [])
 
-  // Modelos de IA utilizados reportados reactivamente
+  // Modelos de IA utilizados reportados reactivamente (Matriz Multi-LLM con fallbacks automáticos — Spec 026 RF-03)
   const modelosUtilizados: MototradisModelosUtilizados = useMemo(() => {
     return {
-      orquestador: pipelineData?.modelos_utilizados?.orquestador || 'Google Gemini · gemini-2.5-flash',
-      linkedin: pipelineData?.modelos_utilizados?.linkedin || 'Google Gemini · gemini-2.5-flash-lite',
-      x: pipelineData?.modelos_utilizados?.x || 'Groq · qwen/qwen-2.5-32b',
-      discord: pipelineData?.modelos_utilizados?.discord || 'Groq · llama-3.3-70b-versatile',
-      pqrs: pipelineData?.modelos_utilizados?.pqrs || 'Google Gemini · gemini-2.5-flash-lite',
-      masivo: pipelineData?.modelos_utilizados?.masivo || 'Google Gemma 4 · gemma-4-31b-it',
+      orquestador: pipelineData?.modelos_utilizados?.orquestador || 'Groq · qwen/qwen3.8-27b (Fallback: Gemini 3.6/3.1 Flash)',
+      linkedin: pipelineData?.modelos_utilizados?.linkedin || 'Google Gemini · gemini-3.5-flash-lite (Fallback: 3.1 Flash Lite)',
+      x: pipelineData?.modelos_utilizados?.x || 'Google Gemini · gemini-3.5-flash-lite (Fallback: 3.1 Flash Lite)',
+      discord: pipelineData?.modelos_utilizados?.discord || 'Groq · openai/gpt-oss-120b (Fallback: Gemini 3.1 Flash Lite)',
+      pqrs: pipelineData?.modelos_utilizados?.pqrs || 'Groq · qwen/qwen3.8-27b (Fallback: Gemini 3.1 Flash Lite)',
+      masivo: pipelineData?.modelos_utilizados?.masivo || 'Google Gemma 4 · gemma-4-31b-it (Fallback: 26B / Gemini Flash)',
     }
   }, [pipelineData])
 
@@ -1471,11 +1558,28 @@ function ContentStudio() {
     }
   }
 
+  // Inyección manual 1-clic de mención de links oficiales (LinkedIn / X)
+  const handleInsertManualChannelLinks = (canal: 'linkedin' | 'x') => {
+    const currentTitle = canal === 'linkedin' ? linkedinTitle : xTitle
+    const currentContent = isOmittedByOrchestrator(drafts[canal].content) ? '' : drafts[canal].content
+    const { title: nextTitle, content: nextContent } = applyManualChannelLinks(
+      canal,
+      currentTitle,
+      currentContent
+    )
+    if (canal === 'linkedin') {
+      setLinkedinTitle(nextTitle)
+    } else {
+      setXTitle(nextTitle)
+    }
+    updateContent(canal, nextContent)
+  }
+
   // Publicación individual por canal
   const handlePublishChannelIndividual = async (canal: 'linkedin' | 'x' | 'discord') => {
     if (!selectedMessageId) return
     const draft = drafts[canal]
-    const texto = draft.content.trim()
+    let texto = draft.content.trim()
     if (!texto) return
 
     setChannelPublishing((prev) => ({ ...prev, [canal]: true }))
@@ -1483,8 +1587,22 @@ function ContentStudio() {
     setPipelineActionError('')
 
     try {
-      const titulo =
+      let titulo =
         canal === 'linkedin' ? linkedinTitle : canal === 'x' ? xTitle : discordTitle
+      if (canal === 'linkedin' || canal === 'x') {
+        const prepared = applyManualChannelLinks(canal, titulo, texto)
+        titulo = prepared.title
+        texto = prepared.content
+        if (canal === 'linkedin') {
+          setLinkedinTitle(titulo)
+        } else {
+          setXTitle(titulo)
+        }
+        setDrafts((prev) => ({
+          ...prev,
+          [canal]: { ...prev[canal], content: texto },
+        }))
+      }
       const canalDestino = canal === 'discord' ? discordSelectedChannel : undefined
 
       const res = await publishMototradisChannel(
@@ -1766,10 +1884,23 @@ function ContentStudio() {
         </div>
 
         <div>
-          <label htmlFor="content-linkedin" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            <Pencil size={11} />
-            <span>Copy persuasivo editable</span>
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="content-linkedin" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              <Pencil size={11} />
+              <span>Copy persuasivo editable</span>
+            </label>
+            <button
+              type="button"
+              disabled={drafts.linkedin.submitted}
+              onClick={() => handleInsertManualChannelLinks('linkedin')}
+              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Inserta el bloque 'Más Información' con los 3 links oficiales y reemplaza menciones a Alura por CloudEDTech"
+            >
+              {hasAllChannelLinks('linkedin', drafts.linkedin.content)
+                ? '✓ Links oficiales incluidos'
+                : '➕ Insertar mención de links'}
+            </button>
+          </div>
           <textarea
             id="content-linkedin"
             value={drafts.linkedin.content}
@@ -2041,10 +2172,23 @@ function ContentStudio() {
         </div>
 
         <div>
-          <label htmlFor="content-x" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            <Pencil size={11} />
-            <span>Tweet editable</span>
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="content-x" className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+              <Pencil size={11} />
+              <span>Tweet editable</span>
+            </label>
+            <button
+              type="button"
+              disabled={drafts.x.submitted}
+              onClick={() => handleInsertManualChannelLinks('x')}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-800 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Inserta los 2 links oficiales (No Country y GitHub) ajustando a ≤ 280 caracteres y reemplaza Alura por CloudEDTech"
+            >
+              {hasAllChannelLinks('x', drafts.x.content)
+                ? '✓ Links No Country + GitHub'
+                : '➕ Insertar mención de links'}
+            </button>
+          </div>
           <textarea
             id="content-x"
             value={drafts.x.content}
@@ -3256,9 +3400,12 @@ function ContentStudio() {
                         </span>
                       )}
 
-                      <span className="c-chip c-chip--info">
+                      <span
+                        className="c-chip c-chip--info"
+                        title="Matriz Multi-LLM con fallbacks automáticos: Orquestador y PQRS (Qwen 3.8 27B → Fallback Gemini 3.6/3.1 Flash) · Discord (GPT-OSS 120B → Fallback Gemini 3.1 Flash Lite) · LinkedIn y X (Gemini 3.5 Flash Lite → Fallback Gemini 3.1 Flash Lite)"
+                      >
                         <Cpu size={11} />
-                        <span>🤖 Orquestador IA: {modelosUtilizados.orquestador}</span>
+                        <span>🤖 Matriz Multi-LLM: {modelosUtilizados.orquestador}</span>
                       </span>
 
                       {pipelineData?.rutas_activas && (
@@ -3269,18 +3416,21 @@ function ContentStudio() {
                     </div>
 
                     <p className="c-panel-head__desc">
-                      Mensaje seleccionado para generación de contenido y orquestación adaptativa multicanal.
+                      Matriz Multi-LLM activa: Orquestador y PQRS: Qwen 3.8 27B → Fallback Gemini 3.6/3.1 Flash · Discord: GPT-OSS 120B → Fallback Gemini 3.1 Flash Lite · LinkedIn y X: Gemini 3.5 Flash Lite → Fallback Gemini 3.1 Flash Lite.
                     </p>
                   </div>
                 </div>
 
                 <div className="c-panel-head__actions flex-wrap gap-2">
-                  <div className="flex items-center gap-1.5">
+                  <div
+                    className="flex items-center gap-1.5"
+                    title="Modelo utilizado únicamente al pulsar 'Regenerar' en una red individual (independiente de la Matriz Multi-LLM automática del pipeline LangGraph)"
+                  >
                     <label
                       htmlFor="workspace-ai-provider"
                       className="text-xs font-semibold text-slate-600"
                     >
-                      Fallback IA:
+                      IA Regeneración Individual:
                     </label>
                     <select
                       id="workspace-ai-provider"
@@ -3300,7 +3450,15 @@ function ContentStudio() {
                   <button
                     type="button"
                     disabled={!selectedWorkflowMessage}
-                    onClick={() => setWorkspaceModalChannel('all')}
+                    onClick={() => {
+                      if (drafts.linkedin.content.trim() && !isOmittedByOrchestrator(drafts.linkedin.content)) {
+                        handleInsertManualChannelLinks('linkedin')
+                      }
+                      if (drafts.x.content.trim() && !isOmittedByOrchestrator(drafts.x.content)) {
+                        handleInsertManualChannelLinks('x')
+                      }
+                      setWorkspaceModalChannel('all')
+                    }}
                     className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                     title="Abrir editor manual con los 3 canales en paralelo"
                   >
@@ -3487,7 +3645,12 @@ function ContentStudio() {
 
                 <button
                   type="button"
-                  onClick={() => setWorkspaceModalChannel('linkedin')}
+                  onClick={() => {
+                    if (drafts.linkedin.content.trim() && !isOmittedByOrchestrator(drafts.linkedin.content)) {
+                      handleInsertManualChannelLinks('linkedin')
+                    }
+                    setWorkspaceModalChannel('linkedin')
+                  }}
                   className="mt-3.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs font-bold text-blue-700 shadow-2xs transition hover:bg-blue-100"
                 >
                   <Pencil size={13} />
@@ -3541,7 +3704,12 @@ function ContentStudio() {
 
                 <button
                   type="button"
-                  onClick={() => setWorkspaceModalChannel('x')}
+                  onClick={() => {
+                    if (drafts.x.content.trim() && !isOmittedByOrchestrator(drafts.x.content)) {
+                      handleInsertManualChannelLinks('x')
+                    }
+                    setWorkspaceModalChannel('x')
+                  }}
                   className="mt-3.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800 shadow-2xs transition hover:bg-slate-100"
                 >
                   <Pencil size={13} />

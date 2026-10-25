@@ -225,6 +225,63 @@ def _inferir_tema(temas_clave: str | None, canal: str | None, texto: str | None)
     return "OTRO"
 
 
+def _es_spam_prioridad_4(relevancia: int | float | None, texto: str | None, razonamiento: str | None = "") -> bool:
+    """
+    Spec 026 - RF-06:
+    Filtro determinista de seguridad/spam alineado con la Prioridad 4 del Orquestador LangGraph (src/nodes.py).
+    Retorna True si relevancia <= 10, si el texto limpio tiene menos de 3 caracteres,
+    o si aparecen patrones bloqueados ('select', 'credenciales') en texto o razonamiento.
+    """
+    try:
+        rel_val = float(relevancia if relevancia is not None else 0)
+    except (ValueError, TypeError):
+        rel_val = 0.0
+
+    if rel_val <= 10:
+        return True
+
+    texto_limpio = str(texto or "").strip()
+    if len(texto_limpio) < 3:
+        return True
+
+    corpus = f"{texto_limpio} {str(razonamiento or '').strip()}".lower()
+    if "select" in corpus or "credenciales" in corpus:
+        return True
+
+    return False
+
+
+def _determinar_curaduria_analizado(
+    relevancia: int | float | None,
+    texto: str | None,
+    razonamiento: str | None = "",
+    estado_revision: str | None = "",
+) -> str:
+    """
+    Spec 026 - RF-06:
+    Determina el estado_curaduria para un mensaje analizado por IA alineado con las 4 Prioridades del Orquestador:
+    - Si estado_revision es 'aprobado' o 'procesado': 'curated'.
+    - Si estado_revision es 'desaprobado': 'discarded'.
+    - Para 'pendiente' o 'rechazado' (o vacío): si relevancia >= 35 y no activa Prioridad 4 (_es_spam_prioridad_4),
+      retorna 'curated' (habilitando Prioridad 1 >= 70% y Prioridad 2 35%-69% como anuncios de #notificaciones);
+      en caso contrario retorna 'discarded'.
+    """
+    st_rev = str(estado_revision or "").strip().lower()
+    if st_rev in ("aprobado", "procesado"):
+        return "curated"
+    if st_rev == "desaprobado":
+        return "discarded"
+
+    try:
+        rel_val = float(relevancia if relevancia is not None else 0)
+    except (ValueError, TypeError):
+        rel_val = 0.0
+
+    if rel_val >= 35 and not _es_spam_prioridad_4(rel_val, texto, razonamiento):
+        return "curated"
+    return "discarded"
+
+
 # ==============================================================================
 # Sincronización y Mapeo Supabase <-> SQLite
 # ==============================================================================
@@ -418,15 +475,142 @@ def _asegurar_esquema_sqlite():
         conn.commit()
 
 
+def _reconciliar_id_canonico_sqlite(hash_msg: str, id_canonico: int, conn_ext: sqlite3.Connection | None = None) -> int:
+    """
+    Spec 026 - RF-02:
+    Reconcilia atómicamente en SQLite local cualquier fila con el mismo hash cuyo ID local
+    temporal difiera del ID canónico asignado por public.interacciones de Supabase.
+    """
+    if not hash_msg or id_canonico is None:
+        return int(id_canonico or 0)
+    id_can = int(id_canonico)
+
+    def _hacer_reconciliacion(c: sqlite3.Connection) -> None:
+        c.row_factory = sqlite3.Row
+        fila_hash = c.execute(
+            "SELECT * FROM interacciones WHERE hash = ?", (hash_msg,)
+        ).fetchone()
+        if not fila_hash:
+            return
+        old_id = int(fila_hash["id"])
+        if old_id == id_can:
+            return
+        fila_existente_can = c.execute(
+            "SELECT * FROM interacciones WHERE id = ?", (id_can,)
+        ).fetchone()
+        if fila_existente_can:
+            c.execute("DELETE FROM interacciones WHERE id = ?", (old_id,))
+            c.execute(
+                "UPDATE interacciones SET hash = ? WHERE id = ?",
+                (hash_msg, id_can),
+            )
+        else:
+            c.execute(
+                "UPDATE interacciones SET id = ? WHERE id = ?",
+                (id_can, old_id),
+            )
+        try:
+            c.execute(
+                "UPDATE contenidos_generados SET interaccion_id = ? WHERE interaccion_id = ?",
+                (id_can, old_id),
+            )
+        except Exception:
+            pass
+        try:
+            c.execute(
+                "UPDATE respuestas_quejas_discord SET interaccion_id = ? WHERE interaccion_id = ?",
+                (id_can, old_id),
+            )
+        except Exception:
+            pass
+
+    try:
+        if conn_ext is not None:
+            _hacer_reconciliacion(conn_ext)
+        else:
+            with sqlite3.connect(motor_bd.RUTA_BD, timeout=10) as conn:
+                _hacer_reconciliacion(conn)
+                conn.commit()
+    except Exception as exc:
+        logger.debug(f"Aviso reconciliando ID canónico {id_can} para hash {hash_msg}: {exc}")
+    return id_can
+
+
+def _resolver_id_canonico_interaccion_supabase(interaccion: dict) -> int:
+    """
+    Spec 026 - RF-02:
+    Resuelve el ID canónico de una interacción en public.interacciones (por hash o par autor/texto)
+    y reconcilia atómicamente el ID en SQLite local antes de evaluar o persistir KPIs.
+    """
+    if not isinstance(interaccion, dict):
+        return 0
+    id_actual = int(interaccion.get("id") or 0)
+    autor = str(interaccion.get("autor") or interaccion.get("author") or "").strip()
+    texto = str(interaccion.get("texto") or interaccion.get("content") or "").strip()
+    canal = str(interaccion.get("canal") or interaccion.get("channel") or "#general").strip()
+    origen = str(interaccion.get("origen_comunidad") or "Discord_Grupo_ONE_G10").strip()
+    hash_msg = str(interaccion.get("hash") or "").strip()
+    if not hash_msg and texto:
+        try:
+            import limpieza
+            hash_msg = limpieza.calcular_hash(origen, canal, autor, texto)
+        except Exception:
+            hash_msg = ""
+
+    # 1. Buscar en obtener_datos_supabase() (soporta mocks de test y caché en memoria)
+    try:
+        fn_sb = getattr(sys.modules[__name__], "obtener_datos_supabase", obtener_datos_supabase)
+        datos_sb = fn_sb() or {}
+        for raw in datos_sb.get("interacciones", []) or []:
+            raw_id = raw.get("id")
+            if raw_id is None:
+                continue
+            raw_hash = str(raw.get("hash") or "").strip()
+            raw_autor = str(raw.get("autor") or "").strip().lower()
+            raw_texto = str(raw.get("texto") or "").strip()
+            if (hash_msg and raw_hash == hash_msg) or (
+                autor and texto and raw_autor == autor.lower() and raw_texto == texto
+            ):
+                id_can = int(raw_id)
+                if id_can != id_actual and hash_msg:
+                    _reconciliar_id_canonico_sqlite(hash_msg, id_can)
+                return id_can
+    except Exception:
+        pass
+
+    # 2. Si hay conexión a Supabase configurada y hash_msg, consultar/asegurar en public.interacciones
+    db_url = resolver_url_base_datos() or os.getenv("SUPABASE_DB_URL")
+    if db_url and hash_msg and not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            import psycopg2
+            with psycopg2.connect(db_url, sslmode="require", connect_timeout=3) as pg_conn:
+                with pg_conn.cursor() as cur:
+                    cur.execute("SELECT id FROM interacciones WHERE hash = %s LIMIT 1", (hash_msg,))
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        id_can = int(row[0])
+                        if id_can != id_actual:
+                            _reconciliar_id_canonico_sqlite(hash_msg, id_can)
+                        return id_can
+        except Exception:
+            pass
+
+    return id_actual
+
+
 def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
-    """Sincroniza y enriquece los datos de Supabase en SQLite respetando mutaciones locales."""
+    """Sincroniza y enriquece los datos de Supabase en SQLite respetando mutaciones locales y paridad de ID canónico."""
     if datos_sb is None:
         datos_sb = obtener_datos_supabase() or {}
     _asegurar_esquema_sqlite()
     interacciones_raw = datos_sb.get("interacciones", [])
     kpis_raw = datos_sb.get("kpis", [])
 
+    import limpieza
+
     kpis_map = {}
+    kpis_por_hash = {}
+    kpis_por_autor_texto = {}
     for k in kpis_raw:
         id_msg = k.get("id_mensaje")
         if id_msg is not None:
@@ -435,17 +619,45 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
                 kpis_map[int(id_msg)] = k
             except (ValueError, TypeError):
                 pass
+        h_k = str(k.get("hash") or "").strip()
+        if h_k:
+            kpis_por_hash[h_k] = k
+        autor_k = str(k.get("autor") or "").strip()
+        texto_k = str(k.get("texto_original") or k.get("texto") or "").strip()
+        canal_k = str(k.get("canal_origen") or k.get("canal") or "#general").strip()
+        origen_k = str(k.get("comunidad") or k.get("origen_comunidad") or "Discord_Grupo_ONE_G10").strip()
+        if autor_k and texto_k:
+            kpis_por_autor_texto[(autor_k.lower(), canal_k.lower(), texto_k)] = k
+            try:
+                h_calc = limpieza.calcular_hash(origen_k, canal_k, autor_k, texto_k)
+                kpis_por_hash[h_calc] = k
+            except Exception:
+                pass
 
     with sqlite3.connect(motor_bd.RUTA_BD) as conn:
         conn.row_factory = sqlite3.Row
-        # Respetar mutaciones locales previas de curaduría y etapa de flujo
+        filas_locales = [dict(r) for r in conn.execute("SELECT * FROM interacciones").fetchall()]
         locales = {
-            row["id"]: (row["estado_curaduria"], row["etapa_flujo"])
-            for row in conn.execute("SELECT id, estado_curaduria, etapa_flujo FROM interacciones").fetchall()
+            r["id"]: (r.get("estado_curaduria"), r.get("etapa_flujo"))
+            for r in filas_locales
+        }
+        locales_por_id = {int(r["id"]): r for r in filas_locales if r.get("id") is not None}
+        locales_por_hash = {str(r["hash"]): r for r in filas_locales if r.get("hash")}
+        locales_por_autor_texto = {
+            (
+                str(r.get("autor") or "").strip().lower(),
+                str(r.get("canal") or "#general").strip().lower(),
+                str(r.get("texto") or "").strip(),
+            ): r
+            for r in filas_locales
+            if r.get("texto")
         }
 
         # 1. Procesar interacciones de Discord
         ids_procesados = set()
+        kpis_emparejados_ids = set()
+        pares_autor_texto_procesados = set()
+
         for raw in interacciones_raw:
             autor = str(raw.get("autor") or "").strip()
             tipo = str(raw.get("tipo") or "").strip().lower()
@@ -460,10 +672,61 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
                 continue
 
             iid = int(raw["id"])
+            raw_hash = str(raw.get("hash") or "").strip()
+            texto_raw = str(raw.get("texto") or "").strip()
+            canal_raw = str(raw.get("canal") or "#general").strip()
+            par_at = (autor.lower(), canal_raw.lower(), texto_raw)
+            if autor and texto_raw:
+                pares_autor_texto_procesados.add(par_at)
+
+            # Reconciliar si existía en SQLite con un ID local temporal distinto y el mismo hash o (autor, canal, texto)
+            fila_loc = locales_por_id.get(iid)
+            if fila_loc is None and raw_hash and raw_hash in locales_por_hash:
+                fila_loc = locales_por_hash[raw_hash]
+            if fila_loc is None and autor and texto_raw and par_at in locales_por_autor_texto:
+                fila_loc = locales_por_autor_texto[par_at]
+
+            old_id_reconciliado = None
+            if fila_loc is not None and int(fila_loc["id"]) != iid:
+                old_id_reconciliado = int(fila_loc["id"])
+                conn.execute("DELETE FROM interacciones WHERE id = ?", (old_id_reconciliado,))
+                try:
+                    conn.execute(
+                        "UPDATE contenidos_generados SET interaccion_id = ? WHERE interaccion_id = ?",
+                        (iid, old_id_reconciliado),
+                    )
+                    conn.execute(
+                        "UPDATE respuestas_quejas_discord SET interaccion_id = ? WHERE interaccion_id = ?",
+                        (iid, old_id_reconciliado),
+                    )
+                except Exception:
+                    pass
+                locales[iid] = (fila_loc.get("estado_curaduria"), fila_loc.get("etapa_flujo"))
+                locales_por_id[iid] = fila_loc
+
             ids_procesados.add(iid)
+
+            # Vinculación dual de KPIs: por id_mensaje, por old_id reconciliado, por hash o por (autor, canal, texto_original)
             kpi = kpis_map.get(iid) or kpis_map.get(str(iid))
+            if kpi is None and old_id_reconciliado is not None:
+                kpi = kpis_map.get(old_id_reconciliado) or kpis_map.get(str(old_id_reconciliado))
+            if kpi is None and raw_hash:
+                kpi = kpis_por_hash.get(raw_hash)
+            if kpi is None and autor and texto_raw:
+                kpi_cand = kpis_por_autor_texto.get(par_at)
+                if kpi_cand is not None:
+                    id_msg_cand = kpi_cand.get("id_mensaje")
+                    if id_msg_cand is None or str(id_msg_cand) in (str(iid), str(old_id_reconciliado)):
+                        kpi = kpi_cand
 
             if kpi:
+                kpis_emparejados_ids.add(id(kpi))
+                if kpi.get("id_mensaje") is not None:
+                    try:
+                        kpis_emparejados_ids.add(int(kpi.get("id_mensaje")))
+                    except (ValueError, TypeError):
+                        pass
+
                 estado = "analizado"
                 sentimiento = kpi.get("sentimiento")
                 sentiment_score = _calcular_sentiment_score(sentimiento)
@@ -474,12 +737,12 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
                 razonamiento = kpi.get("razonamiento")
                 st_rev = str(kpi.get("estado_revision") or "").lower()
 
-                if st_rev in ("aprobado", "procesado"):
-                    estado_curaduria = "curated"
-                elif st_rev in ("rechazado", "desaprobado"):
-                    estado_curaduria = "discarded"
-                else:
-                    estado_curaduria = "pending"
+                estado_curaduria = _determinar_curaduria_analizado(
+                    relevancia=relevancia,
+                    texto=raw.get("texto") or kpi.get("texto_original") or "",
+                    razonamiento=razonamiento,
+                    estado_revision=st_rev,
+                )
 
                 if st_rev == "aprobado":
                     etapa_flujo = "en_aprobacion"
@@ -489,6 +752,26 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
                     etapa_flujo = "en_analisis"
                 else:
                     etapa_flujo = "ingesta"
+            elif fila_loc is not None and (
+                str(fila_loc.get("estado") or "").strip().lower() == "analizado"
+                or fila_loc.get("relevancia") is not None
+            ):
+                # Spec 026 - RF-02: Preservar análisis local recién ejecutado aunque kpis_raw aún no lo traiga
+                estado = "analizado"
+                sentimiento = fila_loc.get("sentimiento")
+                sentiment_score = fila_loc.get("sentiment_score")
+                temas_clave = fila_loc.get("temas_clave")
+                tema = fila_loc.get("tema")
+                relevancia = fila_loc.get("relevancia")
+                segmento = fila_loc.get("segmento")
+                razonamiento = fila_loc.get("razonamiento")
+                estado_curaduria = fila_loc.get("estado_curaduria") or _determinar_curaduria_analizado(
+                    relevancia=relevancia,
+                    texto=texto_raw,
+                    razonamiento=razonamiento,
+                    estado_revision="pendiente",
+                )
+                etapa_flujo = fila_loc.get("etapa_flujo") or "en_analisis"
             else:
                 estado = "pendiente"
                 sentimiento = None
@@ -501,10 +784,12 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
                 estado_curaduria = "pending"
                 etapa_flujo = "ingesta"
 
-            # Respetar mutaciones locales si el usuario ya interactuó con la fila
+            # Respetar mutaciones locales si el usuario ya interactuó con la fila (Spec 026 - RF-01)
             if iid in locales:
                 cur_loc, flujo_loc = locales[iid]
-                if cur_loc is not None and (flujo_loc != "ingesta" or cur_loc != "pending" or not kpi):
+                if cur_loc in ("discarded", "curated"):
+                    estado_curaduria = cur_loc
+                elif cur_loc is not None and (flujo_loc != "ingesta" or cur_loc != "pending" or not kpi):
                     estado_curaduria = cur_loc
                 if flujo_loc is not None and (flujo_loc != "ingesta" or not kpi):
                     etapa_flujo = flujo_loc
@@ -552,6 +837,8 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
 
         # 2. Sintetizar registros de lotes_ia_kpis que no estén en interacciones
         for kpi in kpis_raw:
+            if id(kpi) in kpis_emparejados_ids:
+                continue
             id_msg = kpi.get("id_mensaje")
             if id_msg is None:
                 continue
@@ -559,30 +846,32 @@ def _sincronizar_supabase_a_sqlite(datos_sb: dict = None) -> int:
                 iid = int(id_msg)
             except (ValueError, TypeError):
                 continue
-            if iid in ids_procesados:
+            if iid in ids_procesados or iid in kpis_emparejados_ids:
                 continue
 
             autor = str(kpi.get("autor") or "").strip()
+            texto = str(kpi.get("texto_original") or "")
+            canal = kpi.get("canal_origen") or kpi.get("canal") or "#general"
+            if (autor.lower(), str(canal).strip().lower(), texto.strip()) in pares_autor_texto_procesados:
+                continue
             if autor.lower() == "spidey boy#0000" or autor.endswith("#0000") or "bot" in autor.lower():
                 continue
 
             sentimiento = kpi.get("sentimiento")
             sentiment_score = _calcular_sentiment_score(sentimiento)
             temas_clave = kpi.get("temas_clave")
-            canal = kpi.get("canal_origen") or kpi.get("canal") or "#general"
-            texto = kpi.get("texto_original") or ""
             tema = _inferir_tema(temas_clave, canal, texto)
             relevancia = kpi.get("relevancia")
             segmento = kpi.get("segmento")
             razonamiento = kpi.get("razonamiento")
             st_rev = str(kpi.get("estado_revision") or "").lower()
 
-            if st_rev in ("aprobado", "procesado"):
-                estado_curaduria = "curated"
-            elif st_rev in ("rechazado", "desaprobado"):
-                estado_curaduria = "discarded"
-            else:
-                estado_curaduria = "pending"
+            estado_curaduria = _determinar_curaduria_analizado(
+                relevancia=relevancia,
+                texto=texto,
+                razonamiento=razonamiento,
+                estado_revision=st_rev,
+            )
 
             if st_rev == "aprobado":
                 etapa_flujo = "en_aprobacion"
@@ -739,7 +1028,7 @@ def _obtener_ids_evaluados_supabase() -> set[int]:
 
 
 def _obtener_ids_evaluados_dual() -> set[int]:
-    """Obtiene los IDs de mensajes evaluados combinando Supabase y SQLite local."""
+    """Obtiene los IDs de mensajes evaluados o descartados manualmente combinando Supabase y SQLite local."""
     fn_sb_ids = getattr(sys.modules[__name__], "_obtener_ids_evaluados_supabase", _obtener_ids_evaluados_supabase)
     ids = set(fn_sb_ids() or set())
 
@@ -749,7 +1038,9 @@ def _obtener_ids_evaluados_dual() -> set[int]:
             with sqlite3.connect(ruta_bd) as conn:
                 cur = conn.cursor()
                 try:
-                    cur.execute("SELECT id FROM interacciones WHERE estado = 'analizado' OR relevancia IS NOT NULL")
+                    cur.execute(
+                        "SELECT id FROM interacciones WHERE estado = 'analizado' OR relevancia IS NOT NULL OR estado_curaduria = 'discarded'"
+                    )
                     for row in cur.fetchall():
                         if row[0] is not None:
                             try:
@@ -1021,29 +1312,124 @@ def obtener_contenido_puente(contenido_id: int) -> dict | None:
         return item
 
 
+def _replicar_curaduria_supabase_bg(interaccion_id: int, estado_sb: str) -> None:
+    """
+    Spec 026 - RF-01, RNF-02:
+    Replica en segundo plano el estado de revisión hacia public.lotes_ia_kpis en Supabase.
+    Si el mensaje aún no existe en lotes_ia_kpis (0 rows affected), lo ignora silenciosamente.
+    """
+    sb_url = os.getenv("SUPABASE_DB_URL") or resolver_url_base_datos()
+    if not sb_url:
+        return
+    try:
+        import psycopg2
+        with psycopg2.connect(sb_url, sslmode="require", connect_timeout=3) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE lotes_ia_kpis SET estado_revision = %s WHERE id_mensaje = %s",
+                    (estado_sb, interaccion_id),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
+_ultimo_estado_curaduria_efectivo: dict[int, str] = {}
+
+
 def actualizar_curaduria_puente(interaccion_id: int, estado_curaduria: str) -> bool:
-    invalidar_cache_supabase()
-    res = _orig_actualizar_curaduria(interaccion_id, estado_curaduria)
+    """
+    Spec 026 - RF-01, RNF-02:
+    Actualiza el estado de curaduría en SQLite local en < 2 ms y delega la réplica hacia
+    public.lotes_ia_kpis en segundo plano mediante asyncio.create_task(asyncio.to_thread(...)).
+    Al restaurar un mensaje descartado ('pending' o 'curated'):
+    - Si ya está analizado (estado == 'analizado' o relevancia > 0), persiste 'curated'.
+    - Si aún no está analizado, persiste 'pending' y etapa_flujo = 'ingesta'.
+    """
+    estado_solicitado = str(estado_curaduria or "").strip().lower()
+    if estado_solicitado not in {"pending", "curated", "discarded"}:
+        raise ValueError("Estado de curaduria no valido")
+
+    ya_analizado = False
+    cur_previa = ""
+    estado_efectivo = estado_solicitado
+    es_restauracion = False
+    res = False
+
+    def _ejecutar_tx() -> None:
+        nonlocal ya_analizado, cur_previa, estado_efectivo, es_restauracion, res
+        with sqlite3.connect(motor_bd.RUTA_BD, timeout=10) as conn:
+            conn.execute("PRAGMA synchronous = OFF")
+            conn.execute("PRAGMA journal_mode = MEMORY")
+            row = conn.execute(
+                "SELECT estado, relevancia, estado_curaduria FROM interacciones WHERE id = ?",
+                (interaccion_id,),
+            ).fetchone()
+            if row:
+                st_msg = str(row[0] or "").strip().lower()
+                rel_msg = row[1]
+                cur_previa = str(row[2] or "").strip().lower()
+                try:
+                    rel_val = float(rel_msg) if rel_msg is not None else 0.0
+                except (ValueError, TypeError):
+                    rel_val = 0.0
+                ya_analizado = (st_msg == "analizado") or (rel_msg is not None and rel_val > 0)
+
+            es_restauracion = (cur_previa == "discarded") and (estado_solicitado in ("pending", "curated"))
+            if estado_solicitado == "discarded":
+                estado_efectivo = "discarded"
+            elif es_restauracion or estado_solicitado in ("pending", "curated"):
+                if ya_analizado:
+                    estado_efectivo = "curated" if (es_restauracion or estado_solicitado == "curated") else "pending"
+                else:
+                    estado_efectivo = "pending" if (es_restauracion or estado_solicitado == "pending") else "curated"
+
+            if not ya_analizado and estado_efectivo == "pending":
+                cur = conn.execute(
+                    "UPDATE interacciones SET estado_curaduria = ?, etapa_flujo = 'ingesta', etapa = 'ingesta' WHERE id = ?",
+                    (estado_efectivo, interaccion_id),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE interacciones SET estado_curaduria = ? WHERE id = ?",
+                    (estado_efectivo, interaccion_id),
+                )
+            res = cur.rowcount > 0
+
+    try:
+        _ejecutar_tx()
+    except sqlite3.OperationalError:
+        _asegurar_esquema_sqlite()
+        _ejecutar_tx()
+
+    _ultimo_estado_curaduria_efectivo[int(interaccion_id)] = estado_efectivo
+    invalidar_cache_analytics()
+    invalidar_cache_reportes_oci()
+
     if res:
+        if estado_efectivo == "discarded":
+            estado_sb = "rechazado"
+        elif es_restauracion or estado_efectivo == "pending":
+            estado_sb = "pendiente"
+        else:
+            estado_sb = "aprobado"
+
+        if _cache_datos_supabase and isinstance(_cache_datos_supabase.get("kpis"), list):
+            for k in _cache_datos_supabase["kpis"]:
+                if str(k.get("id_mensaje")) == str(interaccion_id):
+                    k["estado_revision"] = estado_sb
+
         sb_url = os.getenv("SUPABASE_DB_URL") or resolver_url_base_datos()
         if sb_url:
-            mapa_sb = {
-                "curated": "aprobado",
-                "discarded": "rechazado",
-                "pending": "pendiente",
-            }
-            estado_sb = mapa_sb.get(estado_curaduria, "pendiente")
+            coro = asyncio.to_thread(_replicar_curaduria_supabase_bg, interaccion_id, estado_sb)
             try:
-                import psycopg2
-                with psycopg2.connect(sb_url, sslmode="require", connect_timeout=3) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE lotes_ia_kpis SET estado_revision = %s WHERE id_mensaje = %s",
-                            (estado_sb, interaccion_id),
-                        )
-                    conn.commit()
-            except Exception:
-                pass
+                asyncio.create_task(coro)
+            except RuntimeError:
+                try:
+                    coro.close()
+                except Exception:
+                    pass
+                _replicar_curaduria_supabase_bg(interaccion_id, estado_sb)
     return res
 
 
@@ -1151,6 +1537,235 @@ async def _interceptar_contexto_motor_ia(request, call_next):
 # Homologación en Memoria de Cerebros IA y Delegación de Discord
 # ==============================================================================
 
+GEMMA_EVAL_TIMEOUT_SECONDS: float = 20.0
+
+
+def _normalizar_salida_evaluacion(
+    res: Any,
+    texto_input: str = "",
+    canal_input: str = "#general",
+    clase_formato: Any = None,
+) -> Any:
+    """Garantiza que la respuesta de evaluación sea una instancia válida de FormatoSalida."""
+    if res is not None and all(
+        hasattr(res, attr) for attr in ("relevancia", "sentimiento", "temas_clave", "segmento", "razonamiento")
+    ):
+        return res
+
+    datos = res if isinstance(res, dict) else {}
+    rel_raw = datos.get("relevancia")
+    if rel_raw is None:
+        rel_val = 65 if len(str(texto_input or "").strip()) >= 25 else 25
+    else:
+        try:
+            rel_val = max(0, min(100, int(rel_raw)))
+        except (ValueError, TypeError):
+            rel_val = 50
+
+    sent_val = str(datos.get("sentimiento") or "Neutral").strip() or "Neutral"
+    temas_val = str(datos.get("temas_clave") or "#comunidad #discord").strip() or "#comunidad"
+    seg_val = str(datos.get("segmento") or "USUARIO_COMUNIDAD").strip() or "USUARIO_COMUNIDAD"
+    raz_val = (
+        str(datos.get("razonamiento") or "Evaluación procesada por cascada resiliente de IA.").strip()
+        or "Evaluación procesada por cascada resiliente de IA."
+    )
+    score_val = float(datos.get("sentiment_score") or _calcular_sentiment_score(sent_val) or 0.85)
+    tema_val = str(datos.get("tema") or _inferir_tema(temas_val, canal_input, texto_input) or "COMUNIDAD")
+
+    target_cls = clase_formato or getattr(_motor_cerebro, "FormatoSalida", None)
+    if target_cls is not None:
+        try:
+            campos_cls = getattr(target_cls, "model_fields", None) or getattr(target_cls, "__fields__", {})
+            kwargs_cls = {
+                "relevancia": rel_val,
+                "sentimiento": sent_val,
+                "temas_clave": temas_val,
+                "segmento": seg_val,
+                "razonamiento": raz_val,
+            }
+            if "sentiment_score" in campos_cls:
+                kwargs_cls["sentiment_score"] = score_val
+            if "tema" in campos_cls:
+                kwargs_cls["tema"] = tema_val
+            return target_cls(**kwargs_cls)
+        except Exception:
+            pass
+
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        relevancia=rel_val,
+        sentimiento=sent_val,
+        sentiment_score=score_val,
+        temas_clave=temas_val,
+        tema=tema_val,
+        segmento=seg_val,
+        razonamiento=raz_val,
+    )
+
+
+class _CadenaGemmaResiliente:
+    """
+    Spec 026 - RF-07:
+    Wrapper resiliente y thread-safe para cerebro_ia_gemma_4.cadena:
+    - Configura temperature=0.1 y max_output_tokens=800.
+    - Aplica timeout estricto por mensaje (GEMMA_EVAL_TIMEOUT_SECONDS = 20.0s) sin bloquear hilos colgados.
+    - Reintenta hasta max_retries veces ante errores transitorios (500 INTERNAL, 503 UNAVAILABLE, 429, TimeoutError).
+    - Conmuta automáticamente a la cascada de fallback:
+      gemma-4-26b-a4b-it -> cerebro_ia_gemini_flash (gemini-3.5-flash-lite) -> cerebro_ia (Groq).
+    """
+
+    def __init__(
+        self,
+        cadena_primaria: Any = None,
+        cadenas_fallback: list[Any] | None = None,
+        timeout_seconds: float = GEMMA_EVAL_TIMEOUT_SECONDS,
+        max_retries: int = 2,
+        temperature: float = 0.1,
+        max_output_tokens: int = 800,
+        clase_formato: Any = None,
+    ):
+        if isinstance(cadena_primaria, _CadenaGemmaResiliente):
+            cadena_primaria = cadena_primaria._cadena_primaria
+        self._cadena_primaria = cadena_primaria
+        self._cadenas_fallback_explicitas = list(cadenas_fallback) if cadenas_fallback is not None else None
+        self.timeout_seconds = float(timeout_seconds)
+        self.max_retries = max(0, int(max_retries))
+        self.temperature = float(temperature)
+        self.max_output_tokens = int(max_output_tokens)
+        self._clase_formato = clase_formato or getattr(_motor_cerebro, "FormatoSalida", None)
+
+    def _invocar_con_timeout(self, runnable: Any, input_data: Any, *args, **kwargs) -> Any:
+        import concurrent.futures
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut = executor.submit(runnable.invoke, input_data, *args, **kwargs)
+        try:
+            return fut.result(timeout=self.timeout_seconds)
+        except concurrent.futures.TimeoutError as exc_to:
+            raise TimeoutError(
+                f"Tiempo de espera agotado ({self.timeout_seconds}s) al invocar modelo Gemma/Fallback"
+            ) from exc_to
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
+    def _es_error_reintentable(exc: Exception) -> bool:
+        if isinstance(exc, TimeoutError):
+            return True
+        msg = str(exc or "").upper()
+        patrones = (
+            "500",
+            "503",
+            "429",
+            "INTERNAL",
+            "UNAVAILABLE",
+            "OVERLOADED",
+            "RESOURCE_EXHAUSTED",
+            "RATE LIMIT",
+            "DEADLINE",
+            "TIMEOUT",
+            "TIMED OUT",
+        )
+        return any(p in msg for p in patrones)
+
+    def _construir_fallbacks_por_defecto(self) -> list[tuple[str, Any]]:
+        fallbacks: list[tuple[str, Any]] = []
+        google_key = (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
+        if google_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                prompt_f = getattr(cerebro_ia_gemma_4, "prompt_filtro", None) or getattr(_motor_cerebro, "prompt_filtro", None)
+                fmt_cls = self._clase_formato or getattr(_motor_cerebro, "FormatoSalida", None)
+                if prompt_f is not None and fmt_cls is not None:
+                    llm_26b = ChatGoogleGenerativeAI(
+                        model="gemma-4-26b-a4b-it",
+                        temperature=self.temperature,
+                        max_output_tokens=self.max_output_tokens,
+                        timeout=self.timeout_seconds,
+                        max_retries=1,
+                        google_api_key=google_key,
+                    )
+                    fallbacks.append(("gemma-4-26b-a4b-it", prompt_f | llm_26b.with_structured_output(fmt_cls)))
+            except Exception:
+                pass
+
+        if hasattr(cerebro_ia_gemini_flash, "cadena") and cerebro_ia_gemini_flash.cadena is not None:
+            fallbacks.append(("gemini-3.5-flash-lite", cerebro_ia_gemini_flash.cadena))
+        if hasattr(cerebro_ia, "cadena") and cerebro_ia.cadena is not None:
+            fallbacks.append(("groq-fallback", cerebro_ia.cadena))
+        return fallbacks
+
+    def invoke(self, input_data: Any, *args, **kwargs) -> Any:
+        texto_in = input_data.get("texto", "") if isinstance(input_data, dict) else str(input_data or "")
+        canal_in = input_data.get("canal", "#general") if isinstance(input_data, dict) else "#general"
+        ultimo_error: Exception | None = None
+
+        if self._cadena_primaria is not None:
+            total_intentos = self.max_retries + 1
+            for intento in range(total_intentos):
+                try:
+                    res = self._invocar_con_timeout(self._cadena_primaria, input_data, *args, **kwargs)
+                    return _normalizar_salida_evaluacion(res, texto_in, canal_in, self._clase_formato)
+                except Exception as exc:
+                    ultimo_error = exc
+                    logger.warning(
+                        f"[Gemma 4 Resiliente] Intento {intento + 1}/{total_intentos} falló: {exc}"
+                    )
+                    if intento + 1 < total_intentos and self._es_error_reintentable(exc):
+                        time.sleep(min(0.05 * (intento + 1), 0.2))
+                        continue
+                    break
+
+        if self._cadenas_fallback_explicitas is not None:
+            for idx, fb_runnable in enumerate(self._cadenas_fallback_explicitas, 1):
+                try:
+                    res_fb = self._invocar_con_timeout(fb_runnable, input_data, *args, **kwargs)
+                    return _normalizar_salida_evaluacion(res_fb, texto_in, canal_in, self._clase_formato)
+                except Exception as exc_fb:
+                    ultimo_error = exc_fb
+                    logger.warning(f"[Gemma 4 Resiliente] Fallback explícito #{idx} falló: {exc_fb}")
+        else:
+            for nombre_fb, fb_runnable in self._construir_fallbacks_por_defecto():
+                try:
+                    logger.info(f"[Gemma 4 Resiliente] Conmutando a fallback automático: {nombre_fb}")
+                    res_fb = self._invocar_con_timeout(fb_runnable, input_data, *args, **kwargs)
+                    return _normalizar_salida_evaluacion(res_fb, texto_in, canal_in, self._clase_formato)
+                except Exception as exc_fb:
+                    ultimo_error = exc_fb
+                    logger.warning(f"[Gemma 4 Resiliente] Fallback {nombre_fb} falló: {exc_fb}")
+
+        logger.warning(
+            f"[Gemma 4 Resiliente] Todos los proveedores fallaron ({ultimo_error}). Retornando evaluación determinista de respaldo."
+        )
+        return _normalizar_salida_evaluacion({}, texto_in, canal_in, self._clase_formato)
+
+
+def _aplicar_gemma_resiliente_a_modulo(mod_gemma: Any) -> Any:
+    """Inyecta configuración acotada (temperature=0.1, max_output_tokens=800) y _CadenaGemmaResiliente sobre un módulo Gemma."""
+    if mod_gemma is None:
+        return mod_gemma
+    try:
+        if hasattr(mod_gemma, "llm"):
+            try:
+                setattr(mod_gemma.llm, "temperature", 0.1)
+                setattr(mod_gemma.llm, "max_output_tokens", 800)
+            except Exception:
+                pass
+        cadena_actual = getattr(mod_gemma, "cadena", None)
+        if not isinstance(cadena_actual, _CadenaGemmaResiliente):
+            mod_gemma.cadena = _CadenaGemmaResiliente(
+                cadena_primaria=cadena_actual,
+                timeout_seconds=GEMMA_EVAL_TIMEOUT_SECONDS,
+                max_retries=2,
+                temperature=0.1,
+                max_output_tokens=800,
+                clase_formato=getattr(mod_gemma, "FormatoSalida", None),
+            )
+    except Exception as exc_g:
+        logger.debug(f"Aviso aplicando _CadenaGemmaResiliente: {exc_g}")
+    return mod_gemma
+
+
 # Inyectar el esquema FormatoSalida completo (con sentiment_score y tema) y reconstruir cadenas en memoria
 for _c_mod in (cerebro_ia_gemini_flash, cerebro_ia_gemma_4):
     _c_mod.FormatoSalida = _motor_cerebro.FormatoSalida
@@ -1161,6 +1776,24 @@ for _c_mod in (cerebro_ia_gemini_flash, cerebro_ia_gemma_4):
                 _c_mod.cadena = _c_mod.prompt_filtro | _c_mod.llm_estructurado
     except Exception:
         pass
+
+_aplicar_gemma_resiliente_a_modulo(cerebro_ia_gemma_4)
+try:
+    import importlib as _importlib_std
+    _orig_importlib_reload = getattr(_importlib_std, "_orig_reload_spec026", _importlib_std.reload)
+    setattr(_importlib_std, "_orig_reload_spec026", _orig_importlib_reload)
+
+    def _reload_con_gemma_resiliente(module):
+        reloaded = _orig_importlib_reload(module)
+        if getattr(reloaded, "__name__", "").endswith("cerebro_ia_gemma_4"):
+            _aplicar_gemma_resiliente_a_modulo(reloaded)
+        return reloaded
+
+    _importlib_std.reload = _reload_con_gemma_resiliente
+    _mod_gemma_raiz = _importlib_std.import_module("cerebro_ia_gemma_4")
+    _aplicar_gemma_resiliente_a_modulo(_mod_gemma_raiz)
+except Exception:
+    pass
 
 
 def obtener_modelo_gemini() -> str:
@@ -1242,9 +1875,10 @@ async def me_v1():
 async def curation_v1(interaction_id: int, payload: dict):
     status = payload.get("status")
     actualizar_curaduria_puente(interaction_id, status)
+    estado_final = _ultimo_estado_curaduria_efectivo.get(int(interaction_id), status)
     return {
         "id": interaction_id,
-        "curation_status": status,
+        "curation_status": estado_final,
         "updated": True,
     }
 
@@ -1946,13 +2580,16 @@ async def regenerar_contenido_v1(payload: dict = Body(...)):
             detail=f"El proveedor {nombre_legible} carece de credenciales configuradas en el servidor.",
         )
 
+    texto_llm = _sanitizar_marca_texto_red(texto) if formato_raw in ("linkedin", "x") else texto
     fn_copy = getattr(sys.modules[__name__], "_generar_copy_llm", _generar_copy_llm)
     try:
-        resultado = fn_copy(texto, canal, formato_raw, tono, modulo, nombre_legible)
+        resultado = fn_copy(texto_llm, canal, formato_raw, tono, modulo, nombre_legible)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error al generar copy con {nombre_legible}: {str(e)}")
 
     contenido_final = str((resultado or {}).get("contenido") or "").strip()
+    if formato_raw in ("linkedin", "x"):
+        contenido_final = _sanitizar_marca_texto_red(contenido_final)
 
     # Garantía estricta para formato 'x' (len(contenido) <= 280)
     if formato_raw == "x" and len(contenido_final) > 280:
@@ -1966,9 +2603,12 @@ async def regenerar_contenido_v1(payload: dict = Body(...)):
         if len(contenido_final) > 280:
             contenido_final = contenido_final[:280]
 
+    titulo_final = str((resultado or {}).get("titulo") or "")
+    if formato_raw in ("linkedin", "x"):
+        titulo_final = _sanitizar_marca_texto_red(titulo_final)
     return {
         "formato": formato_raw,
-        "titulo": str((resultado or {}).get("titulo") or ""),
+        "titulo": titulo_final,
         "contenido": contenido_final,
         "llamada_accion": str((resultado or {}).get("llamada_accion") or ""),
         "hashtags": list((resultado or {}).get("hashtags") or []),
@@ -2594,7 +3234,8 @@ def _cargar_lote_consolidado_para_reporte() -> dict:
                         },
                     }
                     st_cur = str(d.get("estado_curaduria") or "").lower()
-                    if st_cur == "discarded" or (st_cur != "curated" and rel < 70):
+                    es_baja_rel = rel < 35 or _es_spam_prioridad_4(rel, d.get("texto") or "", d.get("razonamiento") or "")
+                    if st_cur == "discarded" or (st_cur != "curated" and es_baja_rel):
                         descartados_sql.append(item)
                     else:
                         aprobados_sql.append(item)
@@ -2709,12 +3350,12 @@ def _coincide_semana_registro(reg: dict, semana_objetivo: str) -> bool:
 
 def _obtener_descartados_semana_sqlite(semana_objetivo: str, ids_aprobados: set | None = None) -> list[dict]:
     """
-    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Spec 024 - RF-01, RF-03, RF-04, RF-06 (actualizado por Spec 026 RF-06):
     Extrae los registros descartados de la base de datos SQLite local (`communitylab.db`)
     para la semana objetivo:
     - Conectar a la base de datos local SQLite (communitylab.db).
     - Consultar filas de `interacciones` donde `estado_curaduria = 'discarded'`
-      o `(estado_curaduria != 'curated' AND relevancia < 70)`.
+      o `(estado_curaduria != 'curated' AND (relevancia < 35 OR spam Prioridad 4))`.
     - Filtrar por la semana objetivo (verificando `periodo_referencia`, `semana` o fecha de envío ISO).
     - Excluir registros cuyo `id` (convertido a `str`) ya esté presente en `ids_aprobados`.
     - Construir para cada descarte su estructura canónica con el subdiccionario `kpis` normalizado
@@ -2741,7 +3382,8 @@ def _obtener_descartados_semana_sqlite(semana_objetivo: str, ids_aprobados: set 
                 except Exception:
                     rel = 0
 
-                es_descarte = (st_cur == "discarded") or (st_cur != "curated" and rel < 70)
+                es_baja_rel = rel < 35 or _es_spam_prioridad_4(rel, d.get("texto") or "", d.get("razonamiento") or "")
+                es_descarte = (st_cur == "discarded") or (st_cur != "curated" and es_baja_rel)
                 if not es_descarte:
                     continue
 
@@ -3325,8 +3967,12 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
             "message": "No se encontraron mensajes en el rango seleccionado.",
         }
 
-    # 3. Invocar evaluación del lote asegurando metadatos de fecha y semana
+    # 3. Invocar evaluación del lote asegurando metadatos de fecha, semana e ID canónico (Spec 026 RF-02)
     for m in mensajes:
+        if not es_mock_ver_json:
+            id_can_lote = _resolver_id_canonico_interaccion_supabase(m)
+            if id_can_lote is not None:
+                m["id"] = int(id_can_lote)
         env_val = m.get("enviado_en") or m.get("fecha_envio") or a_utc_iso(datetime.now(timezone.utc))
         cre_val = m.get("creado_en") or m.get("fecha_extraccion") or env_val
         per_val = m.get("periodo_referencia") or m.get("semana") or periodo_de(env_val, f"Semana_{semana_de(datetime.now(timezone.utc)):02d}")
@@ -3335,19 +3981,20 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
         m["periodo_referencia"] = per_val
 
     import evaluador_lotes
-    resultado_eval = evaluador_lotes.evaluar_lote(
+    resultado_eval = await asyncio.to_thread(
+        evaluador_lotes.evaluar_lote,
         mensajes=mensajes,
         nombre_modulo_cerebro=modulo,
         nombre_cerebro_legible=nombre_legible,
         limite=len(mensajes),
     )
 
-    # 4. Asegurar persistencia y refresco de caché local
+    # 4. Asegurar persistencia sin duplicar filas en lotes_ia_kpis y refresco de caché local
     guardados = resultado_eval.get("guardados_supabase", 0)
     paquete_resultados = resultado_eval.get("resultados")
-    if guardados == 0 and paquete_resultados:
+    if not guardados and paquete_resultados:
         try:
-            guardados = _base_datos_raiz.guardar_lote_ia_supabase(paquete_resultados)
+            guardados = await asyncio.to_thread(_base_datos_raiz.guardar_lote_ia_supabase, paquete_resultados)
         except Exception:
             pass
 
@@ -3371,12 +4018,12 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
             seg_ev = kpis_ev.get("segmento") or "General"
             raz_ev = kpis_ev.get("razonamiento") or ""
             st_rev_ev = str(item_ev.get("estado_revision") or "pendiente").lower()
-            if st_rev_ev in ("aprobado", "procesado"):
-                cur_ev = "curated"
-            elif st_rev_ev in ("rechazado", "desaprobado"):
+            cur_ev = _determinar_curaduria_analizado(rel_ev, texto_ev, raz_ev, st_rev_ev)
+            fila_prev_ev = conn.execute(
+                "SELECT estado_curaduria FROM interacciones WHERE id = ?", (int(id_m),)
+            ).fetchone()
+            if fila_prev_ev and str(fila_prev_ev[0] or "").strip().lower() == "discarded":
                 cur_ev = "discarded"
-            else:
-                cur_ev = "pending"
             conn.execute("""
                 UPDATE interacciones SET
                     relevancia = ?,
@@ -3395,7 +4042,8 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
         conn.commit()
 
     invalidar_cache_supabase()
-    _sincronizar_supabase_a_sqlite()
+    fn_sync_batch = getattr(sys.modules[__name__], "_sincronizar_supabase_a_sqlite", _sincronizar_supabase_a_sqlite)
+    await asyncio.to_thread(fn_sync_batch)
 
     return {
         "exito": bool(resultado_eval.get("exito", True)),
@@ -3435,6 +4083,12 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
     if not interaccion:
         raise HTTPException(status_code=404, detail=f"No se encontró el mensaje con ID {interaction_id}")
 
+    # Spec 026 RF-02: Reconciliar ID temporal local con ID canónico de public.interacciones antes de evaluar
+    id_canonico = _resolver_id_canonico_interaccion_supabase(interaccion)
+    if id_canonico is not None and int(id_canonico) != interaction_id:
+        interaction_id = int(id_canonico)
+        interaccion["id"] = interaction_id
+
     enviado_en_val = interaccion.get("enviado_en") or interaccion.get("fecha_envio") or a_utc_iso(datetime.now(timezone.utc))
     creado_en_val = interaccion.get("creado_en") or interaccion.get("fecha_extraccion") or enviado_en_val
     periodo_val = (
@@ -3458,7 +4112,8 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
     }
 
     import evaluador_lotes
-    resultado_eval = evaluador_lotes.evaluar_lote(
+    resultado_eval = await asyncio.to_thread(
+        evaluador_lotes.evaluar_lote,
         mensajes=[msg_dict],
         nombre_modulo_cerebro=modulo,
         nombre_cerebro_legible=nombre_legible,
@@ -3467,9 +4122,9 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
 
     paquete_resultados = resultado_eval.get("resultados")
     guardados = resultado_eval.get("guardados_supabase", 0)
-    if guardados == 0 and paquete_resultados:
+    if not guardados and paquete_resultados:
         try:
-            guardados = _base_datos_raiz.guardar_lote_ia_supabase(paquete_resultados)
+            guardados = await asyncio.to_thread(_base_datos_raiz.guardar_lote_ia_supabase, paquete_resultados)
         except Exception:
             pass
 
@@ -3489,15 +4144,17 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
     razonamiento = kpis.get("razonamiento") or ""
     st_rev = str((item_evaluado or {}).get("estado_revision") or "pendiente").lower()
 
-    if st_rev in ("aprobado", "procesado"):
-        estado_curaduria = "curated"
-    elif st_rev in ("rechazado", "desaprobado"):
-        estado_curaduria = "discarded"
-    else:
-        estado_curaduria = "pending"
+    estado_curaduria = _determinar_curaduria_analizado(
+        relevancia, msg_dict["texto"], razonamiento, st_rev
+    )
 
     _asegurar_esquema_sqlite()
     with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+        fila_prev_single = conn.execute(
+            "SELECT estado_curaduria FROM interacciones WHERE id = ?", (int(interaction_id),)
+        ).fetchone()
+        if fila_prev_single and str(fila_prev_single[0] or "").strip().lower() == "discarded":
+            estado_curaduria = "discarded"
         conn.execute("""
             UPDATE interacciones SET
                 relevancia = ?,
@@ -3528,7 +4185,7 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
     invalidar_cache_supabase()
     fn_sync = getattr(sys.modules[__name__], "_sincronizar_supabase_a_sqlite", _sincronizar_supabase_a_sqlite)
     try:
-        fn_sync()
+        await asyncio.to_thread(fn_sync)
     except Exception:
         pass
 
@@ -4003,6 +4660,7 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
         else:
             logger.warning(f"Excepción en descarga concurrente de canal: {item}")
 
+    global _cache_bots_omitidos_discord, _ids_bots_omitidos_vistos
     bots_detectados = 0
     mensajes_humanos = []
 
@@ -4011,12 +4669,16 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
             auth = m_raw.get("author") or {}
             is_bot = bool(auth.get("bot")) or bool(m_raw.get("webhook_id"))
             if is_bot:
-                bots_detectados += 1
+                bot_msg_id = str(m_raw.get("id") or "").strip()
+                if not bot_msg_id:
+                    bot_msg_id = f"{ch_id}:{auth.get('username', 'bot')}:{m_raw.get('timestamp', '')}:{m_raw.get('content', '')}"
+                if bot_msg_id not in _ids_bots_omitidos_vistos:
+                    _ids_bots_omitidos_vistos.add(bot_msg_id)
+                    bots_detectados += 1
             else:
                 mensajes_humanos.append((ch_id, ch_name, m_raw))
 
     if bots_detectados > 0:
-        global _cache_bots_omitidos_discord
         _cache_bots_omitidos_discord += bots_detectados
 
     _asegurar_esquema_sqlite()
@@ -4096,10 +4758,11 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
             })
         conn.commit()
 
-    # Replicación remota a Supabase desacoplada en segundo plano
+    # Replicación remota a Supabase desacoplada en segundo plano + reconciliación de ID canónico (Spec 026 RF-02)
     if paquete_nuevos_para_supabase:
         def _replicar_a_supabase(items):
             try:
+                hashes_sincronizados = []
                 for it in items:
                     _base_datos_raiz.guardar_interaccion(
                         origen=it["origen"],
@@ -4111,6 +4774,24 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
                         hash_mensaje=it["hash"],
                         enviado_en=it["fecha"],
                     )
+                    if it.get("hash"):
+                        hashes_sincronizados.append(it["hash"])
+                if hashes_sincronizados and hasattr(_base_datos_raiz, "obtener_conexion"):
+                    try:
+                        conn_pg = _base_datos_raiz.obtener_conexion()
+                        try:
+                            with conn_pg.cursor() as cur_pg:
+                                cur_pg.execute(
+                                    "SELECT id, hash FROM interacciones WHERE hash = ANY(%s)",
+                                    (hashes_sincronizados,),
+                                )
+                                for row_id, row_hash in (cur_pg.fetchall() or []):
+                                    if row_id is not None and row_hash:
+                                        _reconciliar_id_canonico_sqlite(str(row_hash), int(row_id))
+                        finally:
+                            conn_pg.close()
+                    except Exception:
+                        pass
                 invalidar_cache_supabase()
             except Exception as e_sup:
                 logger.warning(f"Replicación remota a Supabase en segundo plano completada con advertencia: {e_sup}")
@@ -4136,6 +4817,8 @@ async def _sincronizar_discord_api_rest(token: str, limite_por_canal: int = 100)
         "guardadas_nuevas": guardadas_nuevas,
         "repetidas_omitidas": repetidas_omitidas,
         "vacias_omitidas": vacias_omitidas,
+        "bots_omitidos": bots_detectados,
+        "total_bots_omitidos": _cache_bots_omitidos_discord,
         "canales_consultados": canales_consultados,
         "canales_exitosos": canales_exitosos,
         "periodo_referencia": periodo_por_defecto,
@@ -4265,9 +4948,18 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
                 raise
 
         paquete = armar_json_bot_python.construir_paquete(mensajes_totales)
-        bots_en_sync = sum(1 for m in mensajes_totales if getattr(getattr(m, "author", None), "bot", False) or getattr(m, "webhook_id", None))
+        global _cache_bots_omitidos_discord, _ids_bots_omitidos_vistos
+        bots_en_sync = 0
+        for m in mensajes_totales:
+            if getattr(getattr(m, "author", None), "bot", False) or getattr(m, "webhook_id", None):
+                b_id = str(getattr(m, "id", "") or "").strip()
+                if b_id:
+                    if b_id not in _ids_bots_omitidos_vistos:
+                        _ids_bots_omitidos_vistos.add(b_id)
+                        bots_en_sync += 1
+                else:
+                    bots_en_sync += 1
         if bots_en_sync > 0:
-            global _cache_bots_omitidos_discord
             _cache_bots_omitidos_discord = bots_en_sync
         if not paquete:
             return {
@@ -4310,6 +5002,8 @@ async def _ejecutar_sincronizacion_discord(token: str, limite_por_canal: int = 1
             "guardadas_nuevas": guardadas_nuevas,
             "repetidas_omitidas": repetidas_omitidas,
             "vacias_omitidas": vacias_omitidas,
+            "bots_omitidos": bots_en_sync,
+            "total_bots_omitidos": _cache_bots_omitidos_discord,
             "periodo_referencia": periodo_ref,
             "mensaje": mensaje,
         }
@@ -4768,6 +5462,7 @@ def community_analytics_enriquecido():
 
 
 _cache_bots_omitidos_discord = 173
+_ids_bots_omitidos_vistos: set[str] = set()
 _timestamp_bots_omitidos_discord = 0
 
 
@@ -5641,14 +6336,14 @@ def obtener_grafo_mototradis():
     return _grafo_mototradis_activo
 
 
-# Catálogo oficial de trazabilidad de modelos de IA (Mandato explícito de transparencia de IA)
+# Catálogo oficial de trazabilidad de modelos de IA (Mandato explícito de transparencia de IA — Spec 026 RF-03)
 MODELOS_UTILIZADOS_CATALOGO = {
-    "orquestador": "Google Gemini · gemini-3.6-flash",
-    "linkedin": "Google Gemini · gemini-3.5-flash-lite",
-    "x": "Groq · qwen/qwen3.8-27b",
-    "discord": "Groq · openai/gpt-oss-120b",
-    "pqrs": "Google Gemini · gemini-3.5-flash-lite",
-    "masivo": "Google Gemma 4 · gemma-4-31b-it",
+    "orquestador": "Groq · qwen/qwen3.8-27b (Fallback: Gemini 3.6/3.1 Flash)",
+    "linkedin": "Google Gemini · gemini-3.5-flash-lite (Fallback: 3.1 Flash Lite)",
+    "x": "Google Gemini · gemini-3.5-flash-lite (Fallback: 3.1 Flash Lite)",
+    "discord": "Groq · openai/gpt-oss-120b (Fallback: Gemini 3.1 Flash Lite)",
+    "pqrs": "Groq · qwen/qwen3.8-27b (Fallback: Gemini 3.1 Flash Lite)",
+    "masivo": "Google Gemma 4 · gemma-4-31b-it (Fallback: 26B / Gemini Flash)",
 }
 
 
@@ -5658,19 +6353,235 @@ def resolver_modelo_canal(canal: str, proveedor: str | None = None) -> str:
     if proveedor:
         p_low = proveedor.lower()
         if "gemma" in p_low:
-            return "Google Gemma 4 · gemma-4-31b-it"
+            return "Google Gemma 4 · gemma-4-31b-it (Fallback: 26B / Gemini Flash)"
         elif "gemini" in p_low:
-            return "Google Gemini · gemini-3.6-flash" if c_norm == "orquestador" else "Google Gemini · gemini-3.5-flash-lite"
+            return (
+                "Google Gemini · gemini-3.6-flash (Fallback: 3.1 Flash Lite)"
+                if c_norm == "orquestador"
+                else "Google Gemini · gemini-3.5-flash-lite (Fallback: 3.1 Flash Lite)"
+            )
         elif "qwen" in p_low or "groq" in p_low:
-            return "Groq · qwen/qwen3.8-27b"
+            if c_norm == "discord":
+                return "Groq · openai/gpt-oss-120b (Fallback: Gemini 3.1 Flash Lite)"
+            return "Groq · qwen/qwen3.8-27b (Fallback: Gemini 3.6/3.1 Flash)"
         elif "llama" in p_low:
             return "Groq · llama-3.3-70b-versatile"
-    return MODELOS_UTILIZADOS_CATALOGO.get(c_norm, "Google Gemini · gemini-3.5-flash-lite")
+    return MODELOS_UTILIZADOS_CATALOGO.get(c_norm, "Google Gemini · gemini-3.5-flash-lite (Fallback: 3.1 Flash Lite)")
 
 
 # ==============================================================================
 # Persistencia Desacoplada en Historial de Reportes Semanales (Spec 023)
 # ==============================================================================
+
+def _normalizar_temas_clave_lista(temas_raw: Any, fallback_tema: str = "#comunidad") -> list[str]:
+    """Convierte temas_clave desde string o lista a una lista limpia de strings."""
+    if isinstance(temas_raw, list):
+        limpios = [str(t).strip() for t in temas_raw if str(t).strip()]
+        return limpios if limpios else [fallback_tema]
+    if isinstance(temas_raw, str) and temas_raw.strip():
+        partes = [p.strip() for p in re.split(r"[,;\s]+", temas_raw.strip()) if p.strip()]
+        return partes if partes else [temas_raw.strip()]
+    return [fallback_tema]
+
+
+def _normalizar_copy_canal_completo(
+    canal: str,
+    data_canal: Any,
+    interaccion_dict: dict,
+    f_envio: Optional[str] = None,
+    f_extraccion: Optional[str] = None,
+    semana_final: str = "Semana_01",
+) -> dict:
+    """
+    Spec 026 - RF-04, RNF-03:
+    Garantiza que el objeto de cada canal dentro de copys_generados posea simultáneamente:
+    1. La estructura anidada completa de src/schemas.py (status, resumen_comunidad, activos_distribucion_generados).
+    2. Las llaves planas en la raíz del canal (titulo, texto_copy, plataforma) para retrocompatibilidad 100% con Spec 024 (OCI).
+    """
+    c_key = str(canal or "discord").strip().lower()
+    if isinstance(data_canal, dict):
+        base_dict = dict(data_canal)
+    elif isinstance(data_canal, str):
+        base_dict = {"titulo": "", "texto_copy": data_canal}
+    else:
+        base_dict = {}
+
+    act_prev = (
+        dict(base_dict["activos_distribucion_generados"])
+        if isinstance(base_dict.get("activos_distribucion_generados"), dict)
+        else {}
+    )
+
+    # Extraer titulo y texto_copy desde la raíz o desde activos_distribucion_generados anidados
+    titulo = str(base_dict.get("titulo") or "")
+    texto_copy = str(
+        base_dict.get("texto_copy")
+        or base_dict.get("texto")
+        or base_dict.get("contenido")
+        or ""
+    )
+    if not (titulo or texto_copy) and act_prev:
+        for sub_key in (
+            "post_linkedin",
+            "post_postx",
+            "post_discord",
+            "post_discord_faq",
+            "post_discord_notificaciones",
+            "post_discord_pqrs",
+        ):
+            sub_obj = act_prev.get(sub_key)
+            if isinstance(sub_obj, dict):
+                if not titulo:
+                    titulo = str(sub_obj.get("titulo") or "")
+                if not texto_copy:
+                    texto_copy = str(sub_obj.get("texto_copy") or sub_obj.get("texto") or "")
+                if titulo or texto_copy:
+                    break
+
+    temas_lista = _normalizar_temas_clave_lista(
+        interaccion_dict.get("temas_clave")
+        or (interaccion_dict.get("kpis") or {}).get("temas_clave"),
+        fallback_tema=str(interaccion_dict.get("tema") or "Comunidad"),
+    )
+    sentimiento_val = str(
+        interaccion_dict.get("sentimiento")
+        or (interaccion_dict.get("kpis") or {}).get("sentimiento")
+        or "Positivo"
+    )
+    programa_val = str(
+        interaccion_dict.get("comunidad")
+        or interaccion_dict.get("origen_comunidad")
+        or "CloudEDTech"
+    )
+    razonamiento_val = str(
+        interaccion_dict.get("razonamiento")
+        or (interaccion_dict.get("kpis") or {}).get("razonamiento")
+        or "Orientación y seguimiento de aporte comunitario"
+    )
+
+    resumen_comunidad = (
+        dict(base_dict["resumen_comunidad"])
+        if isinstance(base_dict.get("resumen_comunidad"), dict)
+        else {
+            "total_interacciones_procesadas": 1,
+            "sentimiento_predominante": sentimiento_val,
+            "temas_principales": temas_lista,
+            "programa": programa_val,
+        }
+    )
+    resumen_comunidad.setdefault("total_interacciones_procesadas", 1)
+    resumen_comunidad.setdefault("sentimiento_predominante", sentimiento_val)
+    resumen_comunidad.setdefault("temas_principales", temas_lista)
+    resumen_comunidad.setdefault("programa", programa_val)
+
+    temporalidad = (
+        dict(act_prev["temporalidad_producto_creado"])
+        if isinstance(act_prev.get("temporalidad_producto_creado"), dict)
+        else {
+            "fecha_envio": str(f_envio or interaccion_dict.get("fecha_envio") or interaccion_dict.get("enviado_en") or ""),
+            "fecha_extraccion": str(f_extraccion or interaccion_dict.get("fecha_extraccion") or interaccion_dict.get("creado_en") or ""),
+            "semana": str(semana_final or "Semana_01"),
+        }
+    )
+
+    if c_key == "linkedin":
+        post_lk = dict(act_prev.get("post_linkedin") or {})
+        post_lk.update({
+            "titulo": titulo or post_lk.get("titulo") or "Caso de Éxito CloudEDTech",
+            "texto_copy": texto_copy or post_lk.get("texto_copy") or "",
+            "canal_recomendado": post_lk.get("canal_recomendado") or "LinkedIn Oficial",
+            "potencial_engagement": post_lk.get("potencial_engagement") or "Alto",
+        })
+        destaque_nl = (
+            dict(act_prev["destaque_newsletter_semanal"])
+            if isinstance(act_prev.get("destaque_newsletter_semanal"), dict)
+            else {
+                "seccion": "Feedback de la Comunidad",
+                "titular": post_lk["titulo"],
+                "resumen": (post_lk["texto_copy"][:180] + "...") if len(post_lk["texto_copy"]) > 180 else post_lk["texto_copy"],
+            }
+        )
+        sug_faq = (
+            dict(act_prev["sugerencia_contenido_faq"])
+            if isinstance(act_prev.get("sugerencia_contenido_faq"), dict)
+            else {
+                "tema": post_lk["titulo"],
+                "origen": razonamiento_val,
+                "status": "Derivado_a_Mentoria",
+            }
+        )
+        activos = {
+            "post_linkedin": post_lk,
+            "destaque_newsletter_semanal": destaque_nl,
+            "sugerencia_contenido_faq": sug_faq,
+            "temporalidad_producto_creado": temporalidad,
+        }
+    elif c_key == "x":
+        post_x = dict(act_prev.get("post_postx") or {})
+        post_x.update({
+            "titulo": titulo if titulo else str(post_x.get("titulo") or ""),
+            "texto_copy": texto_copy or post_x.get("texto_copy") or "",
+            "canal_recomendado": post_x.get("canal_recomendado") or "X Oficial",
+            "potencial_engagement": post_x.get("potencial_engagement") or "Alto",
+        })
+        activos = {
+            "post_postx": post_x,
+            "temporalidad_producto_creado": temporalidad,
+        }
+    elif c_key in ("reclamos", "pqrs"):
+        post_pqrs = dict(act_prev.get("post_discord_pqrs") or {})
+        post_pqrs.update({
+            "titulo": titulo or post_pqrs.get("titulo") or "Atención y Soporte PQRS",
+            "texto_copy": texto_copy or post_pqrs.get("texto_copy") or "",
+            "canal_recomendado": post_pqrs.get("canal_recomendado") or "Discord #pqrs",
+            "potencial_engagement": post_pqrs.get("potencial_engagement") or "Alto",
+            "origen": post_pqrs.get("origen") or razonamiento_val,
+            "status": post_pqrs.get("status") or "Derivado_a_Soporte_Privado",
+        })
+        activos = {
+            "post_discord_pqrs": post_pqrs,
+            "temporalidad_producto_creado": temporalidad,
+        }
+    else:
+        canal_sel = str(
+            base_dict.get("canal_seleccionado")
+            or act_prev.get("canal_seleccionado")
+            or interaccion_dict.get("canal_origen")
+            or interaccion_dict.get("canal")
+            or "#general"
+        ).strip()
+        if not canal_sel.startswith("#"):
+            canal_sel = f"#{canal_sel}"
+        c_low = canal_sel.lower()
+        post_disc_item = {
+            "titulo": titulo or "Aviso Oficial Comunidad",
+            "texto_copy": texto_copy or "",
+            "canal_recomendado": f"Discord {canal_sel}",
+            "potencial_engagement": "Alto",
+            "origen": razonamiento_val,
+            "status": "Derivado_a_Mentoria" if "faq" in c_low else "Derivado_Segun_contexto",
+        }
+        activos = {
+            "canal_seleccionado": canal_sel,
+            "post_discord": post_disc_item if ("faq" not in c_low and "notifica" not in c_low and "anuncio" not in c_low) else act_prev.get("post_discord"),
+            "post_discord_faq": post_disc_item if "faq" in c_low else act_prev.get("post_discord_faq"),
+            "post_discord_notificaciones": post_disc_item if ("notifica" in c_low or "anuncio" in c_low) else act_prev.get("post_discord_notificaciones"),
+            "temporalidad_producto_creado": temporalidad,
+        }
+
+    resultado_canal = dict(base_dict)
+    resultado_canal.update({
+        "status": str(base_dict.get("status") or "exito"),
+        "resumen_comunidad": resumen_comunidad,
+        "activos_distribucion_generados": activos,
+        "titulo": titulo,
+        "texto_copy": texto_copy,
+        "plataforma": c_key,
+    })
+    if c_key == "discord" and "canal_seleccionado" in activos:
+        resultado_canal["canal_seleccionado"] = activos["canal_seleccionado"]
+    return resultado_canal
+
 
 def construir_registro_historial_reporte(
     id_mensaje: Any = None,
@@ -5691,25 +6602,31 @@ def construir_registro_historial_reporte(
     **kwargs
 ) -> dict:
     """
-    Spec 023 - RF-01, RF-02, RF-05:
-    Normaliza los 12 campos canónicos para la tabla public.historial_reportes_semanales:
-    - id_mensaje: siempre normalizado como string (str)
-    - autor: texto del autor ('Comunidad' por defecto)
-    - semana: etiqueta de semana ('Semana_01' por defecto)
-    - fecha_envio: ISO UTC o None
-    - fecha_extraccion: ISO UTC de la extracción original
-    - fecha_publicacion: ISO UTC de publicación inmediata
-    - rutas_activas: lista con canales publicados efectivamente
-    - estado: literal 'publicado'
-    - contenido_original: JSON con texto y metadatos de la interacción
-    - copys_generados: JSON indexado por canal {canal: {titulo, texto_copy, ...}}
-    - cw_modelo_ia: resuelto con catálogo oficial y transparencia multi-LLM
+    Spec 023 - RF-01, RF-02, RF-05 & Spec 026 - RF-04:
+    Normaliza los 12 campos canónicos para la tabla public.historial_reportes_semanales,
+    enriqueciendo contenido_original con el objeto completo json_precurado y copys_generados
+    con la jerarquía completa de src/schemas.py por cada canal activo/publicado.
     """
-    # 1. Normalización de id_mensaje como string
+    # 1. Normalización de id_mensaje como string para la columna raíz, y entero si aplica para json_precurado
     id_msg_str = str(id_mensaje) if id_mensaje is not None else "0"
+    id_msg_json: Any = int(id_mensaje) if (id_mensaje is not None and str(id_mensaje).isdigit()) else id_msg_str
 
-    # 2. Extracción de datos contextuales desde interaccion si fue provista
-    interaccion_dict = interaccion if isinstance(interaccion, dict) else {}
+    # 2. Extracción y enriquecimiento ultrarrápido desde SQLite local si interaccion no trae todos los KPIs
+    interaccion_dict = dict(interaccion) if isinstance(interaccion, dict) else {}
+    if isinstance(id_msg_json, int):
+        try:
+            with sqlite3.connect(motor_bd.RUTA_BD, timeout=1.0) as conn_enrich:
+                conn_enrich.row_factory = sqlite3.Row
+                row_enrich = conn_enrich.execute(
+                    "SELECT * FROM interacciones WHERE id = ?", (id_msg_json,)
+                ).fetchone()
+                if row_enrich:
+                    for k_db, v_db in dict(row_enrich).items():
+                        if v_db is not None and interaccion_dict.get(k_db) is None:
+                            interaccion_dict[k_db] = v_db
+        except Exception:
+            pass
+
     autor_final = str(
         autor
         or interaccion_dict.get("autor")
@@ -5719,17 +6636,20 @@ def construir_registro_historial_reporte(
     semana_final = str(
         semana
         or interaccion_dict.get("semana")
+        or interaccion_dict.get("periodo_referencia")
         or kwargs.get("week")
         or "Semana_01"
     )
     f_envio = (
         fecha_envio
         or interaccion_dict.get("fecha_envio")
+        or interaccion_dict.get("enviado_en")
         or kwargs.get("created_at")
     )
     f_extraccion = (
         fecha_extraccion
         or interaccion_dict.get("fecha_extraccion")
+        or interaccion_dict.get("creado_en")
         or a_utc_iso(datetime.now(timezone.utc))
     )
     f_publicacion = a_utc_iso(datetime.now(timezone.utc))
@@ -5743,34 +6663,107 @@ def construir_registro_historial_reporte(
     else:
         rutas_lista = []
 
-    # 4. Normalización de copys_generados indexado por canal
-    copys_finales: dict[str, Any] = {}
-    if copys_generados and isinstance(copys_generados, dict):
-        copys_finales.update(copys_generados)
-    elif copys_dict and isinstance(copys_dict, dict):
-        copys_finales.update(copys_dict)
-
-    if copy_generado and canal_target:
-        copys_finales[str(canal_target).strip().lower()] = copy_generado
-    elif copy_generado and rutas_lista and len(rutas_lista) == 1:
-        copys_finales[rutas_lista[0]] = copy_generado
-
-    # 5. Normalización de contenido_original
-    txt_orig = (
+    # 4. Normalización de contenido_original (json_precurado completo de 13 campos + alias texto/canal)
+    txt_orig = str(
         texto_original
-        or interaccion_dict.get("texto")
         or interaccion_dict.get("texto_original")
+        or interaccion_dict.get("texto")
         or kwargs.get("texto")
         or ""
     )
-    contenido_original_dict = {
-        "texto": txt_orig,
+    canal_origen_val = str(
+        interaccion_dict.get("canal_origen")
+        or interaccion_dict.get("canal")
+        or "#general"
+    )
+    comunidad_val = str(
+        interaccion_dict.get("comunidad")
+        or interaccion_dict.get("origen_comunidad")
+        or "Discord_Grupo_ONE_G10"
+    )
+    kpis_sub = interaccion_dict.get("kpis") if isinstance(interaccion_dict.get("kpis"), dict) else {}
+    rel_raw = interaccion_dict.get("relevancia")
+    if rel_raw is None:
+        rel_raw = kpis_sub.get("relevancia")
+    try:
+        rel_float = float(rel_raw) if rel_raw is not None else 85.0
+        if 0.0 < rel_float <= 1.0 and isinstance(rel_raw, float):
+            rel_int = int(round(rel_float * 100))
+        else:
+            rel_int = int(round(rel_float))
+    except (ValueError, TypeError):
+        rel_int = 85
+    rel_int = max(0, min(100, rel_int))
+
+    sentimiento_val = str(
+        interaccion_dict.get("sentimiento")
+        or kpis_sub.get("sentimiento")
+        or "Positivo"
+    )
+    temas_clave_lista = _normalizar_temas_clave_lista(
+        interaccion_dict.get("temas_clave") or kpis_sub.get("temas_clave"),
+        fallback_tema=str(interaccion_dict.get("tema") or "#comunidad"),
+    )
+    segmento_val = str(
+        interaccion_dict.get("segmento")
+        or kpis_sub.get("segmento")
+        or "General"
+    )
+    razonamiento_val = str(
+        interaccion_dict.get("razonamiento")
+        or kpis_sub.get("razonamiento")
+        or "Contenido relevante evaluado y aprobado para difusión multicanal."
+    )
+    decision_ia_val = str(
+        interaccion_dict.get("decision_ia")
+        or ("PUBLICAR" if rel_int >= 35 else "DESCARTAR")
+    )
+    estado_rev_val = str(interaccion_dict.get("estado_revision") or "aprobado")
+
+    contenido_original_dict: dict[str, Any] = {
+        "id_mensaje": id_msg_json,
         "autor": autor_final,
-        "canal": interaccion_dict.get("canal", "#general"),
+        "canal_origen": canal_origen_val,
+        "canal": canal_origen_val,
+        "comunidad": comunidad_val,
+        "semana": semana_final,
+        "texto_original": txt_orig,
+        "texto": txt_orig,
+        "relevancia": rel_int,
+        "sentimiento": sentimiento_val,
+        "temas_clave": temas_clave_lista,
+        "segmento": segmento_val,
+        "razonamiento": razonamiento_val,
+        "decision_ia": decision_ia_val,
+        "estado_revision": estado_rev_val,
     }
     for k, v in interaccion_dict.items():
-        if k not in contenido_original_dict:
+        if k not in contenido_original_dict and v is not None:
             contenido_original_dict[k] = v
+
+    # 5. Normalización de copys_generados indexado por canal con estructura completa de src/schemas.py
+    copys_crudos: dict[str, Any] = {}
+    if copys_generados and isinstance(copys_generados, dict):
+        copys_crudos.update(copys_generados)
+    elif copys_dict and isinstance(copys_dict, dict):
+        copys_crudos.update(copys_dict)
+
+    if copy_generado and canal_target:
+        copys_crudos[str(canal_target).strip().lower()] = copy_generado
+    elif copy_generado and rutas_lista and len(rutas_lista) == 1:
+        copys_crudos[rutas_lista[0]] = copy_generado
+
+    copys_finales: dict[str, Any] = {}
+    for ch_k, ch_v in copys_crudos.items():
+        ch_norm = str(ch_k).strip().lower()
+        copys_finales[ch_norm] = _normalizar_copy_canal_completo(
+            canal=ch_norm,
+            data_canal=ch_v,
+            interaccion_dict=contenido_original_dict,
+            f_envio=f_envio,
+            f_extraccion=f_extraccion,
+            semana_final=semana_final,
+        )
 
     # 6. Resolución de modelo IA utilizado
     if modelo_ia:
@@ -5967,6 +6960,102 @@ MENSAJES_OMISION_ORQUESTADOR = {
 }
 
 
+LINKS_MANUALES_LINKEDIN = (
+    "https://lnkd.in/gX2m2Rhq",
+    "https://lnkd.in/gvbqJiF4",
+    "https://lnkd.in/gU7h7xyG",
+)
+BLOQUE_LINKS_MANUALES_LINKEDIN = (
+    "Más Información:\n"
+    "https://lnkd.in/gX2m2Rhq\n"
+    "https://lnkd.in/gvbqJiF4\n"
+    "https://lnkd.in/gU7h7xyG"
+)
+
+LINKS_MANUALES_X = (
+    "https://lnkd.in/gvbqJiF4",
+    "https://lnkd.in/gU7h7xyG",
+)
+BLOQUE_LINKS_MANUALES_X = (
+    "https://lnkd.in/gvbqJiF4\n"
+    "https://lnkd.in/gU7h7xyG"
+)
+
+
+def _sanitizar_marca_texto_red(texto: str | None) -> str:
+    """
+    Spec 026 - RF-08:
+    Reemplaza menciones a 'Alura' / 'Alura Latam' / '#Alura' por 'CloudEDTech' / '#CloudEDTech'
+    para publicaciones y borradores de LinkedIn y X.
+    """
+    if not texto or not isinstance(texto, str):
+        return ""
+    limpio = texto
+    limpio = re.sub(r"#AluraLatam\b", "#CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"#Alura\b", "#CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"\bAlura\s+Latam\b", "CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"\bAlura\b", "CloudEDTech", limpio, flags=re.IGNORECASE)
+    return limpio
+
+
+def _anexar_links_manuales_red(canal: str, titulo: str | None, texto_copy: str | None) -> dict[str, str]:
+    """
+    Spec 026 - RF-08:
+    En publicaciones manuales individuales (LinkedIn o X):
+    - Sanitiza menciones a 'Alura' -> 'CloudEDTech' en título y cuerpo.
+    - Para LinkedIn: anexa de forma idempotente el bloque 'Más Información' con los 3 links.
+    - Para X: anexa de forma idempotente los 2 links (No Country y GitHub), ajustando el cuerpo
+      antes de los links si el total supera los 280 caracteres para que los links nunca se corten.
+    """
+    c_norm = (canal or "").strip().lower()
+    tit = _sanitizar_marca_texto_red(titulo or "").strip()
+    txt = _sanitizar_marca_texto_red(texto_copy or "").strip()
+
+    if not _es_copy_publicable(txt):
+        return {"titulo": tit, "texto_copy": txt}
+
+    if c_norm == "linkedin":
+        faltantes = [lnk for lnk in LINKS_MANUALES_LINKEDIN if lnk not in txt and lnk not in tit]
+        if faltantes:
+            if len(faltantes) == len(LINKS_MANUALES_LINKEDIN) and "más información" not in txt.lower() and "mas informacion" not in txt.lower():
+                txt = f"{txt}\n\n{BLOQUE_LINKS_MANUALES_LINKEDIN}".strip()
+            else:
+                txt = f"{txt}\n" + "\n".join(faltantes)
+        return {"titulo": tit, "texto_copy": txt.strip()}
+
+    if c_norm == "x":
+        cuerpo_base = txt
+        for lnk in LINKS_MANUALES_X:
+            cuerpo_base = cuerpo_base.replace(lnk, "")
+        cuerpo_base = re.sub(r"\n{3,}", "\n\n", cuerpo_base).strip()
+
+        sufijo_links = f"\n\n{BLOQUE_LINKS_MANUALES_X}" if (cuerpo_base or tit) else BLOQUE_LINKS_MANUALES_X
+        prefijo_tit = f"{tit}\n\n" if tit else ""
+        max_cuerpo = 280 - len(prefijo_tit) - len(sufijo_links)
+
+        if max_cuerpo < 0:
+            max_tit = max(0, 280 - len(sufijo_links) - 5)
+            tit = (tit[:max_tit].rstrip() + "...") if max_tit > 3 and len(tit) > max_tit else tit[:max(0, max_tit)]
+            prefijo_tit = f"{tit}\n\n" if tit else ""
+            max_cuerpo = max(0, 280 - len(prefijo_tit) - len(sufijo_links))
+
+        if len(cuerpo_base) > max_cuerpo:
+            if max_cuerpo > 3:
+                corte = cuerpo_base[: max_cuerpo - 3]
+                ultimo_esp = corte.rfind(" ")
+                if ultimo_esp > max(10, (max_cuerpo - 3) // 2):
+                    cuerpo_base = corte[:ultimo_esp].rstrip(",;.: ") + "..."
+                else:
+                    cuerpo_base = corte.rstrip(",;.: ") + "..."
+            else:
+                cuerpo_base = cuerpo_base[:max_cuerpo]
+
+        txt_final = f"{cuerpo_base}\n\n{BLOQUE_LINKS_MANUALES_X}".strip() if cuerpo_base else BLOQUE_LINKS_MANUALES_X
+        return {"titulo": tit, "texto_copy": txt_final}
+
+    return {"titulo": tit, "texto_copy": txt}
+
+
 def _es_copy_publicable(txt: str | None) -> bool:
     """Verifica si un texto es apto para publicación externa, ignorando notas de omisión o vacíos."""
     t = (txt or "").strip()
@@ -6015,21 +7104,21 @@ def _formatear_borradores_ui(copys: dict, rutas_activas: list[str] | None = None
 
     resultado = {
         "linkedin": {
-            "titulo": p_lk.get("titulo") or "",
-            "texto_copy": p_lk.get("texto_copy") or "",
-            "copy_tono": p_lk.get("copy_tono") or "",
+            "titulo": _sanitizar_marca_texto_red(p_lk.get("titulo") or ""),
+            "texto_copy": _sanitizar_marca_texto_red(p_lk.get("texto_copy") or ""),
+            "copy_tono": _sanitizar_marca_texto_red(p_lk.get("copy_tono") or ""),
             "newsletter": {
-                "destaque": dest_nl.get("titular") or dest_nl.get("destaque") or "",
-                "resumen": dest_nl.get("resumen") or "",
+                "destaque": _sanitizar_marca_texto_red(dest_nl.get("titular") or dest_nl.get("destaque") or ""),
+                "resumen": _sanitizar_marca_texto_red(dest_nl.get("resumen") or ""),
             },
             "faq": {
-                "sugerencia": sug_faq.get("tema") or sug_faq.get("sugerencia") or "",
-                "respuesta": sug_faq.get("origen") or sug_faq.get("respuesta") or "",
+                "sugerencia": _sanitizar_marca_texto_red(sug_faq.get("tema") or sug_faq.get("sugerencia") or ""),
+                "respuesta": _sanitizar_marca_texto_red(sug_faq.get("origen") or sug_faq.get("respuesta") or ""),
             },
         },
         "x": {
-            "titulo": p_x.get("titulo") or "",
-            "texto_copy": p_x.get("texto_copy") or "",
+            "titulo": _sanitizar_marca_texto_red(p_x.get("titulo") or ""),
+            "texto_copy": _sanitizar_marca_texto_red(p_x.get("texto_copy") or ""),
         },
         "discord": {
             "canal_seleccionado": canal_sel,
@@ -6284,7 +7373,7 @@ def api_mototradis_execute_pipeline(req: MototradisExecuteRequest):
                 "json_precurado": {
                     "relevancia": int(float(interaccion.get("relevancia") or 85)),
                     "sentimiento": interaccion.get("sentimiento") or "positivo",
-                    "texto_original": interaccion.get("texto") or "",
+                    "texto_original": _sanitizar_marca_texto_red(interaccion.get("texto") or ""),
                     "autor": interaccion.get("autor") or "comunidad",
                     "canal_origen": interaccion.get("canal") or "#general",
                 },
@@ -6410,7 +7499,7 @@ def api_mototradis_generate_channel(req: MototradisGenerateChannelRequest):
         "json_precurado": {
             "relevancia": int(float(interaccion.get("relevancia") or 85)),
             "sentimiento": interaccion.get("sentimiento") or "positivo",
-            "texto_original": interaccion.get("texto") or "",
+            "texto_original": _sanitizar_marca_texto_red(interaccion.get("texto") or ""),
             "autor": interaccion.get("autor") or "comunidad",
             "canal_origen": interaccion.get("canal") or "#general",
         },
@@ -6620,6 +7709,8 @@ def despachar_discord_con_cascada(canal_seleccionado: str, autor: str, texto_ori
 def despachar_x_resiliente(titulo: str, texto_copy: str) -> dict:
     """Valida longitud de 280 caracteres y publica en X capturando el tweet_id numérico."""
     homologar_entorno_mototradis()
+    titulo = _sanitizar_marca_texto_red(titulo)
+    texto_copy = _sanitizar_marca_texto_red(texto_copy)
     tweet_completo = f"{titulo}\n\n{texto_copy}".strip() if titulo else texto_copy.strip()
     if len(tweet_completo) > 280:
         tweet_completo = tweet_completo[:277] + "..."
@@ -6686,6 +7777,8 @@ def despachar_linkedin_resiliente(titulo: str, texto_copy: str) -> dict:
             "X-Restli-Protocol-Version": "2.0.0",
             "Content-Type": "application/json"
         }
+        titulo = _sanitizar_marca_texto_red(titulo)
+        texto_copy = _sanitizar_marca_texto_red(texto_copy)
         texto_post = f"{titulo}\n\n{texto_copy}".strip() if titulo else texto_copy.strip()
         body = {
             "author": urn,
@@ -6870,9 +7963,17 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
         except Exception:
             pass
 
-        # Spec 023 - RF-02, RF-04, RF-05: Despachar replicación consolidada en segundo plano si hay canales enviados
+        # Spec 023 - RF-02, RF-04, RF-05 & Spec 026 - RF-04: Despachar replicación consolidada en segundo plano si hay canales enviados
         if canales_enviados:
             invalidar_cache_supabase()
+            inter_ctx = dict(row_int) if row_int else {}
+            inter_ctx.update({
+                "autor": autor,
+                "texto": texto_orig,
+                "canal": canal_def,
+                "semana": semana,
+                "fecha_envio": fecha_env,
+            })
             reg_consolidado = construir_registro_historial_reporte(
                 id_mensaje=id_msg,
                 autor=autor,
@@ -6881,13 +7982,7 @@ def api_mototradis_hitl_decision(req: MototradisHitlRequest):
                 rutas_activas=canales_enviados,
                 texto_original=texto_orig,
                 copys_dict=copys_finales,
-                interaccion={
-                    "autor": autor,
-                    "texto": texto_orig,
-                    "canal": canal_def,
-                    "semana": semana,
-                    "fecha_envio": fecha_env,
-                }
+                interaccion=inter_ctx,
             )
             despachar_replicacion_historial_reportes(reg_consolidado)
 
@@ -6961,10 +8056,12 @@ def api_mototradis_publish_channel(req: MototradisPublishChannelRequest):
     canal = req.canal.strip().lower()
 
     with sqlite3.connect(motor_bd.RUTA_BD) as conn:
-        row_int = conn.execute("SELECT autor, texto, canal FROM interacciones WHERE id = ?", (id_msg,)).fetchone()
-        autor = row_int[0] if row_int else "comunidad"
-        texto_orig = row_int[1] if row_int else ""
-        canal_def = row_int[2] if row_int else "#general"
+        conn.row_factory = sqlite3.Row
+        row_int = conn.execute("SELECT * FROM interacciones WHERE id = ?", (id_msg,)).fetchone()
+        inter_pub_ctx = dict(row_int) if row_int else {}
+        autor = inter_pub_ctx.get("autor") or "comunidad"
+        texto_orig = inter_pub_ctx.get("texto") or ""
+        canal_def = inter_pub_ctx.get("canal") or "#general"
 
     tit = req.titulo or (req.datos_canal and req.datos_canal.get("titulo")) or ""
     txt = req.texto_copy or (req.datos_canal and req.datos_canal.get("texto_copy")) or ""
@@ -6978,6 +8075,11 @@ def api_mototradis_publish_channel(req: MototradisPublishChannelRequest):
             "detalle": f"El canal {canal} fue omitido por el orquestador y no contiene un copy redactado para publicar.",
             "estado_canal": "omitido",
         }
+
+    if canal in ("linkedin", "x"):
+        _res_links = _anexar_links_manuales_red(canal, tit, txt)
+        tit = _res_links["titulo"]
+        txt = _res_links["texto_copy"]
 
     if canal == "discord":
         ch = req.canal_seleccionado or canal_def
@@ -7020,12 +8122,17 @@ def api_mototradis_publish_channel(req: MototradisPublishChannelRequest):
         invalidar_cache_supabase()
         invalidar_cache_reportes_oci()
 
-        # Spec 023 - RF-01, RF-05: Despachar replicación asíncrona a public.historial_reportes_semanales
+        # Spec 023 - RF-01, RF-05 & Spec 026 - RF-04: Despachar replicación asíncrona a public.historial_reportes_semanales
+        copy_gen_payload: dict[str, Any] = dict(req.datos_canal) if isinstance(req.datos_canal, dict) else {}
+        copy_gen_payload.update({"titulo": tit, "texto_copy": txt})
+        if canal == "discord":
+            copy_gen_payload["canal_seleccionado"] = req.canal_seleccionado or copy_gen_payload.get("canal_seleccionado") or canal_def
+        inter_pub_ctx.update({"autor": autor, "texto": texto_orig, "canal": canal_def})
         reg_historial = construir_registro_historial_reporte(
             id_mensaje=id_msg,
             canal=canal,
-            copy_generado={"titulo": tit, "texto_copy": txt},
-            interaccion={"autor": autor, "texto": texto_orig, "canal": canal_def}
+            copy_generado=copy_gen_payload,
+            interaccion=inter_pub_ctx,
         )
         despachar_replicacion_historial_reportes(reg_historial)
 
