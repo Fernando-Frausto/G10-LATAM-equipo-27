@@ -226,6 +226,7 @@ flowchart TD
     class QV,QM,QO,QU decision
     class E1,E2 terminal
 ```
+</details>
 
 ---
 
