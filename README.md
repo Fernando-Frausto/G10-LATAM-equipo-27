@@ -91,35 +91,6 @@ flowchart TD
     class E decision
 ```
 
-### Grafo de orquestación (LangGraph)
-
-El orquestador decide las rutas según la **relevancia** y el **tipo de mensaje** (bifurcación condicional):
-
-```mermaid
-%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 420}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif"}}}%%
-flowchart TD
-    S((Inicio)) --> O{"Orquestador"}
-    O -- "Relevancia ≤ 10 (spam)" --> FIN((Fin sin ruta))
-    O -- "11–34 (baja)" --> GA["Gemma automático<br/>respuesta directa en Discord"]
-    O -- "Logro / caso de éxito" --> LI["Nodo LinkedIn<br/>post + destacado newsletter + FAQ"]
-    O -- "Logro / anuncio" --> X["Nodo X<br/>post conciso ≤ 210 caracteres"]
-    O -- "Duda / aviso" --> DC["Nodo Discord<br/>#general · #faq · #notificaciones"]
-    O -- "Queja" --> RQ["Nodo Reclamos<br/>#pqrs"]
-    LI --> V["Validador de marca"]
-    X --> V
-    DC --> V
-    RQ --> V
-    V --> HITL["⏸️ Pausa HITL<br/>aprobación humana"]
-    HITL --> P["Publicador"]
-    P --> F2((Fin))
-    GA --> F2
-    classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
-    classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
-    classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
-    class O decision
-    class F2,FIN,S terminal
-```
-
 ### Flujos detallados por etapa
 
 <details>
@@ -195,6 +166,55 @@ flowchart TD
     classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
     classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
     class SW decision
+```
+
+</details>
+
+<details>
+<summary><b>🔍 Ver flujo detallado del Orquestador (LangGraph)</b></summary>
+
+```mermaid
+%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 260, "nodeSpacing": 25, "rankSpacing": 30, "padding": 6}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif", "fontSize": "12px"}}}%%
+flowchart TD
+    SB["Supabase lotes_ia_kpis<br/>(pendiente / rechazado / procesado)"] --> EP["Entry points<br/>run_hitl.py · run_mass.py"]
+    EP --> OR["🧠 Nodo Orquestador<br/>Matriz de 4 prioridades<br/>+ few-shot alta relevancia"]
+    OR --> SW{"Switch<br/>Relevancia / Spam"}
+    SW -- "≤ 10" --> P4["🚫 Prioridad 4<br/>Spam / sin valor (rel ≤ 10)"]
+    P4 --> FIN(["estado = desaprobado<br/>→ END"])
+    SW -- "11–34" --> P3["⚡ Prioridad 3<br/>Gemma 4 automático (11 ≤ rel < 35)"]
+    P3 --> GM["nodo_gemma_automatico (async)<br/>PROMPT_GEMMA + JSON"]
+    GM --> WH["Webhook Discord<br/>#faq / #general / #pqrs<br/>+ estado aprobado / desaprobado"]
+    SW -- "35–69" --> P2["🔄 Prioridad 2<br/>Discord HITL (35 ≤ rel < 70)"]
+    SW -- "≥ 70" --> P1["🌟 Prioridad 1<br/>Multicanal (rel ≥ 70)"]
+    P1 --> NX["nodo_x<br/>gemini-flash-lite<br/>RespuestaComunidadX"]
+    P1 --> NL["nodo_linkedin<br/>gemini-flash<br/>RespuestaComunidadLinkedin"]
+    P1 --> ND["nodo_discord<br/>gpt-oss / groq<br/>#general #faq #notif"]
+    P2 --> ND
+    P2 --> NR["nodo_reclamos<br/>qwen / groq<br/>#pqrs soporte"]
+    NX --> VA["✅ Nodo Validador<br/>Manual de Marca<br/>tuteo + tono institucional"]
+    NL --> VA
+    ND --> VA
+    NR --> VA
+    VA --> HI["⏸️ Interrupción HITL<br/>interrupt_before=[publicador]<br/>revisión humana / HITL_DECISION"]
+    HI -. "Rechazar (n)" .-> RJ(["Rechazado: desaprobado<br/>+ limpiar checkpoint"])
+    HI -- "Aprobar (s)" --> PU["🚀 Nodo Publicador Universal<br/>Discord + X + LinkedIn<br/>+ historial_reportes_semanales"]
+    PU --> DW["Discord Webhooks<br/>#general #faq #notif #pqrs"]
+    PU --> XA["X (Twitter) API v2<br/>tweepy"]
+    PU --> LA["LinkedIn UGC API<br/>ugcPosts"]
+    PU --> SH["Supabase historial<br/>estado = aprobado"]
+
+    subgraph DLQ["Manejo de errores / DLQ"]
+        direction LR
+        E1["Excepción en nodo"] --> E2["errores_dlq (estado)"]
+        E2 --> E3["Conservar estado<br/>(no pisar aprobado)"]
+        E3 --> E4["Opcional → rechazado"]
+    end
+    XA ~~~ DLQ
+    classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
+    classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
+    classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
+    class SW decision
+    class FIN,RJ terminal
 ```
 
 </details>
