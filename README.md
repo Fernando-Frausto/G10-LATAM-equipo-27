@@ -341,7 +341,6 @@ cd frontend && npm run build && npm run lint   # Frontend
 4. **Netlify:** crear el sitio desde este repositorio (toma `netlify.toml` automáticamente) y definir `VITE_API_URL` con la URL de Render.
 5. *(Si Discord bloquea la IP de Render)* Desplegar el Cloudflare Worker y definir `DISCORD_PROXY_URL` en Render.
 
-🔗 **Demo en línea:** *[agregar URL de Netlify]*
 
 ---
 
