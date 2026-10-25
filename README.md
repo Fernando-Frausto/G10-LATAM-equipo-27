@@ -73,17 +73,22 @@ Se puede elegir entre tres modelos de IA: **Groq (Llama 3.3)**, **Google Gemma 4
 ### Flujo de datos
 
 ```mermaid
+%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 260, "nodeSpacing": 25, "rankSpacing": 25, "padding": 6}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif", "fontSize": "12px"}}}%%
 flowchart TD
     A["Comunidad en Discord"] --> B["Ingesta: sincronización, limpieza y filtrado"]
     B --> C["Supabase (PostgreSQL)"]
     C --> D["Motor de IA: relevancia, sentimiento y temas"]
-    D --> E{"Orquestador LangGraph"}
+    D --> E{"Orquestador<br/>LangGraph"}
     E --> F["Redacción por canal: LinkedIn, X, Discord y Quejas"]
     F --> G["Validador del Manual de Marca"]
     G --> H["Revisión humana (HITL)"]
     H --> I["Publicación en LinkedIn, X y Discord"]
     I --> J["Reporte semanal JSON"]
     J --> K["OCI Object Storage (Always Free)"]
+    classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
+    classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
+    classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
+    class E decision
 ```
 
 ### Grafo de orquestación (LangGraph)
@@ -91,6 +96,7 @@ flowchart TD
 El orquestador decide las rutas según la **relevancia** y el **tipo de mensaje** (bifurcación condicional):
 
 ```mermaid
+%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 420}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif"}}}%%
 flowchart TD
     S((Inicio)) --> O{"Orquestador"}
     O -- "Relevancia ≤ 10 (spam)" --> FIN((Fin sin ruta))
@@ -107,7 +113,161 @@ flowchart TD
     HITL --> P["Publicador"]
     P --> F2((Fin))
     GA --> F2
+    classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
+    classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
+    classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
+    class O decision
+    class F2,FIN,S terminal
 ```
+
+### Flujos detallados por etapa
+
+<details>
+<summary><b>🔍 Ver flujo detallado de Ingesta</b></summary>
+
+```mermaid
+%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 420}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif"}}}%%
+flowchart TD
+    A["Comunidad en Discord"] --> I1
+    I1["1. Captura de mensajes (bot_lote.py)<br/>Lee el historial de cada canal<br/>Detecta canales legibles y manda el paquete a procesar"]
+    I1 --> Q1{"¿Hay canales<br/>que leer?"}
+    Q1 -- "No" --> N1["Aviso: no hay canales<br/>Termina el proceso"]
+    Q1 -- "Sí" --> I2["2. Armado del paquete (armar_json_bot_python.py)<br/>Pone los mensajes en formato JSON<br/>Ordena por fecha, descarta vacíos y arma las llaves del JSON"]
+    I2 --> Q2{"¿Hay mensajes<br/>con texto?"}
+    Q2 -- "No" --> N2["Nada que procesar<br/>Termina sin guardar"]
+    Q2 -- "Sí" --> I3["3. Revisión del formato (modelos.py)<br/>Confirma que el paquete esté bien armado<br/>Autor, canal y texto obligatorios; tipo y enviado_en opcionales"]
+    I3 --> Q3{"¿Formato<br/>correcto?"}
+    Q3 -- "No" --> N3["Devuelve status error<br/>No procesa el lote"]
+    Q3 -- "Sí" --> I4["4. Limpieza del texto (limpieza.py)<br/>Quita espacios de más y calcula el hash<br/>Quita espacios y saltos de línea; si queda vacío, se omite"]
+    I4 --> I5["5. Semana del proyecto (periodos.py)<br/>Según la fecha en que se envió<br/>Fecha de inicio, zona horaria y cálculo de semanas"]
+    I5 --> I6["6. Repetidos (limpieza.py, base_datos.py)<br/>Compara el hash de cada mensaje<br/>procesar_actividad descarta repetidos y vacíos antes de guardar"]
+    I6 --> Q4{"¿Hash ya<br/>existe?"}
+    Q4 -- "Sí" --> N4["Se omite<br/>Cuenta como repetido"]
+    Q4 -- "No" --> I7["7. Guardado (base_datos.py)<br/>Se guardan en communitylab.db<br/>Crea la base SQLite y guarda cada mensaje nuevo"]
+    I7 --> I8["8. Consulta de datos (ver_json.py)<br/>Filtra por semana o por fechas<br/>obtener_json entrega los datos; también corre en la terminal"]
+    I8 --> Q5{"¿Se pidió<br/>un periodo?"}
+    Q5 -- "Sí" --> R1["Solo ese periodo<br/>Usa semanas o fechas"]
+    Q5 -- "No" --> R2["Devuelve los 100 más recientes"]
+    classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
+    classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
+    classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
+    class Q1,Q2,Q3,Q4,Q5 decision
+```
+
+</details>
+
+<details>
+<summary><b>🔍 Ver flujo detallado de Análisis con IA</b></summary>
+
+```mermaid
+%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 420}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif"}}}%%
+flowchart TD
+    subgraph PRI["Workflow principal: evaluación inteligente y extracción de 5 KPIs con 3 cerebros IA"]
+        M["Mensajes a evaluar<br/>Cola Discord cruda<br/>(id, autor, canal, texto)"]
+        M --> L["Configurar lote<br/>Filtro de pendientes y límite<br/>(evaluador_lotes.py)"]
+        L --> INV["Invocador dinámico<br/>Carga e inferencia<br/>(importlib / cadena)"]
+        INV --> SW{"Switch<br/>(cerebro IA)"}
+        SW -- "Groq Cloud" --> C1["Cerebro 1: Groq Cloud<br/>ChatGroq (Llama 3.3 / OSS)<br/>(cerebro_ia.py)"]
+        SW -- "Gemma 4" --> C2["Cerebro 2: Google Gemma<br/>ChatGoogle (gemma-4-31b-it)<br/>(cerebro_ia_gemma_4.py)"]
+        SW -- "Gemini Flash" --> C3["Cerebro 3: Gemini Flash<br/>ChatGoogle (flash-lite)<br/>(cerebro_ia_gemini_flash.py)"]
+        C1 --> MG["Merge<br/>(cadena.invoke)<br/>(texto, canal)"]
+        C2 --> MG
+        C3 --> MG
+        MG --> AG["AI Agent evaluador<br/>Extracción de 5 KPIs<br/>cadena = prompt | llm"]
+        PR(["Prompt filtro EdTech<br/>Reglas y guía de 5 KPIs<br/>(prompts_ia.py)"]) -.-> AG
+        SP(["Structured Output Parser<br/>Pydantic: FormatoSalida<br/>(JSON validado)"]) -.-> AG
+        AG --> K5["Extracción de 5 KPIs<br/>Relevancia, sentimiento, temas<br/>Segmento y razonamiento"]
+        AG --> FR["Filtro relevancia >= 70<br/>Aprobados vs descartados<br/>(clasificación de valor)"]
+        FR --> PE["Persistencia de KPIs<br/>SQLite (communitylab.db)<br/>y Supabase (lotes_ia_kpis)"]
+        PE --> PM["Paquete maestro JSON<br/>Exportar resultados_kpis.json<br/>(resumen y métricas)"]
+        PM --> HO["Handoff a redacción<br/>Disponible en Dashboard y Studio<br/>(listo para publicar)"]
+    end
+
+    L -. "Captura cualquier fallo / rate limit (429)" .-> ET
+
+    subgraph SEC["Workflow secundario: manejo global de errores, tolerancia por mensaje y resiliencia"]
+        ET["Error trigger<br/>Excepción IA / HTTP 429<br/>(rate limit o timeout)"]
+        ET --> AI["Aislamiento individual<br/>try / except por mensaje<br/>(no interrumpe el lote)"]
+        AI --> PP["Protección de persistencia<br/>Blindar resultados_kpis.json<br/>(evita sobrescribir si falla)"]
+        PP --> RD["Registro y diagnóstico<br/>Notificación clara en la UI<br/>(ID fallido y causa exacta)"]
+    end
+    classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
+    classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
+    classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
+    class SW decision
+```
+
+</details>
+
+<details>
+<summary><b>🔍 Ver flujo detallado de Informes y OCI Object Storage</b></summary>
+
+```mermaid
+%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 420}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif"}}}%%
+flowchart TD
+    T["1. Disparador (OCIStorage.tsx)<br/>Botón Generar informe en la pestaña Informes y Almacenamiento<br/>Llama a POST /api/v1/oci-storage/weekly-sync"]
+
+    T --> CF
+
+    subgraph GEN["Generación del reporte semanal (puente_motor_ia.py)"]
+        CF["2. Credenciales OCI (puente_motor_ia.py)<br/>Arma ~/.oci/config desde las variables de entorno<br/>Usuario, tenancy, fingerprint, región y llave privada normalizada"]
+        CF --> QS{"¿Se indicó<br/>una semana?"}
+        QS -- "Sí" --> VS["3a. Validar etiqueta (reporte_semanal.py)<br/>Formato AAAA-semana-NN"]
+        VS --> QV{"¿Formato<br/>válido?"}
+        QV -- "No" --> E1["Error 400<br/>Etiqueta de semana inválida"]
+        QV -- "Sí" --> CL
+        QS -- "No" --> CS["3b. Semana actual (periodos.py)<br/>Calcula la semana del proyecto según la fecha de hoy"]
+        CS --> CL["4. Carga del lote de la semana<br/>Busca los mensajes analizados del periodo"]
+        CL --> SB["4a. Fuente principal: Supabase<br/>Tabla historial_reportes_semanales<br/>Mensajes aprobados y publicados (espera máx. 4 s)"]
+        SB --> QA{"¿Hay aprobados<br/>en Supabase?"}
+        QA -- "Sí" --> CO["4b. Consolidar aprobados<br/>Une registros del mismo mensaje y fusiona rutas y copys<br/>Elige el copy final: LinkedIn, luego Discord, luego X"]
+        CO --> DS["4c. Descartados de la semana<br/>Se toman de SQLite local (communitylab.db)"]
+        QA -- "No" --> FB["4d. Respaldo local<br/>Arma el paquete desde SQLite filtrando por semana"]
+        DS --> SN["5. Sanitización<br/>Quita valores vacíos (None) y convierte fechas a texto<br/>Asegura relevancia, sentimiento, temas, segmento y razonamiento"]
+        FB --> SN
+        SN --> QM{"¿Hay mensajes<br/>analizados?"}
+        QM -- "No" --> E2["Error 400<br/>No hay mensajes analizados para el periodo"]
+        QM -- "Sí" --> RP["6. Generar reporte (reporte_semanal.py)<br/>metadata: proyecto, semana, versión, fecha, bucket y ruta<br/>resumen_metricas: totales, sentimiento, top 5 temas y segmentos<br/>activos_copywriting: aprobados y descartados"]
+        RP --> LO["7. Copia local<br/>Guarda reportes/AAAA-semana-NN.json"]
+    end
+
+    LO --> QO
+
+    subgraph SUB["Subida a OCI Object Storage (oci_uploader.py)"]
+        QO{"¿Credenciales<br/>OCI configuradas?"}
+        QO -- "No" --> OF["Modo offline<br/>No intenta subir; status saved_locally"]
+        QO -- "Sí" --> UP["8. Subida al bucket<br/>Crea el cliente ObjectStorageClient y obtiene el namespace<br/>put_object en el bucket communitylab-assets"]
+        UP --> QU{"¿Subida<br/>exitosa?"}
+        QU -- "No" --> ER["Error capturado<br/>Se conserva el archivo local; status saved_locally"]
+        QU -- "Sí" --> OB["Objeto guardado<br/>activos/AAAA-semana-NN/paquete-distribucion.json<br/>status synced"]
+    end
+
+    OF --> RS
+    ER --> RS
+    OB --> RS
+    RS["9. Respuesta al panel<br/>Estado, bucket, ruta y resumen de métricas<br/>Se limpia la caché de reportes"]
+
+    RS --> H1
+
+    subgraph HIS["Historial de reportes (GET /api/v1/oci-storage/reports)"]
+        H1["10. Abrir o refrescar la pestaña de Informes<br/>Pide la lista de reportes semanales"]
+        H1 --> QC{"¿Caché vigente?"}
+        QC -- "Sí" --> HM["Responde desde memoria<br/>Sin llamadas de red"]
+        QC -- "No" --> HD["Lee reportes/*.json del disco<br/>Semana, tamaño, fecha, bucket y estado de subida"]
+        H1 --> QB{"¿Ya se sincronizó<br/>con el bucket?"}
+        QB -- "No" --> BG["11. Sincronización en segundo plano<br/>list_objects con prefijo activos/"]
+        BG --> QL{"¿El reporte ya<br/>existe en disco?"}
+        QL -- "Sí" --> MK["Marca el reporte como subido"]
+        QL -- "No" --> DL["get_object y guarda reportes/semana.json<br/>Recupera el historial tras reinicios de Render"]
+        HM --> PN["12. Panel de Informes<br/>Historial, detalle en JSON, reintentar y descargar"]
+        HD --> PN
+    end
+    classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
+    classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
+    classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
+    class QA,QB,QC,QL,QM,QO,QS,QU,QV decision
+```
+
 
 ---
 
