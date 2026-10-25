@@ -423,13 +423,13 @@ function Messages() {
 
             // Precedencia humana (HITL):
             // Es descartado si el operador lo descartó explícitamente (curation === 'discarded')
-            // O si la IA lo analizó con relevancia < 70, SIEMPRE Y CUANDO el operador NO lo haya curado explícitamente
+            // O si la IA lo analizó con relevancia < 35, SIEMPRE Y CUANDO el operador NO lo haya curado explícitamente
             // Y NUNCA si el mensaje ya fue publicado
             const isDiscarded =
                 !isMsgPublished &&
                 (currentCuration === 'discarded' ||
                     (message.isAnalyzed &&
-                        message.relevance < 70 &&
+                        message.relevance < 35 &&
                         currentCuration !== 'curated'))
 
             // Solo se considera proceso completo si efectivamente fue publicado en >= 1 red social
@@ -556,10 +556,10 @@ function Messages() {
         setCurationError(null)
 
         try {
-            await updateMessageCuration(message.interactionId, status)
+            const res = await updateMessageCuration(message.interactionId, status)
             setCurationStatus((current) => ({
                 ...current,
-                [message.id]: status,
+                [message.id]: res.curation_status || status,
             }))
         } catch (error) {
             setCurationError(
@@ -581,7 +581,7 @@ function Messages() {
         if (selectedAiBrain.toLowerCase().includes('gemma')) {
             setSyncFeedbackMessage({
                 type: 'warning',
-                text: `⏳ Evaluando mensaje con Google Gemma 4... Este modelo denso toma entre 30 y 45 segundos. Por favor espera sin cerrar la ventana.`,
+                text: `⏳ Evaluando mensaje con Google Gemma 4 (timeout resiliente de 20s y fallback automático a Gemma 26B / Gemini Flash Lite)...`,
             })
         } else {
             setSyncFeedbackMessage(null)
@@ -589,15 +589,19 @@ function Messages() {
         try {
             const res = await evaluateSingleMessage(message.interactionId, selectedAiBrain)
             await loadMessages()
-            if (res.relevancia >= 70) {
+            if (res.relevancia >= 35) {
+                const rutaTexto =
+                    res.relevancia >= 70
+                        ? 'Ruta Multicanal (Prioridad 1 >= 70%)'
+                        : 'Ruta Discord HITL / Anuncios (Prioridad 2: 35–69%)'
                 setSyncFeedbackMessage({
                     type: 'success',
-                    text: `✅ Mensaje de @${message.author} evaluado (${res.relevancia}% relevancia · ${res.sentimiento}). Pasó a 'Pendientes de Copy' para redacción.`,
+                    text: `✅ Mensaje de @${message.author} evaluado (${res.relevancia}% relevancia · ${res.sentimiento}). Pasó a 'Pendientes de Copy' para ${rutaTexto}.`,
                 })
             } else {
                 setSyncFeedbackMessage({
                     type: 'warning',
-                    text: `⚠️ Mensaje de @${message.author} evaluado con ${res.relevancia}% de relevancia (< 70% requerido para Copy). Se movió automáticamente a 'Etapa: Descartados'.`,
+                    text: `⚠️ Mensaje de @${message.author} evaluado con ${res.relevancia}% de relevancia (< 35% requerido para Copy). Se movió automáticamente a 'Etapa: Descartados'.`,
                 })
             }
         } catch (error) {
@@ -662,7 +666,7 @@ function Messages() {
             const isDiscarded =
                 !isMsgPublished &&
                 (st === 'discarded' ||
-                    (msg.isAnalyzed && msg.relevance < 70 && st !== 'curated'))
+                    (msg.isAnalyzed && msg.relevance < 35 && st !== 'curated'))
 
             if (isDiscarded) {
                 discardedInRange++
@@ -778,7 +782,7 @@ function Messages() {
         if (selectedAiBrain.toLowerCase().includes('gemma')) {
             setBatchEvalMessage({
                 type: 'warning',
-                text: '⏳ Evaluando lote con Google Gemma 4... Este modelo denso toma ~30-45s por mensaje. Por favor espera a que finalice.',
+                text: '⏳ Evaluando lote con Google Gemma 4 (timeout resiliente de 20s por mensaje y fallback automático si Google API satura)...',
             })
         } else {
             setBatchEvalMessage(null)
@@ -1160,7 +1164,7 @@ function Messages() {
 
                 {selectedAiBrain.toLowerCase().includes('gemma') && (
                     <p className="mt-1.5 text-[11px] font-medium text-amber-700">
-                        ⚠️ Google Gemma 4 es un modelo denso (31B) y puede demorar entre 30 y 45s. Para respuesta inmediata usa Groq.
+                        ⚠️ Google Gemma 4 (31B) cuenta con timeout resiliente de 20s y fallback automático a Gemma 26B / Gemini Flash Lite si Google API satura. Para velocidad máxima usa Groq.
                     </p>
                 )}
 
@@ -1498,7 +1502,7 @@ function Messages() {
                             ? 'curated'
                             : currentCuration === 'discarded' ||
                               (message.isAnalyzed &&
-                                  message.relevance < 70 &&
+                                  message.relevance < 35 &&
                                   currentCuration !== 'curated')
                             ? 'discarded'
                             : currentCuration
