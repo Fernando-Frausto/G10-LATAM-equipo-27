@@ -203,71 +203,29 @@ flowchart TD
 <summary><b>🔍 Ver flujo detallado de Informes y OCI Object Storage</b></summary>
 
 ```mermaid
-%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 420}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif"}}}%%
+%%{init: {"theme": "base", "flowchart": {"wrappingWidth": 260, "nodeSpacing": 25, "rankSpacing": 25, "padding": 6}, "themeVariables": {"primaryColor": "#080A27", "primaryTextColor": "#080A27", "primaryBorderColor": "#FF7400", "lineColor": "#FF7400", "clusterBkg": "transparent", "clusterBorder": "#FF7400", "titleColor": "#FF7400", "edgeLabelBackground": "#FFE3CC", "textColor": "#080A27", "fontFamily": "Inter, Arial, sans-serif", "fontSize": "12px"}}}%%
 flowchart TD
-    T["1. Disparador (OCIStorage.tsx)<br/>Botón Generar informe en la pestaña Informes y Almacenamiento<br/>Llama a POST /api/v1/oci-storage/weekly-sync"]
-
-    T --> CF
-
-    subgraph GEN["Generación del reporte semanal (puente_motor_ia.py)"]
-        CF["2. Credenciales OCI (puente_motor_ia.py)<br/>Arma ~/.oci/config desde las variables de entorno<br/>Usuario, tenancy, fingerprint, región y llave privada normalizada"]
-        CF --> QS{"¿Se indicó<br/>una semana?"}
-        QS -- "Sí" --> VS["3a. Validar etiqueta (reporte_semanal.py)<br/>Formato AAAA-semana-NN"]
-        VS --> QV{"¿Formato<br/>válido?"}
-        QV -- "No" --> E1["Error 400<br/>Etiqueta de semana inválida"]
-        QV -- "Sí" --> CL
-        QS -- "No" --> CS["3b. Semana actual (periodos.py)<br/>Calcula la semana del proyecto según la fecha de hoy"]
-        CS --> CL["4. Carga del lote de la semana<br/>Busca los mensajes analizados del periodo"]
-        CL --> SB["4a. Fuente principal: Supabase<br/>Tabla historial_reportes_semanales<br/>Mensajes aprobados y publicados (espera máx. 4 s)"]
-        SB --> QA{"¿Hay aprobados<br/>en Supabase?"}
-        QA -- "Sí" --> CO["4b. Consolidar aprobados<br/>Une registros del mismo mensaje y fusiona rutas y copys<br/>Elige el copy final: LinkedIn, luego Discord, luego X"]
-        CO --> DS["4c. Descartados de la semana<br/>Se toman de SQLite local (communitylab.db)"]
-        QA -- "No" --> FB["4d. Respaldo local<br/>Arma el paquete desde SQLite filtrando por semana"]
-        DS --> SN["5. Sanitización<br/>Quita valores vacíos (None) y convierte fechas a texto<br/>Asegura relevancia, sentimiento, temas, segmento y razonamiento"]
-        FB --> SN
-        SN --> QM{"¿Hay mensajes<br/>analizados?"}
-        QM -- "No" --> E2["Error 400<br/>No hay mensajes analizados para el periodo"]
-        QM -- "Sí" --> RP["6. Generar reporte (reporte_semanal.py)<br/>metadata: proyecto, semana, versión, fecha, bucket y ruta<br/>resumen_metricas: totales, sentimiento, top 5 temas y segmentos<br/>activos_copywriting: aprobados y descartados"]
-        RP --> LO["7. Copia local<br/>Guarda reportes/AAAA-semana-NN.json"]
-    end
-
-    LO --> QO
-
-    subgraph SUB["Subida a OCI Object Storage (oci_uploader.py)"]
-        QO{"¿Credenciales<br/>OCI configuradas?"}
-        QO -- "No" --> OF["Modo offline<br/>No intenta subir; status saved_locally"]
-        QO -- "Sí" --> UP["8. Subida al bucket<br/>Crea el cliente ObjectStorageClient y obtiene el namespace<br/>put_object en el bucket communitylab-assets"]
-        UP --> QU{"¿Subida<br/>exitosa?"}
-        QU -- "No" --> ER["Error capturado<br/>Se conserva el archivo local; status saved_locally"]
-        QU -- "Sí" --> OB["Objeto guardado<br/>activos/AAAA-semana-NN/paquete-distribucion.json<br/>status synced"]
-    end
-
-    OF --> RS
-    ER --> RS
-    OB --> RS
-    RS["9. Respuesta al panel<br/>Estado, bucket, ruta y resumen de métricas<br/>Se limpia la caché de reportes"]
-
-    RS --> H1
-
-    subgraph HIS["Historial de reportes (GET /api/v1/oci-storage/reports)"]
-        H1["10. Abrir o refrescar la pestaña de Informes<br/>Pide la lista de reportes semanales"]
-        H1 --> QC{"¿Caché vigente?"}
-        QC -- "Sí" --> HM["Responde desde memoria<br/>Sin llamadas de red"]
-        QC -- "No" --> HD["Lee reportes/*.json del disco<br/>Semana, tamaño, fecha, bucket y estado de subida"]
-        H1 --> QB{"¿Ya se sincronizó<br/>con el bucket?"}
-        QB -- "No" --> BG["11. Sincronización en segundo plano<br/>list_objects con prefijo activos/"]
-        BG --> QL{"¿El reporte ya<br/>existe en disco?"}
-        QL -- "Sí" --> MK["Marca el reporte como subido"]
-        QL -- "No" --> DL["get_object y guarda reportes/semana.json<br/>Recupera el historial tras reinicios de Render"]
-        HM --> PN["12. Panel de Informes<br/>Historial, detalle en JSON, reintentar y descargar"]
-        HD --> PN
-    end
+    T["Botón Generar informe<br/>(OCIStorage.tsx)"] --> SEM["Definir semana<br/>(indicada o actual)"]
+    SEM --> QV{"¿Semana<br/>válida?"}
+    QV -- "No" --> E1["Error 400"]
+    QV -- "Sí" --> CL["Cargar mensajes de la semana<br/>Supabase o respaldo SQLite"]
+    CL --> QM{"¿Hay<br/>mensajes?"}
+    QM -- "No" --> E2["Error 400"]
+    QM -- "Sí" --> RP["Generar reporte JSON<br/>métricas y activos"]
+    RP --> QO{"¿Credenciales<br/>OCI?"}
+    QO -- "No" --> LO["Guardado local"]
+    QO -- "Sí" --> UP["Subir al bucket<br/>(put_object)"]
+    UP --> QU{"¿Subida<br/>exitosa?"}
+    QU -- "No" --> LO
+    QU -- "Sí" --> OB["Sincronizado en OCI"]
+    LO --> PN["Panel de Informes<br/>historial, descarga y reintento"]
+    OB --> PN
     classDef default fill:#080A27,stroke:#FF7400,stroke-width:1.5px,color:#FFFFFF
     classDef decision fill:#FF7400,stroke:#080A27,stroke-width:2px,color:#080A27,font-weight:bold
     classDef terminal fill:#FFFFFF,stroke:#FF7400,stroke-width:2px,color:#080A27
-    class QA,QB,QC,QL,QM,QO,QS,QU,QV decision
+    class QV,QM,QO,QU decision
+    class E1,E2 terminal
 ```
-
 
 ---
 
