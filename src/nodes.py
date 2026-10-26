@@ -199,6 +199,169 @@ def invocar_con_respaldo_y_tiempo(llm_primario_est, llm_respaldo_est, prompt, ti
             raise e_respaldo
 
 
+# ==========================================
+# CONSTANTES DE ENLACES OFICIALES (SPEC 027 - RF-03 Y RF-04)
+# ==========================================
+
+LINKS_OFICIALES_LINKEDIN = [
+    "https://lnkd.in/gX2m2Rhq",
+    "https://lnkd.in/gvbqJiF4",
+    "https://lnkd.in/gU7h7xyG",
+]
+
+BLOQUE_LINKS_LINKEDIN = (
+    "Más Información:\n"
+    "https://lnkd.in/gX2m2Rhq\n"
+    "https://lnkd.in/gvbqJiF4\n"
+    "https://lnkd.in/gU7h7xyG"
+)
+
+LINKS_OFICIALES_X = [
+    "https://lnkd.in/gvbqJiF4",
+    "https://lnkd.in/gU7h7xyG",
+]
+
+BLOQUE_LINKS_X = (
+    "https://lnkd.in/gvbqJiF4\n"
+    "https://lnkd.in/gU7h7xyG"
+)
+
+
+def _sanitizar_marca(texto: str | None) -> str:
+    """Sanitiza menciones residuales a 'Alura' transformándolas a 'CloudEDTech'."""
+    if not texto or not isinstance(texto, str):
+        return ""
+    limpio = texto
+    limpio = re.sub(r"#AluraLatam\b", "#CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"#Alura\b", "#CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"\bAlura\s+Latam\b", "CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"\bAlura\b", "CloudEDTech", limpio, flags=re.IGNORECASE)
+    return limpio
+
+
+def _procesar_copy_linkedin(titulo: str | None, texto_copy: str | None) -> tuple[str, str]:
+    """Inyecta de forma idempotente el bloque 'Más Información' con los 3 links oficiales y sanitiza marca."""
+    tit = _sanitizar_marca(titulo or "").strip()
+    txt = _sanitizar_marca(texto_copy or "").strip()
+    if not txt:
+        return tit, txt
+
+    tiene_mas_info = "más información" in txt.lower() or "mas informacion" in txt.lower()
+    faltantes = [lnk for lnk in LINKS_OFICIALES_LINKEDIN if lnk not in txt and lnk not in tit]
+
+    if not faltantes and tiene_mas_info:
+        return tit, txt
+
+    if len(faltantes) == len(LINKS_OFICIALES_LINKEDIN):
+        txt = f"{txt}\n\n{BLOQUE_LINKS_LINKEDIN}".strip()
+    elif faltantes:
+        txt = f"{txt}\n" + "\n".join(faltantes)
+        if not tiene_mas_info:
+            txt = f"{txt}\n\nMás Información:\n" + "\n".join(LINKS_OFICIALES_LINKEDIN)
+    elif not tiene_mas_info:
+        primer_link = LINKS_OFICIALES_LINKEDIN[0]
+        if primer_link in txt:
+            txt = txt.replace(primer_link, f"Más Información:\n{primer_link}", 1)
+        else:
+            txt = f"{txt}\n\n{BLOQUE_LINKS_LINKEDIN}".strip()
+
+    return tit, txt.strip()
+
+
+def _procesar_copy_x(titulo: str | None, texto_copy: str | None) -> tuple[str, str]:
+    """Inyecta de forma idempotente los 2 links de X garantizando longitud total <= 280 caracteres recortando en frontera de palabra."""
+    tit = _sanitizar_marca(titulo or "").strip()
+    txt = _sanitizar_marca(texto_copy or "").strip()
+    if not txt and not tit:
+        return tit, txt
+
+    # Erradicar estrictamente el link de LinkedIn si se coló
+    txt = txt.replace("https://lnkd.in/gX2m2Rhq", "")
+    tit = tit.replace("https://lnkd.in/gX2m2Rhq", "")
+
+    # Remover links oficiales de X para calcular el cuerpo base limpio
+    cuerpo_base = txt
+    for lnk in LINKS_OFICIALES_X:
+        cuerpo_base = cuerpo_base.replace(lnk, "")
+    cuerpo_base = re.sub(r"\n{3,}", "\n\n", cuerpo_base).strip()
+
+    sufijo_links = f"\n\n{BLOQUE_LINKS_X}" if (cuerpo_base or tit) else BLOQUE_LINKS_X
+    prefijo_tit = f"{tit}\n\n" if tit else ""
+    max_cuerpo = 280 - len(prefijo_tit) - len(sufijo_links)
+
+    if max_cuerpo < 0:
+        max_tit = max(0, 280 - len(sufijo_links) - 5)
+        tit = (tit[:max_tit].rstrip() + "...") if max_tit > 3 and len(tit) > max_tit else tit[:max(0, max_tit)]
+        prefijo_tit = f"{tit}\n\n" if tit else ""
+        max_cuerpo = max(0, 280 - len(prefijo_tit) - len(sufijo_links))
+
+    if len(cuerpo_base) > max_cuerpo:
+        if max_cuerpo > 3:
+            corte = cuerpo_base[: max_cuerpo - 3]
+            ultimo_esp = corte.rfind(" ")
+            if ultimo_esp > max(10, (max_cuerpo - 3) // 2):
+                cuerpo_base = corte[:ultimo_esp].rstrip(",;.: ") + "..."
+            else:
+                cuerpo_base = corte.rstrip(",;.: ") + "..."
+        else:
+            cuerpo_base = cuerpo_base[:max_cuerpo]
+
+    txt_final = f"{cuerpo_base}\n\n{BLOQUE_LINKS_X}".strip() if cuerpo_base else BLOQUE_LINKS_X
+    return tit, txt_final
+
+
+def _normalizar_semana_canonico(semana_raw: str | None, fecha_ref: str | None = None) -> str:
+    """
+    Spec 027 - RF-06:
+    Normaliza el identificador de semana al formato canónico ISO: 'YYYY-semana-WW' (ej. '2026-semana-42').
+    Soporta formatos históricos como 'Semana_01', 'Semana_42', 'semana_42', '2026-semana-42' o cálculo ISO desde fecha_ref.
+    """
+    import re
+    from datetime import datetime, date
+
+    sem_limpia = str(semana_raw or "").strip()
+
+    # Si ya cumple exactamente el formato canónico YYYY-semana-WW
+    m_canonico = re.fullmatch(r"(\d{4})-semana-(\d{1,2})", sem_limpia, flags=re.IGNORECASE)
+    if m_canonico:
+        anio = int(m_canonico.group(1))
+        num = int(m_canonico.group(2))
+        return f"{anio}-semana-{num:02d}"
+
+    # Resolver año de referencia
+    anio_ref = 2026
+    num_semana = None
+
+    if fecha_ref:
+        try:
+            m_fecha = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(fecha_ref).strip())
+            if m_fecha:
+                d_obj = date(int(m_fecha.group(1)), int(m_fecha.group(2)), int(m_fecha.group(3)))
+                iso_cal = d_obj.isocalendar()
+                anio_ref = iso_cal.year
+                num_semana = iso_cal.week
+            else:
+                dt = datetime.fromisoformat(str(fecha_ref).replace("Z", "+00:00"))
+                iso_cal = dt.isocalendar()
+                anio_ref = iso_cal.year
+                num_semana = iso_cal.week
+        except Exception:
+            pass
+
+    # Si viene formato Semana_NN, semana_NN, semana-NN o solo número
+    if sem_limpia and sem_limpia.lower() not in ("none", "null", "sin dato", "general", ""):
+        m_num = re.search(r"(\d{1,2})", sem_limpia)
+        if m_num:
+            num = int(m_num.group(1))
+            return f"{anio_ref}-semana-{num:02d}"
+
+    # Si no había semana_raw pero sí fecha_ref con num_semana
+    if num_semana is not None:
+        return f"{anio_ref}-semana-{num_semana:02d}"
+
+    return f"{anio_ref}-semana-01"
+
+
 # --- NODO LINKEDIN ---
 
 def nodo_linkedin(state: AgentState):
@@ -222,12 +385,17 @@ PRINCIPIOS DE REDACCIÓN Y TONO (Manual de Marca):
 3. Estructura obligatoria del post: Contexto motivador -> Valor técnico/práctico -> Llamado a la acción claro y sencillo.
 4. Extensión del cuerpo del post (`texto_copy`): 800 caracteres. Debe incluir una mención natural a @{autor}.
 5. Tono: Cercano, experto, motivador y orientado a resultados (aprendizaje basado en competencias aplicables).
+6. Enlaces oficiales obligatorios: El post (`texto_copy`) DEBE finalizar obligatoriamente con el bloque 'Más Información' conteniendo los 3 enlaces institucionales:
+Más Información:
+https://lnkd.in/gX2m2Rhq
+https://lnkd.in/gvbqJiF4
+https://lnkd.in/gU7h7xyG
 
 EJEMPLO DE REFERENCIA (FEW-SHOT):
 - Entrada de la comunidad: "Logré conseguir mi primer trabajo como analista de datos despues de terminar los cursos de SQL y Supabase en CloudEdTech."
 - Salida esperada en el JSON:
 - titulo: "De la teoría al éxito laboral: El gran paso de @CarlosM"
-- texto_copy: "¡Una gran noticia para celebrar en comunidad! 🎉 @CarlosM logró dar el siguiente gran paso en su carrera profesional tras dominar las herramientas clave de nuestra ruta de datos. Sabemos que el mercado tecnológico exige competencias prácticas y reales, y ver cómo aplicas cada conocimiento para conseguir tu nuevo rol como Analista de Datos es la mejor prueba de que el aprendizaje orientado a resultados transforma futuros. La tecnología es una herramienta al servicio de tu desarrollo, y tu constancia hizo posible este logro. ¡Felicitaciones por este gran hito, y sigamos construyendo tu futuro profesional juntos! 🚀 ¿Y tú, qué habilidad técnica estás aplicando hoy en tus proyectos?"
+- texto_copy: "¡Una gran noticia para celebrar en comunidad! 🎉 @CarlosM logró dar el siguiente gran paso en su carrera profesional tras dominar las herramientas clave de nuestra ruta de datos. Sabemos que el mercado tecnológico exige competencias prácticas y reales, y ver cómo aplicas cada conocimiento para conseguir tu nuevo rol como Analista de Datos es la mejor prueba de que el aprendizaje orientado a resultados transforma futuros. La tecnología es una herramienta al servicio de tu desarrollo, y tu constancia hizo posible este logro. ¡Felicitaciones por este gran hito, y sigamos construyendo tu futuro profesional juntos! 🚀 ¿Y tú, qué habilidad técnica estás aplicando hoy en tus proyectos?\n\nMás Información:\nhttps://lnkd.in/gX2m2Rhq\nhttps://lnkd.in/gvbqJiF4\nhttps://lnkd.in/gU7h7xyG"
 
 Responde ÚNICAMENTE cumpliendo con el esquema estructurado RespuestaComunidadLinkedin.
 </system_prompt>
@@ -244,6 +412,23 @@ Fecha Extracción: {fecha_extraccion}
         time.sleep(0.5)
 
         resultado_dict = respuesta.model_dump()
+
+        # Post-procesamiento defensivo e idempotente de links y sanitización de marca
+        activos = resultado_dict.get("activos_distribucion_generados", {})
+        post_lk = activos.get("post_linkedin", {})
+        if post_lk:
+            t_orig = post_lk.get("titulo", "")
+            c_orig = post_lk.get("texto_copy", "")
+            t_limpio, c_limpio = _procesar_copy_linkedin(t_orig, c_orig)
+            post_lk["titulo"] = t_limpio
+            post_lk["texto_copy"] = c_limpio
+
+        resumen = resultado_dict.get("resumen_comunidad", {})
+        if resumen and isinstance(resumen.get("temas_principales"), list):
+            resumen["temas_principales"] = [_sanitizar_marca(t) for t in resumen["temas_principales"]]
+        if resumen and "programa" in resumen:
+            resumen["programa"] = _sanitizar_marca(resumen["programa"])
+
         copys = state.get("copys_generados", {})
         copys["linkedin"] = resultado_dict
 
@@ -281,12 +466,16 @@ PRINCIPIOS DE REDACCIÓN Y TONO (X):
 - `titulo`: Máximo 70 caracteres.
 - `texto_copy`: Máximo 210 caracteres, incluyendo la mención natural a @{autor}.
 4. Tono: Directo, motivador, actual y enfocado en aplicabilidad y resultados tecnológicos.
+5. Enlaces oficiales obligatorios: El tweet DEBE incluir al final los dos enlaces institucionales de No Country y GitHub:
+https://lnkd.in/gvbqJiF4
+https://lnkd.in/gU7h7xyG
+La longitud total combinada (`titulo` + `texto_copy` + enlaces) debe ser menor o igual a 280 caracteres.
 
 EJEMPLO DE REFERENCIA (FEW-SHOT):
 - Entrada de la comunidad: "Logré conseguir mi primer trabajo como analista de datos después de terminar los cursos de SQL y Supabase en CloudEdTech."
 - Salida esperada en el JSON:
 - titulo: "¡Nuevo logro en la comunidad!"
-- texto_copy: "¡Grande @CarlosM! Lograste aplicar las herramientas de nuestra ruta de datos para conseguir tu nuevo rol profesional. El aprendizaje basado en resultados transforma futuros. 🚀 ¿Qué meta cumples hoy?"
+- texto_copy: "¡Grande @CarlosM! Lograste aplicar las herramientas de nuestra ruta de datos para conseguir tu nuevo rol profesional. El aprendizaje basado en resultados transforma futuros. 🚀 ¿Qué meta cumples hoy?\n\nhttps://lnkd.in/gvbqJiF4\nhttps://lnkd.in/gU7h7xyG"
 
 Responde ÚNICAMENTE cumpliendo con el esquema estructurado RespuestaComunidadX.
 </system_prompt>
@@ -303,6 +492,23 @@ Fecha Extracción: {fecha_extraccion}
         time.sleep(0.5)
 
         resultado_dict = respuesta.model_dump()
+
+        # Post-procesamiento defensivo e idempotente de links y sanitización de marca
+        activos = resultado_dict.get("activos_distribucion_generados", {})
+        post_x = activos.get("post_postx", {})
+        if post_x:
+            t_orig = post_x.get("titulo", "")
+            c_orig = post_x.get("texto_copy", "")
+            t_limpio, c_limpio = _procesar_copy_x(t_orig, c_orig)
+            post_x["titulo"] = t_limpio
+            post_x["texto_copy"] = c_limpio
+
+        resumen = resultado_dict.get("resumen_comunidad", {})
+        if resumen and isinstance(resumen.get("temas_principales"), list):
+            resumen["temas_principales"] = [_sanitizar_marca(t) for t in resumen["temas_principales"]]
+        if resumen and "programa" in resumen:
+            resumen["programa"] = _sanitizar_marca(resumen["programa"])
+
         copys = state.get("copys_generados", {})
         copys["x"] = resultado_dict
 
@@ -588,7 +794,7 @@ def nodo_publicador(state: AgentState):
 
     id_msg = state.get("id_mensaje", "msg_test_01")
     autor = state.get("autor", "Comunidad CloudEDTech")
-    semana = state.get("semana", "Semana_01")
+    semana_raw = state.get("semana", "2026-semana-01")
     fecha_envio = state.get("fecha_envio")
     fecha_extraccion = state.get("fecha_extraccion")
     rutas = state.get("rutas_activas", [])
@@ -599,29 +805,46 @@ def nodo_publicador(state: AgentState):
         rutas = list(copys.keys())
 
     supabase_url_conn = config.SUPABASE_DB_URL or os.environ.get("SUPABASE_DB_URL")
-    todas_exitosas = True
+    canales_exitosos = []
+    detalle_publicacion = {}
 
     if "discord" in rutas:
-        if not enviar_webhook_discord(copys, autor=autor, texto_original=datos_originales.get("texto_original", "")):
-            todas_exitosas = False
+        if enviar_webhook_discord(copys, autor=autor, texto_original=datos_originales.get("texto_original", "")):
+            canales_exitosos.append("discord")
+            detalle_publicacion["discord"] = "publicado"
+        else:
+            detalle_publicacion["discord"] = "error"
 
     if "reclamos" in rutas:
-        if not enviar_webhook_discord(copys, autor=autor, texto_original=datos_originales.get("texto_original", "")):
-            todas_exitosas = False
+        if enviar_webhook_discord(copys, autor=autor, texto_original=datos_originales.get("texto_original", "")):
+            canales_exitosos.append("reclamos")
+            detalle_publicacion["reclamos"] = "publicado"
+        else:
+            detalle_publicacion["reclamos"] = "error"
 
     if "x" in rutas:
-        if not enviar_tweet_x(copys):
-            todas_exitosas = False
+        if enviar_tweet_x(copys):
+            canales_exitosos.append("x")
+            detalle_publicacion["x"] = "publicado"
+        else:
+            detalle_publicacion["x"] = "error"
 
     if "linkedin" in rutas:
-        if not enviar_linkedin(copys):
-            todas_exitosas = False
+        if enviar_linkedin(copys):
+            canales_exitosos.append("linkedin")
+            detalle_publicacion["linkedin"] = "publicado"
+        else:
+            detalle_publicacion["linkedin"] = "error"
 
-    if todas_exitosas:
+    al_menos_una_exitosa = len(canales_exitosos) > 0
+
+    if al_menos_una_exitosa:
         try:
             modelos_mapa = {"linkedin": "gemini-3.5-flash-lite", "x": "gemini-3.5-flash-lite", "discord": "openai/gpt-oss-120b", "reclamos": "qwen/qwen3.8-27b"}
-            modelos_activos = [modelos_mapa[r] for r in rutas if r in modelos_mapa]
+            modelos_activos = [modelos_mapa[r] for r in canales_exitosos if r in modelos_mapa]
             cw_modelo_ia_str = ", ".join(list(set(modelos_activos))) if modelos_activos else "orquestador-multi-llm"
+
+            semana_canon = _normalizar_semana_canonico(semana_raw, fecha_envio or fecha_extraccion)
 
             with psycopg.connect(supabase_url_conn) as conn:
                 with conn.cursor() as cur:
@@ -632,10 +855,10 @@ def nodo_publicador(state: AgentState):
                         VALUES (%s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s);
                         """,
                         (
-                            str(id_msg), str(autor), str(semana),
+                            str(id_msg), str(autor), str(semana_canon),
                             fecha_envio if fecha_envio else None,
                             fecha_extraccion if fecha_extraccion else None,
-                            rutas, "publicado",
+                            canales_exitosos, "publicado",
                             json.dumps(datos_originales),
                             str(cw_modelo_ia_str),
                             json.dumps(copys)
@@ -644,11 +867,19 @@ def nodo_publicador(state: AgentState):
                     conn.commit()
 
             actualizar_estado_lote(id_msg, "aprobado")
-            print(f"🎉 ¡Flujo completado con éxito! Lote ID: {id_msg} marcado como 'aprobado'.")
-            return {"estado_publicacion": "completado"}
+            print(f"🎉 ¡Flujo completado con éxito! Lote ID: {id_msg} marcado como 'aprobado'. Canales exitosos: {canales_exitosos}")
+            return {
+                "estado_publicacion": "completado",
+                "rutas_activas": canales_exitosos,
+                "detalle_publicacion": detalle_publicacion,
+            }
         except Exception as e:
             print(f"⚠️ Error crítico al guardar en base de datos: {e}")
             return {"estado_publicacion": "error_db"}
     else:
         print(f"⚠️ Alerta: Una o más publicaciones fallaron. El lote ID: {id_msg} se mantiene en 'procesado'.")
-        return {"estado_publicacion": "fallido_api_externa"}
+        return {
+            "estado_publicacion": "fallido_api_externa",
+            "rutas_activas": [],
+            "detalle_publicacion": detalle_publicacion,
+        }

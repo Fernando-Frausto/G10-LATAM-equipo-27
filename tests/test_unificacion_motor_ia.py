@@ -862,7 +862,7 @@ def test_post_oci_weekly_sync_delegacion():
         "activos_copywriting": {"aprobados": [], "descartados": []},
     }
 
-    with patch("reporte_semanal.generar_reporte_semanal", return_value=mock_reporte) as mock_gen:
+    with patch("reporte_semanal.generar_reporte_semanal", return_value=mock_reporte) as mock_gen, patch.object(puente_motor_ia, "_cargar_lote_para_reporte_semanal", return_value={"aprobados": [{"id_mensaje": "2441", "autor": "dev_enoc"}], "descartados": []}):
         resp = cliente.post("/api/v1/oci-storage/weekly-sync")
         assert resp.status_code == 200
         datos = resp.json()
@@ -5276,11 +5276,11 @@ def test_spec024_resiliencia_fallback_y_http_400_controlado(client, monkeypatch)
     lote_fallback = {
         "aprobados": [
             {
-                "id_mensaje": "999",
-                "autor": "fallback_user",
+                "id_mensaje": "2441",
+                "autor": "dev_enoc",
                 "semana": "2026-semana-42",
                 "canal_origen": "#general",
-                "texto_original": "Texto de fallback",
+                "texto_original": "Logré terminar mi certificación técnica con éxito.",
                 "kpis": {"relevancia": 80, "sentimiento": "Positivo", "temas_clave": "#fallback", "segmento": "GENERAL", "razonamiento": "Ok"}
             }
         ],
@@ -6692,3 +6692,602 @@ def test_spec026_rf08_sanitizacion_alura_y_menciones_links_manuales_linkedin_x(c
     assert "https://lnkd.in/gX2m2Rhq" in codigo_studio
     assert "https://lnkd.in/gvbqJiF4" in codigo_studio
     assert "https://lnkd.in/gU7h7xyG" in codigo_studio
+
+
+# ==============================================================================
+# PRUEBAS TDD SPEC 027 (RF-01 AL RF-07) - RESOLUCIÓN BLOQUEOS GEMMA 4,
+# INCLUSIÓN AUTOMÁTICA DE LINKS Y SINCRONIZACIÓN DE REPORTES OCI
+# ==============================================================================
+
+def test_spec027_rf01_gemma_descartado_ingesta(client, monkeypatch):
+    """
+    Spec 027 - RF-01: Descarte de Gemma 4 en Ingesta y Blindaje de Motores Estables.
+    Valida que al solicitar 'cerebro_ia_gemma_4' o 'Google Gemma 4' en:
+    - POST /api/v1/ai/evaluate-message
+    - POST /api/v1/ai/evaluate-batch
+    el sistema rechace la petición con HTTP 400 Bad Request indicando su exclusividad
+    para copywriting masivo (< 35%), O ejecute un fallback transparente sin colgar el hilo.
+    También valida que nodo_gemma_automatico en src/nodes.py se mantenga reservado para la cola masiva.
+    """
+    import inspect
+    os.environ.setdefault("GEMINI_API_KEY", "dummy-gemini-key")
+    os.environ.setdefault("GROQ_API_KEY", "dummy-groq-key")
+    from src.config import config
+    if not config.GEMINI_API_KEY:
+        config.GEMINI_API_KEY = "dummy-gemini-key"
+    if not config.GROQ_API_KEY:
+        config.GROQ_API_KEY = "dummy-groq-key"
+
+    # Preparar mensaje real en SQLite para la evaluación
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo,
+                relevancia, sentimiento
+            ) VALUES (
+                1, 'hash_test_01', 'Discord', '2026-semana-42', 'tester', '#general', 'mensaje',
+                'Hola mundo testing',
+                '2026-10-15T12:00:00+00:00', '2026-10-15T12:01:00+00:00', 'pendiente', 'pending', 'pendiente',
+                50, 'Neutral'
+            )
+        """)
+        conn.commit()
+
+    # 1. Validación en evaluate-message con cerebro_ia_gemma_4
+    resp_msg = client.post("/api/v1/ai/evaluate-message", json={
+        "interaction_id": 1,
+        "proveedor": "cerebro_ia_gemma_4"
+    })
+    # Debe ser 400 Bad Request o fallback transparente donde proveedor usado no sea Gemma 4
+    if resp_msg.status_code == 400:
+        detalle = str(resp_msg.json().get("detail", "")).lower()
+        assert any(k in detalle for k in ["gemma", "masivo", "reservado", "proveedor", "no permitido"]), (
+            f"El mensaje 400 debe explicar el descarte de Gemma en Ingesta: {detalle}"
+        )
+    else:
+        assert resp_msg.status_code == 200, f"Esperado 400 o 200 con fallback, obtuvo {resp_msg.status_code}"
+        proveedor_usado = str(resp_msg.json().get("proveedor", "")).lower()
+        assert "gemma" not in proveedor_usado, f"Si no es 400, debe haber fallback transparente fuera de Gemma: {proveedor_usado}"
+
+    # 2. Validación en evaluate-message con Google Gemma 4
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo,
+                relevancia, sentimiento
+            ) VALUES (
+                1, 'hash_test_01', 'Discord', '2026-semana-42', 'tester', '#general', 'mensaje',
+                'Hola mundo testing',
+                '2026-10-15T12:00:00+00:00', '2026-10-15T12:01:00+00:00', 'pendiente', 'pending', 'pendiente',
+                50, 'Neutral'
+            )
+        """)
+        conn.commit()
+
+    resp_msg2 = client.post("/api/v1/ai/evaluate-message", json={
+        "interaction_id": 1,
+        "proveedor": "Google Gemma 4"
+    })
+    if resp_msg2.status_code == 400:
+        detalle2 = str(resp_msg2.json().get("detail", "")).lower()
+        assert any(k in detalle2 for k in ["gemma", "masivo", "reservado", "proveedor", "no permitido"])
+    else:
+        assert resp_msg2.status_code == 200
+        assert "gemma" not in str(resp_msg2.json().get("proveedor", "")).lower()
+
+    # 3. Validación en evaluate-batch con cerebro_ia_gemma_4
+    resp_batch = client.post("/api/v1/ai/evaluate-batch", json={
+        "proveedor": "cerebro_ia_gemma_4",
+        "solo_pendientes": True,
+        "limite": 1
+    })
+    if resp_batch.status_code == 400:
+        detalle_batch = str(resp_batch.json().get("detail", "")).lower()
+        assert any(k in detalle_batch for k in ["gemma", "masivo", "reservado", "proveedor", "no permitido"])
+    else:
+        assert resp_batch.status_code == 200
+        assert "gemma" not in str(resp_batch.json().get("proveedor", "")).lower()
+
+    # 4. nodo_gemma_automatico en src/nodes.py debe seguir activo para rescate masivo < 35%
+    import src.nodes as nodes
+    assert hasattr(nodes, "nodo_gemma_automatico"), "nodo_gemma_automatico debe mantenerse en src/nodes.py"
+    assert inspect.iscoroutinefunction(nodes.nodo_gemma_automatico) or callable(nodes.nodo_gemma_automatico)
+
+
+def test_spec027_rf02_cancelar_evaluacion_endpoint(client):
+    """
+    Spec 027 - RF-02: Endpoint de Cancelación Activa y Señal Cooperativa.
+    Valida que:
+    1. POST /api/v1/ai/cancel-evaluation responda HTTP 200 con {"status": "cancelled", "message": "Evaluación cancelada exitosamente"}.
+    2. El endpoint soporte trailing slash (/api/v1/ai/cancel-evaluation/).
+    3. Active el evento cooperativo en memoria (_evento_cancelacion_evaluacion) para detener el procesamiento del lote.
+    """
+    evento = getattr(puente_motor_ia, "_evento_cancelacion_evaluacion", None)
+    if evento is not None:
+        evento.clear()
+
+    # Test sin trailing slash
+    resp = client.post("/api/v1/ai/cancel-evaluation", json={"batch_id": "test-batch-001"})
+    assert resp.status_code == 200, f"Endpoint /api/v1/ai/cancel-evaluation debe responder 200 OK: {resp.status_code}"
+    data = resp.json()
+    assert data.get("status") == "cancelled"
+    assert "cancelada" in data.get("message", "").lower()
+
+    # Validar que el evento cooperativo en memoria esté activo (set)
+    evento_post = getattr(puente_motor_ia, "_evento_cancelacion_evaluacion", None)
+    assert evento_post is not None, "puente_motor_ia._evento_cancelacion_evaluacion debe existir"
+    assert evento_post.is_set() is True, "El evento de cancelación debe quedar activado (is_set() == True)"
+
+    # Test con trailing slash
+    resp_slash = client.post("/api/v1/ai/cancel-evaluation/", json={})
+    assert resp_slash.status_code == 200
+    assert resp_slash.json().get("status") == "cancelled"
+
+
+def test_spec027_rf03_links_automaticos_linkedin(monkeypatch):
+    """
+    Spec 027 - RF-03: Automatización de Links y Sanitización en LinkedIn.
+    Valida que:
+    1. nodo_linkedin incorpore automáticamente el bloque 'Más Información' con los 3 links
+       oficiales (gX2m2Rhq, gvbqJiF4, gU7h7xyG) y sanitice 'Alura' -> 'CloudEDTech'.
+    2. enviar_linkedin verifique e inyecte de forma idempotente los 3 links y sanitice la marca.
+    3. No se dupliquen los enlaces si ya estaban presentes en el texto original.
+    """
+    os.environ.setdefault("GEMINI_API_KEY", "dummy-gemini-key")
+    os.environ.setdefault("GROQ_API_KEY", "dummy-groq-key")
+    from src.config import config
+    if not config.GEMINI_API_KEY:
+        config.GEMINI_API_KEY = "dummy-gemini-key"
+    if not config.GROQ_API_KEY:
+        config.GROQ_API_KEY = "dummy-groq-key"
+    import src.nodes as nodes
+    import src.publishers as publishers
+    from src.schemas import (
+        RespuestaComunidadLinkedin,
+        ResumenComunidad,
+        ActivosDistribucionGeneradosLinkedin,
+        PostLinkedin,
+        DestaqueNewsletter,
+        SugerenciaContenidoFAQ,
+        TemporalidadProductoCreado,
+    )
+
+    LINKS_OFICIALES = [
+        "https://lnkd.in/gX2m2Rhq",
+        "https://lnkd.in/gvbqJiF4",
+        "https://lnkd.in/gU7h7xyG",
+    ]
+
+    # 1. Simulación en nodo_linkedin
+    respuesta_falsa = RespuestaComunidadLinkedin(
+        status="exito",
+        resumen_comunidad=ResumenComunidad(
+            total_interacciones_procesadas=1,
+            sentimiento_predominante="Positivo",
+            temas_principales=["Python", "Alura Latam"],
+            programa="Formación Alura",
+        ),
+        activos_distribucion_generados=ActivosDistribucionGeneradosLinkedin(
+            post_linkedin=PostLinkedin(
+                titulo="Éxito de la formación Alura Latam",
+                texto_copy="¡Felicitaciones a @CarlosDev por culminar la ruta de Alura con honores y grandes resultados!",
+                canal_recomendado="LinkedIn Oficial",
+                potencial_engagement="Alto",
+            ),
+            destaque_newsletter_semanal=DestaqueNewsletter(
+                seccion="Alura Comunidad",
+                titular="Hito Alura",
+                resumen="Resumen del hito",
+            ),
+            sugerencia_contenido_faq=SugerenciaContenidoFAQ(
+                tema="Duda sobre Alura",
+                origen="Comunidad",
+                status="Derivado_a_Mentoria",
+            ),
+            temporalidad_producto_creado=TemporalidadProductoCreado(
+                fecha_envio="2026-10-15T10:00:00Z",
+                fecha_extraccion="2026-10-15T11:00:00Z",
+                semana="2026-semana-42",
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(nodes, "invocar_con_respaldo_y_tiempo", lambda *args, **kwargs: respuesta_falsa)
+
+    state = {
+        "id_mensaje": "2441",
+        "autor": "CarlosDev",
+        "semana": "2026-semana-42",
+        "fecha_envio": "2026-10-15T10:00:00Z",
+        "fecha_extraccion": "2026-10-15T11:00:00Z",
+        "json_precurado": {"texto_original": "Terminé mi curso de Alura", "relevancia": 85},
+        "rutas_activas": ["linkedin"],
+        "copys_generados": {},
+        "errores_dlq": [],
+        "estado_publicacion": "pendiente",
+    }
+
+    resultado_nodo = nodes.nodo_linkedin(state)
+    copy_lk = resultado_nodo["copys_generados"]["linkedin"]
+    post_lk = copy_lk["activos_distribucion_generados"]["post_linkedin"]
+    texto_generado = post_lk["texto_copy"]
+    titulo_generado = post_lk["titulo"]
+
+    # Validaciones en nodo_linkedin: sanitización y 3 links
+    assert "alura" not in texto_generado.lower(), f"No debe haber 'alura' en copy LinkedIn: {texto_generado}"
+    assert "alura" not in titulo_generado.lower(), f"No debe haber 'alura' en título LinkedIn: {titulo_generado}"
+    assert "CloudEDTech" in texto_generado or "CloudEDTech" in titulo_generado
+    assert "Más Información" in texto_generado or "más información" in texto_generado.lower()
+    for link in LINKS_OFICIALES:
+        assert link in texto_generado, f"El link {link} debe estar presente en el copy de LinkedIn"
+        assert texto_generado.count(link) == 1, f"El link {link} no debe estar duplicado"
+
+    # 2. Validación de idempotencia e inyección en publishers.enviar_linkedin
+    captura_payload_lk = {}
+
+    def fake_post_lk(url, headers=None, json=None):
+        captura_payload_lk["url"] = url
+        captura_payload_lk["json"] = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        return mock_resp
+
+    monkeypatch.setattr("requests.post", fake_post_lk)
+    monkeypatch.setattr(publishers.config, "LINKEDIN_ACCESS_TOKEN", "fake_token_123")
+    monkeypatch.setattr(publishers.config, "LINKEDIN_AUTHOR_URN", "urn:li:person:fake_urn_123")
+
+    copys_para_publicar = {
+        "linkedin": {
+            "status": "success",
+            "activos_distribucion_generados": {
+                "post_linkedin": {
+                    "titulo": "Nuevo Hito en Alura Latam",
+                    "texto_copy": "Gran avance de @dev_user en Alura Latam.",
+                }
+            },
+        }
+    }
+
+    ok_envio = publishers.enviar_linkedin(copys_para_publicar)
+    assert ok_envio is True
+    texto_enviado = captura_payload_lk["json"]["specificContent"]["com.linkedin.ugc.ShareContent"]["shareCommentary"]["text"]
+
+    assert "alura" not in texto_enviado.lower(), f"enviar_linkedin debe sanitizar Alura: {texto_enviado}"
+    for link in LINKS_OFICIALES:
+        assert link in texto_enviado, f"enviar_linkedin debe asegurar link {link}"
+        assert texto_enviado.count(link) == 1, f"Link {link} no debe duplicarse en enviar_linkedin"
+
+
+def test_spec027_rf04_links_automaticos_x_limite_280(monkeypatch):
+    """
+    Spec 027 - RF-04: Automatización de Links y Límite de 280 Caracteres en X.
+    Valida que:
+    1. nodo_x incorpore automáticamente los 2 links oficiales (gvbqJiF4, gU7h7xyG).
+    2. No incluya el 3er link de LinkedIn (gX2m2Rhq).
+    3. Sanitice 'Alura' -> 'CloudEDTech'.
+    4. Garantice longitud total <= 280 caracteres recortando en frontera de palabra (...)
+       sin mutilar jamás las URLs.
+    5. enviar_tweet_x aplique las mismas garantías antes del dispatch a la API v2 de X.
+    """
+    os.environ.setdefault("GEMINI_API_KEY", "dummy-gemini-key")
+    os.environ.setdefault("GROQ_API_KEY", "dummy-groq-key")
+    from src.config import config
+    if not config.GEMINI_API_KEY:
+        config.GEMINI_API_KEY = "dummy-gemini-key"
+    if not config.GROQ_API_KEY:
+        config.GROQ_API_KEY = "dummy-groq-key"
+    import src.nodes as nodes
+    import src.publishers as publishers
+    from src.schemas import (
+        RespuestaComunidadX,
+        ResumenComunidad,
+        ActivosDistribucionGeneradosX,
+        PostX,
+        TemporalidadProductoCreadoX,
+    )
+
+    LINK_NO_COUNTRY = "https://lnkd.in/gvbqJiF4"
+    LINK_GITHUB = "https://lnkd.in/gU7h7xyG"
+    LINK_LK_PROHIBIDO = "https://lnkd.in/gX2m2Rhq"
+
+    # 1. Caso en nodo_x con texto largo con mención de Alura
+    cuerpo_largo_alura = (
+        "¡Excelente avance en Alura Latam! Felicitaciones a @CarlosDev por completar el curso de arquitectura en la plataforma Alura. "
+        "Estamos orgullosos de ver cómo construyes proyectos sólidos y aplicas cada conocimiento técnico con rigor y dedicación profesional continua hoy."
+    )
+    respuesta_x_falsa = RespuestaComunidadX(
+        status="exito",
+        resumen_comunidad=ResumenComunidad(
+            total_interacciones_procesadas=1,
+            sentimiento_predominante="Positivo",
+            temas_principales=["X", "Alura"],
+            programa="Alura X",
+        ),
+        activos_distribucion_generados=ActivosDistribucionGeneradosX(
+            post_postx=PostX(
+                titulo="Hito en Alura",
+                texto_copy=cuerpo_largo_alura,
+                canal_recomendado="X Oficial",
+                potencial_engagement="Alto",
+            ),
+            temporalidad_producto_creado=TemporalidadProductoCreadoX(
+                fecha_envio="2026-10-15T10:00:00Z",
+                fecha_extraccion="2026-10-15T11:00:00Z",
+                semana="2026-semana-42",
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(nodes, "invocar_con_respaldo_y_tiempo", lambda *args, **kwargs: respuesta_x_falsa)
+
+    state_x = {
+        "id_mensaje": "2441",
+        "autor": "CarlosDev",
+        "semana": "2026-semana-42",
+        "fecha_envio": "2026-10-15T10:00:00Z",
+        "fecha_extraccion": "2026-10-15T11:00:00Z",
+        "json_precurado": {"texto_original": "Terminé en Alura", "relevancia": 80},
+        "rutas_activas": ["x"],
+        "copys_generados": {},
+        "errores_dlq": [],
+        "estado_publicacion": "pendiente",
+    }
+
+    resultado_x = nodes.nodo_x(state_x)
+    copy_x = resultado_x["copys_generados"]["x"]
+    post_x = copy_x["activos_distribucion_generados"]["post_postx"]
+    titulo_x = post_x["titulo"]
+    texto_x = post_x["texto_copy"]
+    tweet_completo = f"{titulo_x}\n\n{texto_x}".strip()
+
+    # Validaciones en nodo_x
+    assert "alura" not in tweet_completo.lower(), f"No debe haber 'alura' en tweet: {tweet_completo}"
+    assert LINK_NO_COUNTRY in texto_x, f"Link No Country debe estar en X: {texto_x}"
+    assert LINK_GITHUB in texto_x, f"Link GitHub debe estar en X: {texto_x}"
+    assert LINK_LK_PROHIBIDO not in texto_x, f"Link LinkedIn no debe estar en X: {texto_x}"
+    assert len(tweet_completo) <= 280, f"Tweet no debe superar 280 caracteres, tiene {len(tweet_completo)}: {tweet_completo}"
+    assert LINK_NO_COUNTRY in tweet_completo and LINK_GITHUB in tweet_completo, "Las URLs deben permanecer íntegras sin mutilación"
+
+    # 2. Validación en publishers.enviar_tweet_x
+    tweet_capturado = {}
+
+    class FakeTweepyClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def create_tweet(self, text):
+            tweet_capturado["text"] = text
+            mock_res = MagicMock()
+            mock_res.data = {"id": "tweet_123456789"}
+            return mock_res
+
+    monkeypatch.setattr("tweepy.Client", FakeTweepyClient)
+    monkeypatch.setattr(publishers.config, "X_API_KEY", "fake_key")
+    monkeypatch.setattr(publishers.config, "X_API_SECRET", "fake_secret")
+    monkeypatch.setattr(publishers.config, "X_ACCESS_TOKEN", "fake_access")
+    monkeypatch.setattr(publishers.config, "X_ACCESS_TOKEN_SECRET", "fake_access_secret")
+
+    copys_x_publicar = {
+        "x": {
+            "status": "success",
+            "activos_distribucion_generados": {
+                "post_postx": {
+                    "titulo": "Novedad Alura",
+                    "texto_copy": "A" * 260 + " en Alura Latam",
+                }
+            },
+        }
+    }
+
+    ok_x = publishers.enviar_tweet_x(copys_x_publicar)
+    assert ok_x is True
+    t_enviado = tweet_capturado["text"]
+    assert "alura" not in t_enviado.lower()
+    assert LINK_NO_COUNTRY in t_enviado
+    assert LINK_GITHUB in t_enviado
+    assert LINK_LK_PROHIBIDO not in t_enviado
+    assert len(t_enviado) <= 280, f"Tweet enviado a API no debe superar 280 chars: {len(t_enviado)}"
+
+
+def test_spec027_rf05_publicador_exito_parcial_rutas_activas(monkeypatch):
+    """
+    Spec 027 - RF-05: Persistencia Atómica de Publicaciones Parciales en historial_reportes_semanales.
+    Valida que:
+    1. Si al menos un canal es exitoso (ej. Discord=True, X=False por falta de credenciales),
+       nodo_publicador persista la fila en Supabase public.historial_reportes_semanales.
+    2. Se guarde rutas_activas conteniendo exclusivamente los canales exitosos (['discord']).
+    3. El estado persista como 'publicado' y el lote se actualice a 'aprobado'.
+    """
+    os.environ.setdefault("GEMINI_API_KEY", "dummy-gemini-key")
+    os.environ.setdefault("GROQ_API_KEY", "dummy-groq-key")
+    from src.config import config
+    if not config.GEMINI_API_KEY:
+        config.GEMINI_API_KEY = "dummy-gemini-key"
+    if not config.GROQ_API_KEY:
+        config.GROQ_API_KEY = "dummy-groq-key"
+    import src.nodes as nodes
+
+    # Simular éxito en Discord y fallo en X
+    monkeypatch.setattr(nodes, "enviar_webhook_discord", lambda *args, **kwargs: True)
+    monkeypatch.setattr(nodes, "enviar_tweet_x", lambda *args, **kwargs: False)
+    monkeypatch.setattr(nodes, "enviar_linkedin", lambda *args, **kwargs: False)
+
+    lote_actualizado = {}
+    monkeypatch.setattr(nodes, "actualizar_estado_lote", lambda id_msg, estado: lote_actualizado.update({"id": id_msg, "estado": estado}))
+
+    sql_ejecutado = {}
+
+    class FakeCursor:
+        def execute(self, query, params=None):
+            sql_ejecutado["query"] = query
+            sql_ejecutado["params"] = params
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            sql_ejecutado["committed"] = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("psycopg.connect", lambda *args, **kwargs: FakeConn())
+
+    state = {
+        "id_mensaje": "2441",
+        "autor": "CarlosDev",
+        "semana": "2026-semana-42",
+        "fecha_envio": "2026-10-15T10:00:00Z",
+        "fecha_extraccion": "2026-10-15T11:00:00Z",
+        "rutas_activas": ["discord", "x"],
+        "copys_generados": {
+            "discord": {"status": "success", "activos_distribucion_generados": {"canal_seleccionado": "#general"}},
+            "x": {"status": "error", "error": "Credenciales no configuradas"},
+        },
+        "json_precurado": {"texto_original": "Mensaje de prueba", "relevancia": 88},
+        "errores_dlq": [],
+        "estado_publicacion": "validado_esperando_hitl",
+    }
+
+    resultado = nodes.nodo_publicador(state)
+
+    # Validar que ante éxito parcial, la publicación se considere completada y guardada
+    assert resultado.get("estado_publicacion") == "completado", (
+        f"Con al menos un canal exitoso (Discord), estado_publicacion debe ser 'completado', no {resultado.get('estado_publicacion')}"
+    )
+    assert sql_ejecutado.get("committed") is True, "Debe haberse ejecutado commit en Supabase"
+
+    params = sql_ejecutado.get("params", ())
+    rutas_guardadas = None
+    estado_guardado = None
+    for p in params:
+        if isinstance(p, list):
+            rutas_guardadas = p
+        elif p in ("publicado", "error"):
+            estado_guardado = p
+
+    assert rutas_guardadas == ["discord"], f"rutas_activas guardadas deben ser solo las exitosas (['discord']): {rutas_guardadas}"
+    assert estado_guardado == "publicado", f"El estado guardado debe ser 'publicado': {estado_guardado}"
+    assert lote_actualizado.get("estado") == "aprobado", "El lote debe marcarse como 'aprobado' al haberse publicado en al menos un canal"
+
+
+def test_spec027_rf06_semana_canonico_iso8601():
+    """
+    Spec 027 - RF-06: Normalización Canónica de Semana (YYYY-semana-WW) sin Modificar Archivos Raíz.
+    Valida que:
+    1. puente_motor_ia._normalizar_semana_canonico convierta diversos formatos (Semana_01, Semana_42, 2026-semana-42)
+       al formato canónico YYYY-semana-WW.
+    2. TemporalidadProductoCreado y TemporalidadProductoCreadoX en src/schemas.py utilicen o acepten
+       el formato canónico YYYY-semana-WW.
+    3. REGLA CONSTITUCIONAL: reporte_semanal.py en la raíz NO haya sido modificado.
+    """
+    fn_normalizar = getattr(puente_motor_ia, "_normalizar_semana_canonico", None)
+    assert callable(fn_normalizar), "puente_motor_ia._normalizar_semana_canonico debe existir y ser invocable"
+
+    # Validar transformaciones canónicas
+    assert fn_normalizar("2026-semana-42") == "2026-semana-42"
+    assert fn_normalizar("2026-semana-05") == "2026-semana-05"
+    assert fn_normalizar("Semana_42", fecha_ref="2026-10-15T12:00:00Z") == "2026-semana-42"
+    assert fn_normalizar("semana_42") == "2026-semana-42" or "semana-42" in fn_normalizar("semana_42")
+    assert fn_normalizar(None, fecha_ref="2026-10-15T12:00:00Z") == "2026-semana-42"
+
+    # Validar schemas en src/schemas.py
+    import src.schemas as schemas
+    temp_lk = schemas.TemporalidadProductoCreado(semana="2026-semana-42")
+    assert temp_lk.semana == "2026-semana-42"
+    temp_x = schemas.TemporalidadProductoCreadoX(semana="2026-semana-42")
+    assert temp_x.semana == "2026-semana-42"
+
+    # INVIOLABILIDAD ABSOLUTA: reporte_semanal.py en la raíz no debe haber sido tocado
+    ruta_raiz = os.path.dirname(os.path.dirname(__file__))
+    ruta_reporte = os.path.join(ruta_raiz, "reporte_semanal.py")
+    assert os.path.exists(ruta_reporte), "reporte_semanal.py debe existir en la raíz"
+
+    import subprocess
+    diff_res = subprocess.run(
+        ["git", "diff", "--name-only", "reporte_semanal.py"],
+        cwd=ruta_raiz,
+        capture_output=True,
+        text=True,
+    )
+    assert "reporte_semanal.py" not in diff_res.stdout, (
+        f"VIOLACIÓN CONSTITUCIONAL: reporte_semanal.py fue modificado en git: {diff_res.stdout}"
+    )
+
+
+def test_spec027_rf07_reconstruccion_oci_sin_mocks(monkeypatch):
+    """
+    Spec 027 - RF-07: Reconstrucción de Reportes OCI desde SQLite y Erradicación Total de Mocks.
+    Valida que:
+    1. _cargar_lote_para_reporte_semanal consulte contenidos_generados e interacciones de SQLite
+       cuando Supabase no posea registros para la semana.
+    2. Erradique por completo cualquier registro con id_mensaje: '999' o autor: 'fallback_user'.
+    3. Si no existen registros en Supabase ni en SQLite, retorne {'aprobados': [], 'descartados': []}
+       sin inventar datos ficticios.
+    4. Con registros reales en SQLite, reconstruya los aprobados con copys reales.
+    """
+    # 1. Caso base: Sin datos en Supabase ni SQLite -> listas vacías, cero mocks
+    monkeypatch.setattr(puente_motor_ia, "_extraer_historial_reportes_semanales_supabase", lambda semana: [])
+
+    # Asegurar SQLite limpia sin mensajes
+    _asegurar_esquema = getattr(puente_motor_ia, "_asegurar_esquema_sqlite", lambda: None)
+    _asegurar_esquema()
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("DELETE FROM contenidos_generados WHERE interaccion_id IN (1, 2441)")
+        conn.execute("DELETE FROM interacciones WHERE id IN (1, 2441)")
+        conn.commit()
+
+    lote_vacio = puente_motor_ia._cargar_lote_para_reporte_semanal("2026-semana-50")
+    assert isinstance(lote_vacio, dict)
+    assert lote_vacio.get("aprobados") == []
+    assert "999" not in str(lote_vacio), "No debe haber ningún id_mensaje: 999"
+    assert "fallback_user" not in str(lote_vacio), "No debe haber ningún fallback_user"
+
+    # 2. Caso con datos reales en SQLite: debe reconstruir los copys aprobados reales
+    with sqlite3.connect(puente_motor_ia.motor_bd.RUTA_BD) as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO interacciones (
+                id, hash, origen_comunidad, periodo_referencia, autor, canal, tipo,
+                texto, enviado_en, creado_en, estado, estado_curaduria, etapa_flujo,
+                relevancia, sentimiento
+            ) VALUES (
+                2441, 'hash_real_2441', 'Discord', '2026-semana-42', 'dev_enoc', '#general', 'mensaje',
+                'Logré terminar mi certificación y publicar mi proyecto con éxito.',
+                '2026-10-15T12:00:00+00:00', '2026-10-15T12:01:00+00:00', 'publicado', 'curated', 'publicado',
+                92, 'Positivo'
+            )
+        """)
+        conn.execute("""
+            INSERT OR REPLACE INTO contenidos_generados (
+                id, interaccion_id, formato, titulo, contenido, llamada_accion,
+                plataforma, estado, estado_publicacion, creado_en, actualizado_en
+            ) VALUES (
+                9001, 2441, 'linkedin', 'Logro Profesional en CloudEDTech',
+                'Felicitamos a @dev_enoc por su certificación técnica.',
+                'Conoce más sobre nuestras rutas.', 'linkedin', 'publicado', 'publicado',
+                '2026-10-15T13:00:00+00:00', '2026-10-15T13:00:00+00:00'
+            )
+        """)
+        conn.commit()
+
+    lote_real = puente_motor_ia._cargar_lote_para_reporte_semanal("2026-semana-42")
+    aprobados = lote_real.get("aprobados", [])
+    assert len(aprobados) >= 1, f"Debe reconstruir al menos 1 aprobado real desde SQLite: {lote_real}"
+
+    item_aprobado = aprobados[0]
+    assert str(item_aprobado.get("id_mensaje") or item_aprobado.get("id")) == "2441"
+    assert "999" not in str(lote_real), "No debe haber ningún id 999 en lote reconstruido"
+    assert "fallback_user" not in str(lote_real), "No debe haber fallback_user en lote reconstruido"
+

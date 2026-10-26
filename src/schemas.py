@@ -55,7 +55,7 @@ class SugerenciaContenidoFAQ(BaseModel):
 class TemporalidadProductoCreado(BaseModel):
     fecha_envio: str = Field(default="", description="Fecha original de envío")
     fecha_extraccion: str = Field(default="", description="Fecha de extracción")
-    semana: str = Field(default="Semana_01", description="Identificador de la semana")
+    semana: str = Field(default="2026-semana-01", description="Identificador canónico de la semana (formato YYYY-semana-WW)")
 
 class ActivosDistribucionGeneradosLinkedin(BaseModel):
     post_linkedin: PostLinkedin
@@ -80,7 +80,7 @@ class PostX(BaseModel):
 class TemporalidadProductoCreadoX(BaseModel):
     fecha_envio: str = Field(default="", description="Fecha original de envío")
     fecha_extraccion: str = Field(default="", description="Fecha de extracción")
-    semana: str = Field(default="Semana_01", description="Identificador de la semana")
+    semana: str = Field(default="2026-semana-01", description="Identificador canónico de la semana (formato YYYY-semana-WW)")
 
 class ActivosDistribucionGeneradosX(BaseModel):
     post_postx: PostX
@@ -121,7 +121,7 @@ class PostDiscordnotificaciones(BaseModel):
 class TemporalidadProductoCreadoDiscord(BaseModel):
     fecha_envio: str = Field(default="", description="Fecha original de envío")
     fecha_extraccion: str = Field(default="", description="Fecha de extracción")
-    semana: str = Field(default="Semana_01", description="Identificador de la semana")
+    semana: str = Field(default="2026-semana-01", description="Identificador canónico de la semana (formato YYYY-semana-WW)")
 
 class ActivosDistribucionGeneradosDiscord(BaseModel):
     canal_seleccionado: str = Field(description="Indica cuál canal se activó: '#general', '#faq' o '#notificaciones'")

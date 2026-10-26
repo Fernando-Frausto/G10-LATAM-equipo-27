@@ -20,7 +20,7 @@ import {
     X,
 } from 'lucide-react'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import KpiCard from '../components/KpiCard'
 import { updateMessageCuration } from '../api/messageCuration'
@@ -95,12 +95,14 @@ type AiModel = {
     model: string
     module: string
     available: boolean
+    disabled?: boolean
+    tooltip?: string
 }
 
 const DEFAULT_AI_MODELS: AiModel[] = [
-    { id: 'groq-llama', provider: 'Groq', name: 'Groq (Llama 3.3)', model: 'llama-3.3-70b-versatile', module: 'cerebro_ia', available: true },
-    { id: 'google-gemma', provider: 'Google', name: 'Google Gemma 4', model: 'gemma-4-31b-it', module: 'cerebro_ia_gemma_4', available: true },
-    { id: 'google-gemini', provider: 'Google', name: 'Google Gemini Flash Lite', model: 'gemini-2.5-flash-lite', module: 'cerebro_ia_gemini_flash', available: true },
+    { id: 'groq-llama', provider: 'Groq', name: 'Groq (Llama 3.3)', model: 'llama-3.3-70b-versatile', module: 'cerebro_ia', available: true, disabled: false },
+    { id: 'google-gemma', provider: 'Google', name: 'Google Gemma 4', model: 'gemma-4-31b-it', module: 'cerebro_ia_gemma_4', available: false, disabled: true, tooltip: 'Reservado para copywriting masivo (<35%). En Ingesta usa Groq o Gemini Flash Lite' },
+    { id: 'google-gemini', provider: 'Google', name: 'Google Gemini Flash Lite', model: 'gemini-2.5-flash-lite', module: 'cerebro_ia_gemini_flash', available: true, disabled: false },
 ]
 
 const API_BASE_URL =
@@ -207,7 +209,23 @@ function Messages() {
                 if (resp.ok) {
                     const data: AiModel[] = await resp.json()
                     if (Array.isArray(data) && data.length > 0) {
-                        setAiModels(data)
+                        const sanitized = data.map((m) => {
+                            const isGemma =
+                                m.name.toLowerCase().includes('gemma') ||
+                                m.id.toLowerCase().includes('gemma') ||
+                                m.module.toLowerCase().includes('gemma')
+                            if (isGemma) {
+                                return {
+                                    ...m,
+                                    available: false,
+                                    disabled: true,
+                                    tooltip:
+                                        'Reservado para copywriting masivo (<35%). En Ingesta usa Groq o Gemini Flash Lite',
+                                }
+                            }
+                            return { ...m, disabled: false }
+                        })
+                        setAiModels(sanitized)
                     }
                 }
             } catch (error) {
@@ -577,15 +595,16 @@ function Messages() {
     const handleEvaluateSingleMessage = async (message: MessageItem) => {
         if (evaluatingMessageId !== null) return
 
-        setEvaluatingMessageId(message.interactionId)
         if (selectedAiBrain.toLowerCase().includes('gemma')) {
             setSyncFeedbackMessage({
                 type: 'warning',
-                text: `⏳ Evaluando mensaje con Google Gemma 4 (timeout resiliente de 20s y fallback automático a Gemma 26B / Gemini Flash Lite)...`,
+                text: '⚠️ Google Gemma 4 está reservado exclusivamente para la cola de copywriting masivo (< 35%). En Ingesta usa Groq (Llama 3.3) o Google Gemini Flash Lite.',
             })
-        } else {
-            setSyncFeedbackMessage(null)
+            return
         }
+
+        setEvaluatingMessageId(message.interactionId)
+        setSyncFeedbackMessage(null)
         try {
             const res = await evaluateSingleMessage(message.interactionId, selectedAiBrain)
             await loadMessages()
@@ -761,6 +780,34 @@ function Messages() {
         }
     }
 
+    const abortControllerRef = useRef<AbortController | null>(null)
+
+    const handleCancelEvaluation = async () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort()
+            abortControllerRef.current = null
+        }
+        setIsEvaluatingBatch(false)
+
+        try {
+            await fetch(`${API_BASE_URL}/api/v1/ai/cancel-evaluation`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({}),
+            })
+        } catch (e) {
+            console.warn('Error al notificar cancelación al backend:', e)
+        }
+
+        await loadMessages()
+        setBatchEvalMessage({
+            type: 'warning',
+            text: 'Evaluación cancelada por el usuario. Los mensajes analizados hasta el momento fueron conservados.',
+        })
+    }
+
     const handleEvaluateBatch = async () => {
         if (
             isEvaluatingBatch ||
@@ -778,15 +825,31 @@ function Messages() {
             return
         }
 
-        setIsEvaluatingBatch(true)
         if (selectedAiBrain.toLowerCase().includes('gemma')) {
             setBatchEvalMessage({
                 type: 'warning',
-                text: '⏳ Evaluando lote con Google Gemma 4 (timeout resiliente de 20s por mensaje y fallback automático si Google API satura)...',
+                text: '⚠️ Google Gemma 4 está reservado exclusivamente para la cola de copywriting masivo (< 35%). En Ingesta selecciona Groq (Llama 3.3) o Google Gemini Flash Lite.',
             })
-        } else {
-            setBatchEvalMessage(null)
+            return
         }
+
+        setIsEvaluatingBatch(true)
+        setBatchEvalMessage(null)
+
+        const controller = new AbortController()
+        abortControllerRef.current = controller
+
+        // Timeout defensivo de 60 segundos en cliente ante demoras de API externa
+        const timeoutId = window.setTimeout(() => {
+            if (abortControllerRef.current === controller) {
+                controller.abort()
+                setIsEvaluatingBatch(false)
+                setBatchEvalMessage({
+                    type: 'error',
+                    text: 'Tiempo límite de evaluación excedido (60s). La solicitud fue abortada por seguridad.',
+                })
+            }
+        }, 60000)
 
         try {
             const payload: {
@@ -809,7 +872,10 @@ function Messages() {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(payload),
+                signal: controller.signal,
             })
+
+            window.clearTimeout(timeoutId)
 
             if (!resp.ok) {
                 const errData = await resp.json().catch(() => ({}))
@@ -824,7 +890,12 @@ function Messages() {
 
             await loadMessages()
         } catch (error) {
-            const rawMsg = error instanceof Error ? error.message : 'Error al evaluar el lote con IA.'
+            window.clearTimeout(timeoutId)
+            const err = error as Error
+            if (err.name === 'AbortError') {
+                return
+            }
+            const rawMsg = err.message || 'Error al evaluar el lote con IA.'
             const isFetchErr = rawMsg.includes('Failed to fetch')
             setBatchEvalMessage({
                 type: 'error',
@@ -833,6 +904,10 @@ function Messages() {
                     : rawMsg,
             })
         } finally {
+            window.clearTimeout(timeoutId)
+            if (abortControllerRef.current === controller) {
+                abortControllerRef.current = null
+            }
             setIsEvaluatingBatch(false)
         }
     }
@@ -1065,11 +1140,27 @@ function Messages() {
                             className="c-select"
                             style={{ padding: '0.45rem 2rem 0.45rem 0.75rem', fontSize: '0.75rem' }}
                         >
-                            {aiModels.map((m) => (
-                                <option key={m.id} value={m.name}>
-                                    {m.name} ({m.provider})
-                                </option>
-                            ))}
+                            {aiModels.map((m) => {
+                                const isGemma =
+                                    Boolean(m.disabled) ||
+                                    m.name.toLowerCase().includes('gemma') ||
+                                    m.id.toLowerCase().includes('gemma') ||
+                                    m.module.toLowerCase().includes('gemma')
+                                return (
+                                    <option
+                                        key={m.id}
+                                        value={m.name}
+                                        disabled={isGemma}
+                                        title={
+                                            isGemma
+                                                ? 'Reservado para copywriting masivo (<35%). En Ingesta usa Groq o Gemini Flash Lite'
+                                                : undefined
+                                        }
+                                    >
+                                        {m.name} ({m.provider}) {isGemma ? '— [Reservado Masivo <35%]' : ''}
+                                    </option>
+                                )
+                            })}
                         </select>
                     </div>
 
@@ -1135,36 +1226,51 @@ function Messages() {
                         </select>
                     </div>
 
-                    {/* Botón de Acción */}
-                    <button
-                        type="button"
-                        disabled={
-                            isEvaluatingBatch ||
-                            batchEvalMetrics.evaluableCount === 0 ||
-                            batchEvalMetrics.isDateRangeInverted
-                        }
-                        onClick={handleEvaluateBatch}
-                        title={
-                            batchEvalMetrics.isDateRangeInverted
-                                ? "La fecha 'Desde' no puede ser posterior a 'Hasta'"
-                                : batchEvalMetrics.evaluableCount === 0
-                                ? "No hay mensajes para evaluar con los criterios actuales"
-                                : undefined
-                        }
-                        className="c-btn c-btn--primary inline-flex items-center justify-center gap-2 whitespace-nowrap"
-                        style={{ height: '2.125rem', fontSize: '0.75rem' }}
-                    >
-                        <RefreshCw
-                            size={14}
-                            className={isEvaluatingBatch ? 'animate-spin' : ''}
-                        />
-                        <span>{isEvaluatingBatch ? 'Evaluando con IA...' : 'Evaluar mensajes con IA'}</span>
-                    </button>
+                    {/* Botón de Acción y Botón de Cancelación */}
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            disabled={
+                                isEvaluatingBatch ||
+                                batchEvalMetrics.evaluableCount === 0 ||
+                                batchEvalMetrics.isDateRangeInverted
+                            }
+                            onClick={handleEvaluateBatch}
+                            title={
+                                batchEvalMetrics.isDateRangeInverted
+                                    ? "La fecha 'Desde' no puede ser posterior a 'Hasta'"
+                                    : batchEvalMetrics.evaluableCount === 0
+                                    ? "No hay mensajes para evaluar con los criterios actuales"
+                                    : undefined
+                            }
+                            className="c-btn c-btn--primary inline-flex items-center justify-center gap-2 whitespace-nowrap"
+                            style={{ height: '2.125rem', fontSize: '0.75rem' }}
+                        >
+                            <RefreshCw
+                                size={14}
+                                className={isEvaluatingBatch ? 'animate-spin' : ''}
+                            />
+                            <span>{isEvaluatingBatch ? 'Evaluando con IA...' : 'Evaluar mensajes con IA'}</span>
+                        </button>
+
+                        {isEvaluatingBatch && (
+                            <button
+                                type="button"
+                                onClick={handleCancelEvaluation}
+                                title="Detener evaluación en curso y conservar mensajes procesados"
+                                className="c-btn inline-flex items-center justify-center gap-1.5 whitespace-nowrap border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 font-semibold"
+                                style={{ height: '2.125rem', fontSize: '0.75rem', padding: '0 0.75rem' }}
+                            >
+                                <X size={14} className="text-rose-600" />
+                                <span>Cancelar Evaluación</span>
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {selectedAiBrain.toLowerCase().includes('gemma') && (
                     <p className="mt-1.5 text-[11px] font-medium text-amber-700">
-                        ⚠️ Google Gemma 4 (31B) cuenta con timeout resiliente de 20s y fallback automático a Gemma 26B / Gemini Flash Lite si Google API satura. Para velocidad máxima usa Groq.
+                        🔒 Google Gemma 4 está reservado exclusivamente para la cola de copywriting masivo (&lt; 35%). En Ingesta usa Groq (Llama 3.3) o Google Gemini Flash Lite.
                     </p>
                 )}
 
