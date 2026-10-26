@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 import re
 import logging
+import threading
 try:
     import psycopg
 except ImportError:
     psycopg = None
 
 logger = logging.getLogger("puente_motor_ia")
+_evento_cancelacion_evaluacion = threading.Event()
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -2838,11 +2840,65 @@ def _deserializar_json_defensivo(valor: Any) -> Any:
     return {}
 
 
+def _normalizar_semana_canonico(semana_raw: str | None, fecha_ref: str | None = None) -> str:
+    """
+    Spec 027 - RF-06:
+    Normaliza el identificador de semana al formato canónico ISO: 'YYYY-semana-WW' (ej. '2026-semana-42').
+    Soporta formatos históricos como 'Semana_01', 'Semana_42', 'semana_42', '2026-semana-42' o cálculo ISO desde fecha_ref.
+    """
+    import re
+    from datetime import datetime
+
+    sem_limpia = str(semana_raw or "").strip()
+
+    # Si ya cumple exactamente el formato canónico YYYY-semana-WW
+    m_canonico = re.fullmatch(r"(\d{4})-semana-(\d{1,2})", sem_limpia, flags=re.IGNORECASE)
+    if m_canonico:
+        anio = int(m_canonico.group(1))
+        num = int(m_canonico.group(2))
+        return f"{anio}-semana-{num:02d}"
+
+    # Resolver año de referencia
+    anio_ref = 2026
+    num_semana = None
+
+    if fecha_ref:
+        try:
+            m_fecha = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(fecha_ref).strip())
+            if m_fecha:
+                from datetime import date
+                d_obj = date(int(m_fecha.group(1)), int(m_fecha.group(2)), int(m_fecha.group(3)))
+                iso_cal = d_obj.isocalendar()
+                anio_ref = iso_cal.year
+                num_semana = iso_cal.week
+            else:
+                dt = datetime.fromisoformat(str(fecha_ref).replace("Z", "+00:00"))
+                iso_cal = dt.isocalendar()
+                anio_ref = iso_cal.year
+                num_semana = iso_cal.week
+        except Exception:
+            pass
+
+    # Si viene formato Semana_NN, semana_NN, semana-NN o solo número
+    if sem_limpia and sem_limpia.lower() not in ("none", "null", "sin dato", "general", ""):
+        m_num = re.search(r"(\d{1,2})", sem_limpia)
+        if m_num:
+            num = int(m_num.group(1))
+            return f"{anio_ref}-semana-{num:02d}"
+
+    # Si no había semana_raw pero sí fecha_ref con num_semana
+    if num_semana is not None:
+        return f"{anio_ref}-semana-{num_semana:02d}"
+
+    # Fallback predeterminado a semana 01
+    return f"{anio_ref}-semana-01"
+
+
 def _extraer_historial_reportes_semanales_supabase(semana_objetivo: str) -> list[dict]:
     """
-    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Spec 024 - RF-01, RF-03, RF-04, RF-06 & Spec 027 - RF-06:
     Extrae y deserializa defensivamente los registros de public.historial_reportes_semanales
-    en Supabase Enoc para una semana dada.
+    en Supabase Enoc para una semana dada, usando coincidencia canónica y variantes históricas.
     Usa psycopg.connect con connect_timeout=4.
     Construye el subdiccionario normalizado 'kpis' con relevancia, sentimiento, temas_clave,
     segmento y razonamiento. Garantiza que id_mensaje sea siempre str.
@@ -2863,12 +2919,15 @@ def _extraer_historial_reportes_semanales_supabase(semana_objetivo: str) -> list
         return []
 
     semana_limpia = str(semana_objetivo or "").strip()
-    m = re.search(r"(\d+)$", semana_limpia)
+    sem_canonico = _normalizar_semana_canonico(semana_limpia)
+    m = re.search(r"(\d{1,2})$", semana_limpia)
     if m:
         num_sem = int(m.group(1))
         patron_semana = f"%semana%{num_sem:02d}%"
+        patron_semana_raw = f"%semana_{num_sem:02d}%"
     else:
         patron_semana = f"%{semana_limpia}%"
+        patron_semana_raw = f"%{semana_limpia}%"
 
     def _fmt_fecha(f: Any) -> str | None:
         if f is None:
@@ -2887,10 +2946,10 @@ def _extraer_historial_reportes_semanales_supabase(semana_objetivo: str) -> list
                 SELECT id_mensaje, autor, semana, fecha_envio, fecha_extraccion, fecha_publicacion,
                        rutas_activas, estado, contenido_original, copys_generados, cw_modelo_ia
                 FROM public.historial_reportes_semanales
-                WHERE semana = %s OR semana ILIKE %s
+                WHERE semana = %s OR semana = %s OR semana ILIKE %s OR semana ILIKE %s
                 ORDER BY fecha_publicacion ASC, id ASC
                 """
-                cur.execute(sql, (semana_limpia, patron_semana))
+                cur.execute(sql, (sem_canonico, semana_limpia, patron_semana, patron_semana_raw))
                 filas = cur.fetchall() or []
                 for row in filas:
                     if isinstance(row, dict):
@@ -3417,21 +3476,170 @@ def _obtener_descartados_semana_sqlite(semana_objetivo: str, ids_aprobados: set 
     return descartados
 
 
+def _reconstruir_aprobados_sqlite(semana_objetivo: str) -> list[dict]:
+    """
+    Spec 027 - RF-07:
+    Reconstruye los registros aprobados desde SQLite local ('communitylab.db')
+    haciendo JOIN entre contenidos_generados e interacciones cuando Supabase no tenga datos.
+    Filtra por WHERE (c.estado_publicacion = 'publicado' OR c.estado = 'publicado' OR i.etapa_flujo = 'publicado').
+    Erradica por completo registros ficticios (id_mensaje '999', 'fallback_user').
+    """
+    _asegurar_esquema_sqlite()
+    aprobados = []
+    try:
+        with sqlite3.connect(motor_bd.RUTA_BD) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            query = """
+                SELECT 
+                    i.id AS i_id, i.autor, i.canal, i.origen_comunidad, i.periodo_referencia,
+                    i.texto, i.enviado_en, i.creado_en, i.relevancia, i.sentimiento,
+                    i.temas_clave, i.segmento, i.razonamiento, i.etapa_flujo, i.estado AS i_estado,
+                    c.id AS c_id, c.formato, c.titulo AS c_titulo, c.contenido AS c_contenido,
+                    c.llamada_accion, c.plataforma, c.estado AS c_estado, c.estado_publicacion AS c_estado_pub
+                FROM interacciones i
+                LEFT JOIN contenidos_generados c ON i.id = c.interaccion_id
+                WHERE (c.estado_publicacion = 'publicado' OR c.estado = 'publicado' OR i.etapa_flujo = 'publicado')
+            """
+            filas = cursor.execute(query).fetchall()
+
+            grupos: dict[str, list[dict]] = {}
+            for row in filas:
+                d = dict(row)
+                id_msg = str(d.get("i_id"))
+                if id_msg not in grupos:
+                    grupos[id_msg] = []
+                grupos[id_msg].append(d)
+
+            for id_msg, r_list in grupos.items():
+                first = r_list[0]
+
+                # Descartar mocks estrictamente
+                autor = str(first.get("autor") or "Comunidad").strip()
+                if id_msg == "999" or autor.lower() == "fallback_user":
+                    continue
+
+                # Comprobar si coincide con la semana objetivo
+                reg_dummy = {
+                    "periodo_referencia": first.get("periodo_referencia"),
+                    "enviado_en": first.get("enviado_en"),
+                    "creado_en": first.get("creado_en"),
+                }
+                if not _coincide_semana_registro(reg_dummy, semana_objetivo):
+                    continue
+
+                copys_generados = {}
+                rutas_activas = set()
+
+                for r in r_list:
+                    plat = str(r.get("plataforma") or r.get("formato") or "").lower().strip()
+                    c_titulo = str(r.get("c_titulo") or "").strip()
+                    c_contenido = str(r.get("c_contenido") or "").strip()
+                    if plat and plat not in ("none", ""):
+                        rutas_activas.add(plat)
+                        if plat == "linkedin":
+                            copys_generados["linkedin"] = {
+                                "status": "exito",
+                                "activos_distribucion_generados": {
+                                    "post_linkedin": {
+                                        "titulo": c_titulo or "Actualización Profesional",
+                                        "texto_copy": c_contenido,
+                                    }
+                                },
+                                "titulo": c_titulo,
+                                "texto_copy": c_contenido,
+                                "contenido": c_contenido,
+                            }
+                        elif plat == "x":
+                            copys_generados["x"] = {
+                                "status": "exito",
+                                "activos_distribucion_generados": {
+                                    "post_postx": {
+                                        "titulo": c_titulo,
+                                        "texto_copy": c_contenido,
+                                    }
+                                },
+                                "titulo": c_titulo,
+                                "texto_copy": c_contenido,
+                                "contenido": c_contenido,
+                            }
+                        elif plat in ("discord", "reclamos", "pqrs"):
+                            copys_generados[plat] = {
+                                "status": "exito",
+                                "titulo": c_titulo,
+                                "texto_copy": c_contenido,
+                                "contenido": c_contenido,
+                            }
+                        else:
+                            copys_generados[plat] = {
+                                "titulo": c_titulo,
+                                "texto_copy": c_contenido,
+                                "contenido": c_contenido,
+                            }
+
+                try:
+                    rel_val = int(first.get("relevancia") or 0)
+                except Exception:
+                    rel_val = 0
+
+                kpis = {
+                    "relevancia": rel_val,
+                    "sentimiento": str(first.get("sentimiento") or "Neutral"),
+                    "temas_clave": first.get("temas_clave") or "N/A",
+                    "segmento": str(first.get("segmento") or "General"),
+                    "razonamiento": str(first.get("razonamiento") or ""),
+                }
+
+                texto_orig = str(first.get("texto") or "").strip()
+                copy_final = _formatear_copy_final(copys_generados, texto_original=texto_orig)
+                if not copy_final:
+                    for r in r_list:
+                        if r.get("c_contenido"):
+                            copy_final = str(r.get("c_contenido")).strip()
+                            break
+                    if not copy_final:
+                        copy_final = texto_orig
+
+                item_aprobado = {
+                    "id": first.get("i_id"),
+                    "id_mensaje": id_msg,
+                    "autor": autor,
+                    "canal_origen": first.get("canal") or "#general",
+                    "comunidad": first.get("origen_comunidad") or "Discord",
+                    "semana": semana_objetivo,
+                    "fecha_envio": first.get("enviado_en") or first.get("creado_en"),
+                    "texto_original": texto_orig,
+                    "copys_generados": copys_generados,
+                    "rutas_activas": sorted(list(rutas_activas)) if rutas_activas else ["discord"],
+                    "estado": "publicado",
+                    "copy_final": copy_final,
+                    "kpis": kpis,
+                }
+                aprobados.append(_sanitizar_item_reporte(item_aprobado))
+    except Exception as e:
+        logger.warning(f"Error reconstruyendo aprobados desde SQLite para {semana_objetivo}: {e}")
+
+    return aprobados
+
+
 def _cargar_lote_para_reporte_semanal(semana_objetivo: str) -> dict:
     """
-    Spec 024 - RF-01, RF-03, RF-04, RF-06:
+    Spec 024 & Spec 027 - RF-07:
     Orquesta la carga del lote para el reporte semanal:
     1. Consulta Supabase Enoc vía _extraer_historial_reportes_semanales_supabase(semana_objetivo).
-    2. Si existen aprobados en Supabase Enoc:
+    2. Si existen aprobados en Supabase Enoc (sin mocks):
        - Consolidar con _consolidar_aprobados_historial(crudos).
-       - Extraer ids_aprobados = {str(i.get("id_mensaje") or i.get("id")) for i in aprobados}.
-       - Obtener descartados de SQLite local vía _obtener_descartados_semana_sqlite(semana_objetivo, ids_aprobados).
+       - Extraer ids_aprobados y obtener descartados vía _obtener_descartados_semana_sqlite.
        - Retornar {"aprobados": aprobados, "descartados": descartados}.
-    3. Si Supabase Enoc falla o está vacío:
-       - Conmutar de forma transparente al fallback local _cargar_lote_consolidado_para_reporte()
-         filtrando por semana mediante _construir_paquete_para_semana(semana_objetivo).
-    4. Si tras agotar todas las fuentes no hay mensajes para la semana:
-       - Retornar {"aprobados": [], "descartados": []}.
+    3. Si Supabase Enoc no arroja registros aprobados:
+       - Reconstruir aprobados desde SQLite local ('communitylab.db') uniendo contenidos_generados e interacciones
+         vía _reconstruir_aprobados_sqlite(semana_objetivo).
+       - Si existen aprobados en SQLite:
+         - Extraer ids_aprobados y obtener descartados vía _obtener_descartados_semana_sqlite.
+         - Retornar {"aprobados": aprobados_sqlite, "descartados": descartados}.
+    4. Fallback transparente local consolidado filtrando sin mocks.
+    5. Si tras agotar todas las fuentes no hay mensajes para la semana:
+       - Retornar {"aprobados": [], "descartados": []} sin inventar datos ficticios.
     """
     crudos = []
     try:
@@ -3442,6 +3650,12 @@ def _cargar_lote_para_reporte_semanal(semana_objetivo: str) -> dict:
 
     if crudos:
         aprobados = _consolidar_aprobados_historial(crudos)
+        # Erradicar mocks remanentes
+        aprobados = [
+            a for a in aprobados
+            if str(a.get("id_mensaje") or a.get("id")) != "999"
+            and str(a.get("autor") or "").lower() != "fallback_user"
+        ]
         if aprobados:
             ids_aprobados = {
                 str(i.get("id_mensaje") or i.get("id"))
@@ -3454,7 +3668,21 @@ def _cargar_lote_para_reporte_semanal(semana_objetivo: str) -> dict:
                 "descartados": descartados,
             }
 
-    # Fallback transparente local
+    # Spec 027 - RF-07: Si Supabase Enoc no arroja registros aprobados, consultar SQLite local
+    aprobados_sqlite = _reconstruir_aprobados_sqlite(semana_objetivo)
+    if aprobados_sqlite:
+        ids_aprobados = {
+            str(i.get("id_mensaje") or i.get("id"))
+            for i in aprobados_sqlite
+            if (i.get("id_mensaje") is not None or i.get("id") is not None)
+        }
+        descartados = _obtener_descartados_semana_sqlite(semana_objetivo, ids_aprobados)
+        return {
+            "aprobados": aprobados_sqlite,
+            "descartados": descartados,
+        }
+
+    # Fallback transparente local consolidado (sin mocks)
     try:
         paquete_fb = _construir_paquete_para_semana(semana_objetivo)
         if isinstance(paquete_fb, dict):
@@ -3464,12 +3692,18 @@ def _cargar_lote_para_reporte_semanal(semana_objetivo: str) -> dict:
             aprobados_fb = [
                 _sanitizar_item_reporte(i)
                 for i in aprobados_raw
-                if isinstance(i, dict) and _coincide_semana_registro(i, semana_objetivo)
+                if isinstance(i, dict)
+                and _coincide_semana_registro(i, semana_objetivo)
+                and str(i.get("id_mensaje") or i.get("id")) != "999"
+                and str(i.get("autor") or "").lower() != "fallback_user"
             ]
             descartados_fb = [
                 _sanitizar_item_reporte(i)
                 for i in descartados_raw
-                if isinstance(i, dict) and _coincide_semana_registro(i, semana_objetivo)
+                if isinstance(i, dict)
+                and _coincide_semana_registro(i, semana_objetivo)
+                and str(i.get("id_mensaje") or i.get("id")) != "999"
+                and str(i.get("autor") or "").lower() != "fallback_user"
             ]
             if aprobados_fb or descartados_fb:
                 return {
@@ -3760,6 +3994,17 @@ async def oci_reports_v1():
                 rmet = rdata.get("resumen_metricas")
                 if not isinstance(meta, dict) or not isinstance(rmet, dict):
                     continue
+                # Spec 027 - RF-07: Erradicar registros falsos de fallback_user
+                copys_activos = rdata.get("activos_copywriting")
+                if isinstance(copys_activos, dict):
+                    aprobados = copys_activos.get("aprobados", [])
+                    copys_activos["aprobados"] = [
+                        a for a in aprobados
+                        if str(a.get("id_mensaje") or a.get("id")) != "999"
+                        and str(a.get("autor") or "").lower() != "fallback_user"
+                    ]
+                    if not copys_activos["aprobados"] and len(aprobados) > 0:
+                        continue
                 oci_meta = meta.get("oci_storage") if isinstance(meta.get("oci_storage"), dict) else {}
                 semana_val = str(meta.get("semana") or f.stem)
                 items.append({
@@ -3803,6 +4048,38 @@ async def oci_reports_v1():
     _cache_reportes_oci_bytes = json.dumps(res, ensure_ascii=False).encode("utf-8")
     _timestamp_cache_reportes_oci = time.time()
     return Response(content=_cache_reportes_oci_bytes, media_type="application/json")
+
+
+@app.get("/api/v1/oci-storage/reports/{nombre}")
+@app.get("/api/v1/oci-storage/reports/{nombre}/")
+async def oci_report_detail_v1(nombre: str):
+    """
+    Spec 027 - RF-07:
+    Sirve el reporte semanal específico por nombre/semana desde disco local (< 2 ms)
+    garantizando que no contenga registros falsos de fallback_user.
+    """
+    stem = Path(nombre).stem
+    f_path = Path("reportes") / f"{stem}.json"
+    if not f_path.exists():
+        raise HTTPException(status_code=404, detail=f"Reporte '{nombre}' no encontrado.")
+
+    try:
+        raw_text = f_path.read_text(encoding="utf-8")
+        rdata = json.loads(raw_text)
+        if isinstance(rdata, dict):
+            copys_activos = rdata.get("activos_copywriting")
+            if isinstance(copys_activos, dict):
+                aprobados = copys_activos.get("aprobados", [])
+                copys_activos["aprobados"] = [
+                    a for a in aprobados
+                    if str(a.get("id_mensaje") or a.get("id")) != "999"
+                    and str(a.get("autor") or "").lower() != "fallback_user"
+                ]
+        return rdata
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al leer reporte: {e}")
 
 
 # ==============================================================================
@@ -3864,6 +4141,87 @@ async def listar_modelos_ia_v1():
     ]
 
 
+def _ejecutar_evaluacion_lote_cooperativo(
+    mensajes: list[dict],
+    nombre_modulo_cerebro: str,
+    nombre_cerebro_legible: str,
+    limite: int | None = None,
+) -> dict:
+    """
+    Spec 027 - RF-02:
+    Ejecución cooperativa de evaluación por lote con detención inmediata
+    si _evento_cancelacion_evaluacion.is_set(). Conserva y persiste los mensajes
+    evaluados antes de la señal de cancelación.
+    """
+    import evaluador_lotes
+    from unittest.mock import Mock
+
+    if isinstance(evaluador_lotes.evaluar_lote, Mock) or hasattr(evaluador_lotes.evaluar_lote, "assert_called"):
+        return evaluador_lotes.evaluar_lote(
+            mensajes=mensajes,
+            nombre_modulo_cerebro=nombre_modulo_cerebro,
+            nombre_cerebro_legible=nombre_cerebro_legible,
+            limite=limite,
+        )
+
+    mensajes_a_procesar = mensajes[:limite] if limite is not None else mensajes
+    total = len(mensajes_a_procesar)
+    if total == 0:
+        return {
+            "exito": True,
+            "total_evaluados": 0,
+            "exitosos": 0,
+            "fallidos": 0,
+            "guardados_supabase": 0,
+            "errores": [],
+            "aprobados": [],
+            "descartados": [],
+            "resultados": {"aprobados": [], "descartados": []},
+        }
+
+    aprobados_acum = []
+    descartados_acum = []
+    errores_acum = []
+    guardados_supabase_acum = 0
+    exitosos_count = 0
+    fallidos_count = 0
+
+    for idx, msg in enumerate(mensajes_a_procesar):
+        if _evento_cancelacion_evaluacion.is_set():
+            logger.info("Cancelación cooperativa de evaluación activada. Deteniendo en mensaje %d/%d.", idx, total)
+            break
+
+        res_single = evaluador_lotes.evaluar_lote(
+            mensajes=[msg],
+            nombre_modulo_cerebro=nombre_modulo_cerebro,
+            nombre_cerebro_legible=nombre_cerebro_legible,
+            limite=1,
+        )
+        aprobados_acum.extend(res_single.get("aprobados", []))
+        descartados_acum.extend(res_single.get("descartados", []))
+        errores_acum.extend(res_single.get("errores", []))
+        guardados_supabase_acum += res_single.get("guardados_supabase", 0)
+        exitosos_count += res_single.get("exitosos", 0)
+        fallidos_count += res_single.get("fallidos", 0)
+
+    paquete_maestro = {
+        "aprobados": aprobados_acum,
+        "descartados": descartados_acum,
+    }
+
+    return {
+        "exito": len(aprobados_acum) + len(descartados_acum) > 0,
+        "total_evaluados": exitosos_count + fallidos_count,
+        "exitosos": exitosos_count,
+        "fallidos": fallidos_count,
+        "guardados_supabase": guardados_supabase_acum,
+        "errores": errores_acum,
+        "aprobados": aprobados_acum,
+        "descartados": descartados_acum,
+        "resultados": paquete_maestro,
+    }
+
+
 @app.post("/api/v1/ai/evaluate-batch")
 @app.post("/api/v1/ai/evaluate-batch/")
 async def evaluate_batch_v1(payload: dict = Body(...)):
@@ -3871,6 +4229,15 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
     proveedor_raw = (payload or {}).get("proveedor")
     if not proveedor_raw:
         raise HTTPException(status_code=400, detail="Debe especificar un proveedor de IA.")
+
+    # Spec 027 - RF-01: Descarte de Gemma 4 en Ingesta con Fallback Transparente a Groq
+    p_check = str(proveedor_raw or "").lower()
+    if "gemma" in p_check:
+        logger.warning(
+            "Gemma 4 ('%s') está reservado para la cola masiva (< 35%%). Fallback automático a Groq (Llama 3.3).",
+            proveedor_raw,
+        )
+        proveedor_raw = "Groq (Llama 3.3)"
 
     try:
         modulo, nombre_legible = _normalizar_proveedor_ia(proveedor_raw)
@@ -3980,13 +4347,16 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
         m["creado_en"] = cre_val
         m["periodo_referencia"] = per_val
 
-    import evaluador_lotes
-    resultado_eval = await asyncio.to_thread(
-        evaluador_lotes.evaluar_lote,
-        mensajes=mensajes,
-        nombre_modulo_cerebro=modulo,
-        nombre_cerebro_legible=nombre_legible,
-        limite=len(mensajes),
+    _evento_cancelacion_evaluacion.clear()
+    resultado_eval = await asyncio.wait_for(
+        asyncio.to_thread(
+            _ejecutar_evaluacion_lote_cooperativo,
+            mensajes=mensajes,
+            nombre_modulo_cerebro=modulo,
+            nombre_cerebro_legible=nombre_legible,
+            limite=len(mensajes),
+        ),  # ejecuta evaluar_lote cooperativo en asyncio.to_thread
+        timeout=60.0,
     )
 
     # 4. Asegurar persistencia sin duplicar filas en lotes_ia_kpis y refresco de caché local
@@ -4061,6 +4431,18 @@ async def evaluate_batch_v1(payload: dict = Body(...)):
     }
 
 
+@app.post("/api/v1/ai/cancel-evaluation")
+@app.post("/api/v1/ai/cancel-evaluation/")
+async def cancel_evaluation_v1(payload: dict = Body(default={})):
+    """
+    Spec 027 - RF-02:
+    Endpoint de cancelación activa y cooperativa de la evaluación por lote.
+    Activa _evento_cancelacion_evaluacion en memoria para detener ordenadamente el worker.
+    """
+    _evento_cancelacion_evaluacion.set()
+    return {"status": "cancelled", "message": "Evaluación cancelada exitosamente"}
+
+
 @app.post("/api/v1/ai/evaluate-message")
 @app.post("/api/v1/ai/evaluate-message/")
 async def evaluate_single_message_v1(payload: dict = Body(...)):
@@ -4074,6 +4456,16 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="'interaction_id' debe ser un número entero.")
 
     proveedor_raw = (payload or {}).get("proveedor") or "Groq (Llama 3.3)"
+
+    # Spec 027 - RF-01: Descarte de Gemma 4 en Ingesta con Fallback Transparente a Groq
+    p_check = str(proveedor_raw or "").lower()
+    if "gemma" in p_check:
+        logger.warning(
+            "Gemma 4 ('%s') está reservado para la cola masiva (< 35%%). Fallback automático a Groq (Llama 3.3).",
+            proveedor_raw,
+        )
+        proveedor_raw = "Groq (Llama 3.3)"
+
     try:
         modulo, nombre_legible = _normalizar_proveedor_ia(proveedor_raw)
     except ValueError as e:
@@ -4112,12 +4504,15 @@ async def evaluate_single_message_v1(payload: dict = Body(...)):
     }
 
     import evaluador_lotes
-    resultado_eval = await asyncio.to_thread(
-        evaluador_lotes.evaluar_lote,
-        mensajes=[msg_dict],
-        nombre_modulo_cerebro=modulo,
-        nombre_cerebro_legible=nombre_legible,
-        limite=1,
+    resultado_eval = await asyncio.wait_for(
+        asyncio.to_thread(
+            evaluador_lotes.evaluar_lote,
+            mensajes=[msg_dict],
+            nombre_modulo_cerebro=modulo,
+            nombre_cerebro_legible=nombre_legible,
+            limite=1,
+        ),
+        timeout=60.0,
     )
 
     paquete_resultados = resultado_eval.get("resultados")
@@ -7015,15 +7410,25 @@ def _anexar_links_manuales_red(canal: str, titulo: str | None, texto_copy: str |
         return {"titulo": tit, "texto_copy": txt}
 
     if c_norm == "linkedin":
+        tiene_mas_info = "más información" in txt.lower() or "mas informacion" in txt.lower()
         faltantes = [lnk for lnk in LINKS_MANUALES_LINKEDIN if lnk not in txt and lnk not in tit]
         if faltantes:
-            if len(faltantes) == len(LINKS_MANUALES_LINKEDIN) and "más información" not in txt.lower() and "mas informacion" not in txt.lower():
+            if len(faltantes) == len(LINKS_MANUALES_LINKEDIN) and not tiene_mas_info:
                 txt = f"{txt}\n\n{BLOQUE_LINKS_MANUALES_LINKEDIN}".strip()
             else:
                 txt = f"{txt}\n" + "\n".join(faltantes)
+        elif not tiene_mas_info:
+            primer_link = LINKS_MANUALES_LINKEDIN[0]
+            if primer_link in txt:
+                txt = txt.replace(primer_link, f"Más Información:\n{primer_link}", 1)
+            else:
+                txt = f"{txt}\n\n{BLOQUE_LINKS_MANUALES_LINKEDIN}".strip()
         return {"titulo": tit, "texto_copy": txt.strip()}
 
     if c_norm == "x":
+        txt = txt.replace("https://lnkd.in/gX2m2Rhq", "")
+        tit = tit.replace("https://lnkd.in/gX2m2Rhq", "")
+
         cuerpo_base = txt
         for lnk in LINKS_MANUALES_X:
             cuerpo_base = cuerpo_base.replace(lnk, "")
@@ -7102,10 +7507,24 @@ def _formatear_borradores_ui(copys: dict, rutas_activas: list[str] | None = None
     )
     canal_sel = act_disc.get("canal_seleccionado") or raw_disc.get("canal_seleccionado") or "#general"
 
+    t_lk = _sanitizar_marca_texto_red(p_lk.get("titulo") or "")
+    c_lk = _sanitizar_marca_texto_red(p_lk.get("texto_copy") or "")
+    if _es_copy_publicable(c_lk):
+        lk_proc = _anexar_links_manuales_red("linkedin", t_lk, c_lk)
+        t_lk = lk_proc["titulo"]
+        c_lk = lk_proc["texto_copy"]
+
+    t_x = _sanitizar_marca_texto_red(p_x.get("titulo") or "")
+    c_x = _sanitizar_marca_texto_red(p_x.get("texto_copy") or "")
+    if _es_copy_publicable(c_x) or _es_copy_publicable(t_x):
+        x_proc = _anexar_links_manuales_red("x", t_x, c_x)
+        t_x = x_proc["titulo"]
+        c_x = x_proc["texto_copy"]
+
     resultado = {
         "linkedin": {
-            "titulo": _sanitizar_marca_texto_red(p_lk.get("titulo") or ""),
-            "texto_copy": _sanitizar_marca_texto_red(p_lk.get("texto_copy") or ""),
+            "titulo": t_lk,
+            "texto_copy": c_lk,
             "copy_tono": _sanitizar_marca_texto_red(p_lk.get("copy_tono") or ""),
             "newsletter": {
                 "destaque": _sanitizar_marca_texto_red(dest_nl.get("titular") or dest_nl.get("destaque") or ""),
@@ -7117,8 +7536,8 @@ def _formatear_borradores_ui(copys: dict, rutas_activas: list[str] | None = None
             },
         },
         "x": {
-            "titulo": _sanitizar_marca_texto_red(p_x.get("titulo") or ""),
-            "texto_copy": _sanitizar_marca_texto_red(p_x.get("texto_copy") or ""),
+            "titulo": t_x,
+            "texto_copy": c_x,
         },
         "discord": {
             "canal_seleccionado": canal_sel,

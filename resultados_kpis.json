@@ -2,21 +2,21 @@
   "aprobados": [],
   "descartados": [
     {
-      "id_mensaje": 120,
-      "autor": "isseigremory7244",
+      "id_mensaje": 1,
+      "autor": "tester",
       "canal_origen": "#general",
-      "comunidad": "Discord_Grupo_ONE_G10",
-      "fecha_envio": "2026-10-20T01:09:26+00:00",
-      "fecha_extraccion": "2026-10-20T01:17:06+00:00",
-      "semana": "Semana_05",
+      "comunidad": "Discord",
+      "fecha_envio": "2026-10-15T12:00:00+00:00",
+      "fecha_extraccion": "2026-10-15T12:01:00+00:00",
+      "semana": "2026-semana-42",
       "modelo_ia": "Groq (Llama 3.3)",
-      "texto_original": "1 2 o 3",
+      "texto_original": "Hola mundo testing",
       "kpis": {
-        "relevancia": 10,
+        "relevancia": 15,
         "sentimiento": "Neutral",
         "temas_clave": "N/A",
         "segmento": "N/A",
-        "razonamiento": "El mensaje solo contiene números sin contexto, aporta poco valor ni información."
+        "razonamiento": "El mensaje es solo un saludo y una prueba, sin contenido valioso ni profundidad."
       },
       "estado_revision": "rechazado"
     }

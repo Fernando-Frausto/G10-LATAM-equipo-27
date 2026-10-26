@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import tweepy
 from src.config import config
@@ -6,6 +7,110 @@ from typing import Dict, Any
 import time
 import random
 from functools import wraps
+
+LINKS_OFICIALES_LINKEDIN = [
+    "https://lnkd.in/gX2m2Rhq",
+    "https://lnkd.in/gvbqJiF4",
+    "https://lnkd.in/gU7h7xyG",
+]
+
+BLOQUE_LINKS_LINKEDIN = (
+    "Más Información:\n"
+    "https://lnkd.in/gX2m2Rhq\n"
+    "https://lnkd.in/gvbqJiF4\n"
+    "https://lnkd.in/gU7h7xyG"
+)
+
+LINKS_OFICIALES_X = [
+    "https://lnkd.in/gvbqJiF4",
+    "https://lnkd.in/gU7h7xyG",
+]
+
+BLOQUE_LINKS_X = (
+    "https://lnkd.in/gvbqJiF4\n"
+    "https://lnkd.in/gU7h7xyG"
+)
+
+
+def _sanitizar_marca(texto: str | None) -> str:
+    """Sanitiza menciones residuales a 'Alura' transformándolas a 'CloudEDTech'."""
+    if not texto or not isinstance(texto, str):
+        return ""
+    limpio = texto
+    limpio = re.sub(r"#AluraLatam\b", "#CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"#Alura\b", "#CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"\bAlura\s+Latam\b", "CloudEDTech", limpio, flags=re.IGNORECASE)
+    limpio = re.sub(r"\bAlura\b", "CloudEDTech", limpio, flags=re.IGNORECASE)
+    return limpio
+
+
+def _procesar_copy_linkedin(titulo: str | None, texto_copy: str | None) -> tuple[str, str]:
+    """Inyecta de forma idempotente el bloque 'Más Información' con los 3 links oficiales y sanitiza marca."""
+    tit = _sanitizar_marca(titulo or "").strip()
+    txt = _sanitizar_marca(texto_copy or "").strip()
+    if not txt:
+        return tit, txt
+
+    tiene_mas_info = "más información" in txt.lower() or "mas informacion" in txt.lower()
+    faltantes = [lnk for lnk in LINKS_OFICIALES_LINKEDIN if lnk not in txt and lnk not in tit]
+
+    if not faltantes and tiene_mas_info:
+        return tit, txt
+
+    if len(faltantes) == len(LINKS_OFICIALES_LINKEDIN):
+        txt = f"{txt}\n\n{BLOQUE_LINKS_LINKEDIN}".strip()
+    elif faltantes:
+        txt = f"{txt}\n" + "\n".join(faltantes)
+        if not tiene_mas_info:
+            txt = f"{txt}\n\nMás Información:\n" + "\n".join(LINKS_OFICIALES_LINKEDIN)
+    elif not tiene_mas_info:
+        primer_link = LINKS_OFICIALES_LINKEDIN[0]
+        if primer_link in txt:
+            txt = txt.replace(primer_link, f"Más Información:\n{primer_link}", 1)
+        else:
+            txt = f"{txt}\n\n{BLOQUE_LINKS_LINKEDIN}".strip()
+
+    return tit, txt.strip()
+
+
+def _procesar_copy_x(titulo: str | None, texto_copy: str | None) -> tuple[str, str]:
+    """Inyecta de forma idempotente los 2 links de X garantizando longitud total <= 280 caracteres recortando en frontera de palabra."""
+    tit = _sanitizar_marca(titulo or "").strip()
+    txt = _sanitizar_marca(texto_copy or "").strip()
+    if not txt and not tit:
+        return tit, txt
+
+    txt = txt.replace("https://lnkd.in/gX2m2Rhq", "")
+    tit = tit.replace("https://lnkd.in/gX2m2Rhq", "")
+
+    cuerpo_base = txt
+    for lnk in LINKS_OFICIALES_X:
+        cuerpo_base = cuerpo_base.replace(lnk, "")
+    cuerpo_base = re.sub(r"\n{3,}", "\n\n", cuerpo_base).strip()
+
+    sufijo_links = f"\n\n{BLOQUE_LINKS_X}" if (cuerpo_base or tit) else BLOQUE_LINKS_X
+    prefijo_tit = f"{tit}\n\n" if tit else ""
+    max_cuerpo = 280 - len(prefijo_tit) - len(sufijo_links)
+
+    if max_cuerpo < 0:
+        max_tit = max(0, 280 - len(sufijo_links) - 5)
+        tit = (tit[:max_tit].rstrip() + "...") if max_tit > 3 and len(tit) > max_tit else tit[:max(0, max_tit)]
+        prefijo_tit = f"{tit}\n\n" if tit else ""
+        max_cuerpo = max(0, 280 - len(prefijo_tit) - len(sufijo_links))
+
+    if len(cuerpo_base) > max_cuerpo:
+        if max_cuerpo > 3:
+            corte = cuerpo_base[: max_cuerpo - 3]
+            ultimo_esp = corte.rfind(" ")
+            if ultimo_esp > max(10, (max_cuerpo - 3) // 2):
+                cuerpo_base = corte[:ultimo_esp].rstrip(",;.: ") + "..."
+            else:
+                cuerpo_base = corte.rstrip(",;.: ") + "..."
+        else:
+            cuerpo_base = cuerpo_base[:max_cuerpo]
+
+    txt_final = f"{cuerpo_base}\n\n{BLOQUE_LINKS_X}".strip() if cuerpo_base else BLOQUE_LINKS_X
+    return tit, txt_final
 
 def retry_with_backoff(max_intentos=3, base_delay=1.0):
     """Reintento simple con backoff exponencial para rate-limits."""
@@ -130,11 +235,8 @@ def enviar_tweet_x(copys_generados: Dict[str, Any]) -> bool:
 
     titulo = post_x.get("titulo", "")
     texto = post_x.get("texto_copy", "")
-    tweet_mensaje = f"{titulo}\n\n{texto}"
-
-    if len(tweet_mensaje) > 280:
-        print(f"⚠️ X: Tweet demasiado largo ({len(tweet_mensaje)} chars). Se truncará a 277 + '...'")
-        tweet_mensaje = tweet_mensaje[:277] + "..."
+    titulo_limpio, texto_limpio = _procesar_copy_x(titulo, texto)
+    tweet_mensaje = f"{titulo_limpio}\n\n{texto_limpio}".strip() if titulo_limpio else texto_limpio.strip()
 
     api_key = config.X_API_KEY or config.get("X_API_KEY")
     api_secret = config.X_API_SECRET or config.get("X_API_SECRET")
@@ -183,7 +285,8 @@ def enviar_linkedin(copys_generados: Dict[str, Any]) -> bool:
 
     titulo = post_lk.get("titulo", "")
     texto = post_lk.get("texto_copy", "")
-    mensaje_completo = f"{titulo}\n\n{texto}"
+    titulo_limpio, texto_limpio = _procesar_copy_linkedin(titulo, texto)
+    mensaje_completo = f"{titulo_limpio}\n\n{texto_limpio}".strip() if titulo_limpio else texto_limpio.strip()
 
     access_token = (config.LINKEDIN_ACCESS_TOKEN or config.get("LINKEDIN_ACCESS_TOKEN", "")).strip().replace('\"', '')
     author_urn = (config.LINKEDIN_AUTHOR_URN or config.get("LINKEDIN_AUTHOR_URN", "")).strip().replace('\"', '')
