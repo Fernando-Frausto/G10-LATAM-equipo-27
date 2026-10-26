@@ -33,4 +33,4 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
 - Nunca escribir credenciales en código duro (Regla 4).
 - Archivos CRLF: editar con script Python leyendo/escribiendo BYTES (`read_bytes`/`write_bytes`); `write_text` en Windows convierte `\r\n` en `\r\r\n` y duplica líneas.
 - Nunca introducir llamadas de red bloqueantes en endpoints GET ni polling agresivo (<30s) en frontend (Regla de Oro de Alta Velocidad).
-- PR #9 abierto hacia main con integración limpia sin conflictos.
+- PR #11 abierto hacia main (Spec 027) con integración limpia sin conflictos.
