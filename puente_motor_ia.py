@@ -2921,13 +2921,51 @@ def _extraer_historial_reportes_semanales_supabase(semana_objetivo: str) -> list
     semana_limpia = str(semana_objetivo or "").strip()
     sem_canonico = _normalizar_semana_canonico(semana_limpia)
     m = re.search(r"(\d{1,2})$", semana_limpia)
+    
+    candidatos_semana = {sem_canonico, semana_limpia, f"%{semana_limpia}%"}
     if m:
         num_sem = int(m.group(1))
-        patron_semana = f"%semana%{num_sem:02d}%"
-        patron_semana_raw = f"%semana_{num_sem:02d}%"
-    else:
-        patron_semana = f"%{semana_limpia}%"
-        patron_semana_raw = f"%{semana_limpia}%"
+        candidatos_semana.add(f"%semana%{num_sem:02d}%")
+        candidatos_semana.add(f"%semana_{num_sem:02d}%")
+        candidatos_semana.add(f"Semana_{num_sem:02d}")
+        candidatos_semana.add(f"semana_{num_sem:02d}")
+        
+        # Mapeo bidireccional entre semanas ISO (ej. 43) y semanas de proyecto (ej. 5)
+        if num_sem >= 30:
+            try:
+                from datetime import date as _d_cls, time as _t_cls
+                d_mid = _d_cls.fromisocalendar(2026, num_sem, 3)
+                p_sem = semana_de(datetime.combine(d_mid, _t_cls(12, 0), tzinfo=timezone.utc))
+                candidatos_semana.add(f"Semana_{p_sem:02d}")
+                candidatos_semana.add(f"semana_{p_sem:02d}")
+                candidatos_semana.add(f"%semana%{p_sem:02d}%")
+                candidatos_semana.add(f"%semana_{p_sem:02d}%")
+                candidatos_semana.add(f"2026-semana-{p_sem:02d}")
+            except Exception:
+                pass
+        else:
+            try:
+                from datetime import timedelta as _td_cls
+                from periodos import FECHA_INICIO
+                mid_proj = FECHA_INICIO + _td_cls(days=(num_sem - 1) * 7 + 2)
+                iso_w = mid_proj.isocalendar().week
+                candidatos_semana.add(f"2026-semana-{iso_w:02d}")
+                candidatos_semana.add(f"%semana%{iso_w:02d}%")
+                candidatos_semana.add(f"%semana_{iso_w:02d}%")
+            except Exception:
+                pass
+
+    condiciones = []
+    params = []
+    for cand in sorted(list(candidatos_semana)):
+        if "%" in cand:
+            condiciones.append("semana ILIKE %s")
+        else:
+            condiciones.append("semana = %s")
+        params.append(cand)
+    where_clause = " OR ".join(condiciones) if condiciones else "semana = %s"
+    if not condiciones:
+        params = [sem_canonico]
 
     def _fmt_fecha(f: Any) -> str | None:
         if f is None:
@@ -2942,14 +2980,14 @@ def _extraer_historial_reportes_semanales_supabase(semana_objetivo: str) -> list
     try:
         with psycopg.connect(url_supabase, connect_timeout=4) as conn:
             with conn.cursor() as cur:
-                sql = """
+                sql = f"""
                 SELECT id_mensaje, autor, semana, fecha_envio, fecha_extraccion, fecha_publicacion,
                        rutas_activas, estado, contenido_original, copys_generados, cw_modelo_ia
                 FROM public.historial_reportes_semanales
-                WHERE semana = %s OR semana = %s OR semana ILIKE %s OR semana ILIKE %s
+                WHERE {where_clause}
                 ORDER BY fecha_publicacion ASC, id ASC
                 """
-                cur.execute(sql, (sem_canonico, semana_limpia, patron_semana, patron_semana_raw))
+                cur.execute(sql, tuple(params))
                 filas = cur.fetchall() or []
                 for row in filas:
                     if isinstance(row, dict):
@@ -3379,27 +3417,52 @@ def _coincide_semana_registro(reg: dict, semana_objetivo: str) -> bool:
     num_obj = int(m.group(2)) if m else None
     sufijo_semana = f"semana_{num_obj:02d}" if num_obj is not None else None
 
+    # Mapeo bidireccional entre semanas ISO (ej. 43) y semanas de proyecto (ej. 5)
+    semanas_compatibles = {num_obj} if num_obj is not None else set()
+    if num_obj is not None:
+        if num_obj >= 30:
+            try:
+                from datetime import date as _d_cls, time as _t_cls
+                d_mid = _d_cls.fromisocalendar(anio_obj or 2026, num_obj, 3)
+                p_sem = semana_de(datetime.combine(d_mid, _t_cls(12, 0), tzinfo=timezone.utc))
+                semanas_compatibles.add(p_sem)
+            except Exception:
+                pass
+        else:
+            try:
+                from datetime import timedelta as _td_cls
+                from periodos import FECHA_INICIO
+                mid_proj = FECHA_INICIO + _td_cls(days=(num_obj - 1) * 7 + 2)
+                iso_w = mid_proj.isocalendar().week
+                semanas_compatibles.add(iso_w)
+            except Exception:
+                pass
+
     sem_reg = str(reg.get("periodo_referencia") or reg.get("semana") or "").strip().lower()
 
     if sem_reg and sem_reg not in ("sin dato", "general", "none", "null", ""):
         if sem_reg == etiqueta_lower:
             return True
-        if sufijo_semana and sem_reg == sufijo_semana:
-            return True
+        for s_compat in semanas_compatibles:
+            if sem_reg in (f"semana_{s_compat:02d}", f"semana-{s_compat:02d}", f"{anio_obj or 2026}-semana-{s_compat:02d}"):
+                return True
 
     fecha_raw = reg.get("enviado_en") or reg.get("creado_en") or reg.get("fecha_envio")
     if fecha_raw and anio_obj is not None and num_obj is not None:
         try:
             m_f = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(fecha_raw).strip())
             if m_f:
-                from datetime import date as _d_cls
+                from datetime import date as _d_cls, time as _t_cls
                 d_obj = _d_cls(int(m_f.group(1)), int(m_f.group(2)), int(m_f.group(3)))
                 iso = d_obj.isocalendar()
-                if (iso.year == anio_obj and iso.week == num_obj) or semana_de(d_obj) == num_obj:
+                dt_mid = datetime.combine(d_obj, _t_cls(12, 0), tzinfo=timezone.utc)
+                p_sem = semana_de(dt_mid)
+                if (iso.year == anio_obj and (iso.week in semanas_compatibles)) or (p_sem in semanas_compatibles):
                     return True
             dt = como_fecha(fecha_raw)
             iso = dt.isocalendar()
-            if (iso.year == anio_obj and iso.week == num_obj) or semana_de(dt) == num_obj:
+            p_sem = semana_de(dt)
+            if (iso.year == anio_obj and (iso.week in semanas_compatibles)) or (p_sem in semanas_compatibles):
                 return True
         except Exception:
             pass

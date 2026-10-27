@@ -1,24 +1,24 @@
 {
-  "aprobados": [],
-  "descartados": [
+  "aprobados": [
     {
-      "id_mensaje": 1,
-      "autor": "tester",
-      "canal_origen": "#general",
-      "comunidad": "Discord",
-      "fecha_envio": "2026-10-15T12:00:00+00:00",
-      "fecha_extraccion": "2026-10-15T12:01:00+00:00",
-      "semana": "2026-semana-42",
+      "id_mensaje": 2871,
+      "autor": "ghost_maker7",
+      "canal_origen": "#pqrs",
+      "comunidad": "Discord_Grupo_ONE_G10",
+      "fecha_envio": "2026-10-23T04:47:38+00:00",
+      "fecha_extraccion": "2026-10-27T02:23:28+00:00",
+      "semana": "Semana_05",
       "modelo_ia": "Groq (Llama 3.3)",
-      "texto_original": "Hola mundo testing",
+      "texto_original": "Método rápido de 3 pasos para cuando tu API devuelve Error 500 en los laboratorios de CloudEdTech: 1) Revisa los logs de la consola antes de tocar el código para ubicar la línea exacta del fallo. 2) Verifica con un print o logger que las variables de entorno sí se estén cargando y no lleguen como None. 3) Prueba el endpoint desde Postman con un JSON mínimo antes de conectarlo al frontend. ¡Les ahorrará horas de frustración!",
       "kpis": {
-        "relevancia": 15,
-        "sentimiento": "Neutral",
-        "temas_clave": "N/A",
-        "segmento": "N/A",
-        "razonamiento": "El mensaje es solo un saludo y una prueba, sin contenido valioso ni profundidad."
+        "relevancia": 85,
+        "sentimiento": "Positivo",
+        "temas_clave": "#APIError500 #DebuggingTips #CloudEdTech",
+        "segmento": "Desarrolladores backend y estudiantes de CloudEdTech",
+        "razonamiento": "El mensaje brinda un método práctico y detallado que aporta valor inmediato a quienes manejan APIs en los laboratorios de CloudEdTech."
       },
-      "estado_revision": "rechazado"
+      "estado_revision": "pendiente"
     }
-  ]
+  ],
+  "descartados": []
 }

@@ -2,6 +2,10 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
+- **Fix OCI Captura Producto Publicado (Enoc 19:13):**
+  - Mapeo bidireccional automático en `puente_motor_ia.py` entre semanas de proyecto (`Semana_05`) y semanas canónicas ISO (`2026-semana-43`) con compensación de zona horaria UTC-6.
+  - `_extraer_historial_reportes_semanales_supabase` y `_coincide_semana_registro` resuelven productos publicados en Supabase (ej. `id_mensaje: 2975`, autor `dosguel`) tanto en consulta ISO como de proyecto.
+  - Reporte `2026-semana-43.json` regenerado y sincronizado a bucket OCI (`communitylab-assets`).
 - **Spec 027 (Resolución Bloqueos Gemma 4, Links Automáticos y Reportes OCI):**
   1. *Blindaje Ingesta Gemma 4 y Cancelación Activa (RF-01, RF-02):* Gemma 4 reservado exclusivamente para copywriting masivo (< 35%); en Ingesta disabled en selector con tooltip explicativo y fallback transparente en backend a Groq/Gemini. Endpoint cooperativo `POST /api/v1/ai/cancel-evaluation` (< 2 ms) con señal `_evento_cancelacion_evaluacion`, preservación de evaluaciones previas en SQLite, botón interactivo "Cancelar Evaluación" y timeout de 60s en `Messages.tsx`.
   2. *Automatización de Links y Sanitización (RF-03, RF-04):* Generación y publicación para LinkedIn inyecta automáticamente bloque "Más Información" con 3 links (`gX2m2Rhq`, `gvbqJiF4`, `gU7h7xyG`); en X inyecta 2 links (`gvbqJiF4`, `gU7h7xyG`) respetando <= 280 caracteres recortando cuerpo en frontera de palabra (`...`) sin mutilar URLs. Sanitización idempotente "Alura" -> "CloudEDTech".
